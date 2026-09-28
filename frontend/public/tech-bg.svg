@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a1230"/>
+      <stop offset="0.5" stop-color="#0e2358"/>
+      <stop offset="1" stop-color="#123b8f"/>
+    </linearGradient>
+    <radialGradient id="glow1" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3b82f6" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#3b82f6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#8b5cf6" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#8b5cf6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow3" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#60a5fa" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#60a5fa" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#60a5fa" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <g stroke="#3b82f6" stroke-opacity="0.08">
+    <path d="M0 120 H1920 M0 240 H1920 M0 360 H1920 M0 480 H1920 M0 600 H1920 M0 720 H1920 M0 840 H1920 M0 960 H1920"/>
+    <path d="M120 0 V1080 M240 0 V1080 M360 0 V1080 M480 0 V1080 M600 0 V1080 M720 0 V1080 M840 0 V1080 M960 0 V1080 M1080 0 V1080 M1200 0 V1080 M1320 0 V1080 M1440 0 V1080 M1560 0 V1080 M1680 0 V1080 M1800 0 V1080"/>
+  </g>
+  <circle cx="280" cy="300" r="320" fill="url(#glow1)"/>
+  <circle cx="1500" cy="700" r="380" fill="url(#glow2)"/>
+  <circle cx="900" cy="180" r="260" fill="url(#glow3)"/>
+
+  <g stroke="url(#line)" stroke-width="1.5" fill="none">
+    <path d="M180 820 L420 620 L720 700 L980 480 L1280 560 L1600 360"/>
+    <path d="M240 900 L520 760 L860 640 L1120 720 L1460 520 L1760 620"/>
+    <path d="M320 540 L560 460 L820 560 L1100 420 L1360 520 L1680 400"/>
+    <path d="M200 680 L460 580 L760 460 L1040 540 L1300 420 L1620 520"/>
+  </g>
+
+  <g fill="#60a5fa">
+    <circle cx="180" cy="820" r="5"/><circle cx="420" cy="620" r="4"/><circle cx="720" cy="700" r="5"/><circle cx="980" cy="480" r="4"/><circle cx="1280" cy="560" r="5"/><circle cx="1600" cy="360" r="4"/>
+    <circle cx="240" cy="900" r="4"/><circle cx="520" cy="760" r="5"/><circle cx="860" cy="640" r="4"/><circle cx="1120" cy="720" r="5"/><circle cx="1460" cy="520" r="4"/><circle cx="1760" cy="620" r="5"/>
+    <circle cx="320" cy="540" r="4"/><circle cx="560" cy="460" r="5"/><circle cx="820" cy="560" r="4"/><circle cx="1100" cy="420" r="5"/><circle cx="1360" cy="520" r="4"/><circle cx="1680" cy="400" r="5"/>
+    <circle cx="200" cy="680" r="5"/><circle cx="460" cy="580" r="4"/><circle cx="760" cy="460" r="5"/><circle cx="1040" cy="540" r="4"/><circle cx="1300" cy="420" r="5"/><circle cx="1620" cy="520" r="4"/>
+  </g>
+  <g fill="#22d3ee">
+    <circle cx="420" cy="620" r="7" opacity="0.9"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="3s" repeatCount="indefinite"/></circle>
+    <circle cx="980" cy="480" r="7" opacity="0.9"><animate attributeName="opacity" values="0.3;0.9;0.3" dur="3.6s" repeatCount="indefinite"/></circle>
+    <circle cx="1460" cy="520" r="7" opacity="0.9"><animate attributeName="opacity" values="0.9;0.4;0.9" dur="4.2s" repeatCount="indefinite"/></circle>
+    <circle cx="720" cy="700" r="7" opacity="0.9"><animate attributeName="opacity" values="0.4;0.9;0.4" dur="2.8s" repeatCount="indefinite"/></circle>
+    <circle cx="1120" cy="720" r="7" opacity="0.9"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="3.3s" repeatCount="indefinite"/></circle>
+    <circle cx="560" cy="460" r="7" opacity="0.9"><animate attributeName="opacity" values="0.3;0.9;0.3" dur="3.9s" repeatCount="indefinite"/></circle>
+  </g>
+  <g fill="#8b5cf6">
+    <circle cx="520" cy="760" r="7" opacity="0.8"><animate attributeName="opacity" values="0.8;0.2;0.8" dur="3.5s" repeatCount="indefinite"/></circle>
+    <circle cx="1100" cy="420" r="7" opacity="0.8"><animate attributeName="opacity" values="0.2;0.8;0.2" dur="4s" repeatCount="indefinite"/></circle>
+    <circle cx="320" cy="540" r="7" opacity="0.8"><animate attributeName="opacity" values="0.8;0.3;0.8" dur="3.2s" repeatCount="indefinite"/></circle>
+  </g>
+</svg>

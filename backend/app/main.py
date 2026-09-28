@@ -1,0 +1,233 @@
+"""FastAPI 入口"""
+import logging
+import threading
+import time
+from datetime import datetime, timedelta
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
+
+from .config import CORS_ORIGINS
+from .database import Base, engine, SessionLocal
+from .routers import auth, users, customers, orders, master, data, dashboard, ai, order_templates, templates, logs
+from .seed import seed
+
+
+def _setup_file_logging():
+    """日志写入文件，每天一个文件（logs/app-YYYY-MM-DD.log），保留 365 天"""
+    log_dir = Path(__file__).resolve().parent.parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    handler = TimedRotatingFileHandler(
+        str(log_dir / "app.log"),
+        when="midnight",
+        interval=1,
+        backupCount=365,
+        encoding="utf-8",
+    )
+    handler.suffix = "%Y-%m-%d"
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    handler.setLevel(logging.INFO)
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    if not any(isinstance(h, TimedRotatingFileHandler) for h in root.handlers):
+        root.addHandler(handler)
+
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        lg = logging.getLogger(name)
+        lg.setLevel(logging.INFO)
+        lg.propagate = False
+        if not any(isinstance(h, TimedRotatingFileHandler) for h in lg.handlers):
+            lg.addHandler(handler)
+
+
+_setup_file_logging()
+
+Base.metadata.create_all(bind=engine)
+
+
+def _migrate_schema():
+    """幂等增量迁移（兼容 PostgreSQL / SQLite，create_all 不会给已有表加列）"""
+    try:
+        from sqlalchemy import inspect as sa_inspect
+        insp = sa_inspect(engine)
+        order_cols = {c["name"] for c in insp.get_columns("orders")}
+        url_cols = {c["name"] for c in insp.get_columns("url")}
+        tpl_cols = {c["name"] for c in insp.get_columns("template")}
+        daily_cols = {c["name"] for c in insp.get_columns("daily_data")} if "daily_data" in insp.get_table_names() else set()
+        wash_cols = {c["name"] for c in insp.get_columns("wash_name")} if "wash_name" in insp.get_table_names() else set()
+        cust_cols = {c["name"] for c in insp.get_columns("customer")} if "customer" in insp.get_table_names() else set()
+        with engine.begin() as conn:
+            for col, ddl in [
+                ("task_id", "VARCHAR(100)"),
+                ("duration", "VARCHAR(50)"),
+                ("template_id", "INTEGER"),
+                ("filename_rule", "VARCHAR(200)"),
+                ("dist_config_json", "TEXT"),
+                ("order_date", "DATE"),
+                ("price", "NUMERIC(10, 4)"),
+                ("secondary_agent", "VARCHAR(100)"),
+                ("platform", "VARCHAR(100)"),
+                ("tpl_id", "INTEGER"),
+                ("group_name", "VARCHAR(100)"),
+                ("export_filename", "VARCHAR(200)"),
+                ("add_name", "BOOLEAN"),
+                ("batch_no", "VARCHAR(50)"),
+                ("operator_id", "INTEGER"),
+                ("dup_order_nos", "TEXT"),
+                ("change_fields_json", "TEXT"),
+            ]:
+                if col not in order_cols:
+                    conn.execute(text(f"ALTER TABLE orders ADD COLUMN {col} {ddl}"))
+            if "name" not in url_cols:
+                conn.execute(text("ALTER TABLE url ADD COLUMN name VARCHAR(200)"))
+            if "platform_id" not in url_cols:
+                conn.execute(text("ALTER TABLE url ADD COLUMN platform_id INTEGER"))
+            if "description" not in tpl_cols:
+                conn.execute(text("ALTER TABLE template ADD COLUMN description TEXT"))
+            for col, ddl in [
+                ("task_id", "VARCHAR(100)"),
+                ("operator", "VARCHAR(50)"),
+                ("source_file", "VARCHAR(500)"),
+                ("updated_at", "TIMESTAMP"),
+                ("customer", "VARCHAR(100)"),
+                ("secondary_agent", "VARCHAR(100)"),
+                ("channel", "VARCHAR(100)"),
+                ("source_file_id", "INTEGER"),
+                ("name", "VARCHAR(50)"),
+                ("cat1", "VARCHAR(100)"),
+                ("cat2", "VARCHAR(100)"),
+            ]:
+                if col not in daily_cols:
+                    conn.execute(text(f"ALTER TABLE daily_data ADD COLUMN {col} {ddl}"))
+            for col, ddl in [
+                ("name", "VARCHAR(50)"),
+                ("province", "VARCHAR(50)"),
+                ("city", "VARCHAR(50)"),
+                ("operator", "VARCHAR(50)"),
+            ]:
+                if col not in wash_cols:
+                    conn.execute(text(f"ALTER TABLE wash_name ADD COLUMN {col} {ddl}"))
+            for col, ddl in [
+                ("start_date", "DATE"),
+                ("end_date", "DATE"),
+            ]:
+                if col not in cust_cols:
+                    conn.execute(text(f"ALTER TABLE customer ADD COLUMN {col} {ddl}"))
+            conn.execute(text("DROP INDEX IF EXISTS uq_order_up_date_task"))
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_order_up_date_task ON orders (upstream_id, order_date, task_name, operator_id)"))
+            conn.execute(text("DROP INDEX IF EXISTS uq_order_active_task"))
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_order_active_task ON orders (upstream_id, task_name, operator_id) WHERE status = '在执'"))
+    except Exception as e:  # noqa
+        print(f"[migrate] 跳过: {e}")
+
+
+_migrate_schema()
+
+app = FastAPI(title="LM订单管理系统")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth.router)
+app.include_router(users.router)
+app.include_router(customers.router)
+app.include_router(orders.router)
+app.include_router(master.router)
+app.include_router(data.router)
+app.include_router(dashboard.router)
+app.include_router(ai.router)
+app.include_router(order_templates.router)
+app.include_router(templates.router)
+app.include_router(logs.router)
+
+
+def _scheduler_loop():
+    """按配置的触发时间每天执行一次预警扫描"""
+    from .routers.data import run_alert_scan
+    from .models import SysConfig
+    while True:
+        # 读取触发时间（默认 00:00）
+        try:
+            db = SessionLocal()
+            cfg = db.query(SysConfig).filter(SysConfig.key == "alert_trigger_time").first()
+            trigger = cfg.value if cfg else "00:00"
+            db.close()
+        except Exception:  # noqa
+            trigger = "00:00"
+        try:
+            hh, mm = [int(x) for x in trigger.split(":")]
+        except Exception:  # noqa
+            hh, mm = 0, 0
+        now = datetime.now()
+        next_run = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if next_run <= now:
+            next_run += timedelta(days=1)
+        time.sleep((next_run - now).total_seconds())
+        try:
+            db = SessionLocal()
+            run_alert_scan(db)
+            db.close()
+            print(f"[scheduler] 预警扫描完成（触发时间 {trigger}）")
+        except Exception as e:  # noqa
+            print(f"[scheduler] 执行异常: {e}")
+        time.sleep(60)  # 防止重复触发
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(status_code=exc.status_code, content={"code": exc.status_code, "data": None, "msg": exc.detail})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logging.getLogger("uvicorn.error").error("未处理异常", exc_info=exc)
+    return JSONResponse(status_code=500, content={"code": 500, "data": None, "msg": "服务器内部错误，详情见日志"})
+
+
+@app.on_event("startup")
+def on_startup():
+    db = SessionLocal()
+    try:
+        seed(db)
+    finally:
+        db.close()
+    threading.Thread(target=_scheduler_loop, daemon=True).start()
+
+
+@app.get("/healthz")
+def healthz():
+    return {"code": 0, "data": "ok", "msg": "ok"}
+
+
+# ============ 静态文件服务（前端打包产物，SPA） ============
+_FRONTEND_CANDIDATES = [
+    Path(__file__).resolve().parent.parent / "static",                       # 部署包: backend/static
+    Path(__file__).resolve().parent.parent.parent / "frontend" / "dist",     # 源码仓库: frontend/dist
+]
+FRONTEND_DIR = next((p for p in _FRONTEND_CANDIDATES if (p / "index.html").exists()), None)
+
+if FRONTEND_DIR is not None:
+    _assets = FRONTEND_DIR / "assets"
+    if _assets.exists():
+        app.mount("/assets", StaticFiles(directory=str(_assets)), name="assets")
+
+    @app.get("/{filename:path}", include_in_schema=False)
+    async def _spa(filename: str):
+        if filename.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        root = FRONTEND_DIR.resolve()
+        target = (FRONTEND_DIR / filename).resolve()
+        if target.is_file() and str(target).startswith(str(root)):
+            return FileResponse(str(target))
+        return FileResponse(str(FRONTEND_DIR / "index.html"))

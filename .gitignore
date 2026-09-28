@@ -1,0 +1,61 @@
+# ===== 密钥 / 环境（含 DeepSeek API Key，禁止入库） =====
+.env
+.env.*
+*.env
+!*.env.example
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+backend/.venv/
+
+# ===== Node / 前端 =====
+node_modules/
+dist/
+frontend/dist/
+
+# ===== 数据库 / 大数据文件（不入库） =====
+data/
+*.db
+*.db.*
+*.db-*
+*.sqlite
+*.sqlite3
+backend/data/
+
+# ===== 备份目录 =====
+backup-*/
+*.bak
+*.bak-*
+
+# ===== 系统 / 编辑器 =====
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ===== 日志 / 进程 =====
+*.log
+*.pid
+*.err
+
+# ===== 业务数据文件（Excel 回执/样本等） =====
+*.xlsx
+*.xls
+*.csv
+
+# ===== 部署产物 / 打包 / 启动脚本（不入库） =====
+*.zip
+run.bat
+tunnel.bat
+cloudflared/
+
+# ===== 临时/无关文件 =====
+error.png
+rocket-avatar.svg
+rocket-avatar.png
+lemon-avatar.svg
+lemon-avatar.png
