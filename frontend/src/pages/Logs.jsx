@@ -39,7 +39,7 @@ function JsonBlock({ value }) {
 }
 
 export default function Logs() {
-  const toast = useToast()
+  const { toast, showError } = useToast()
   const [tab, setTab] = useState('login')
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
@@ -56,7 +56,7 @@ export default function Logs() {
     try {
       const r = await api.get('/api/logs?' + params.toString())
       setRows(r.data.rows); setTotal(r.data.total)
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   useEffect(() => { setPage(1); setRows([]); load(1, perPage, filters) }, [tab])

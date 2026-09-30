@@ -27,7 +27,7 @@ def _next_code(db):
 
 def _dump(t: Template) -> dict:
     return {
-        "id": t.id, "ttype": t.ttype or "", "code": t.code,
+        "id": t.id, "ttype": t.ttype or "", "tpl_type": t.tpl_type or "其他", "code": t.code,
         "name": t.name or "", "file_name": t.name or "",
         "file_type": t.file_type or "",
         "has_file": bool(t.file_data),
@@ -53,7 +53,7 @@ def create_template(body: TemplateBody, db: Session = Depends(get_db), _=Depends
     code = (body.code or "").strip() or _next_code(db)
     if db.query(Template).filter(Template.code == code).first():
         raise HTTPException(status_code=409, detail="模版编号已存在")
-    t = Template(ttype=body.ttype, code=code, name="", description=body.description or "", status=body.status)
+    t = Template(ttype=body.ttype, tpl_type=body.tpl_type or "其他", code=code, name="", description=body.description or "", status=body.status)
     db.add(t)
     db.commit()
     return {"code": 0, "data": {"id": t.id, "code": code}, "msg": "已创建"}
@@ -65,6 +65,7 @@ def update_template(tid: int, body: TemplateBody, db: Session = Depends(get_db),
     if not t:
         raise HTTPException(status_code=404, detail="模版不存在")
     t.ttype = body.ttype
+    t.tpl_type = body.tpl_type or "其他"
     t.description = body.description or ""
     t.status = body.status
     db.commit()

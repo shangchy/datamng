@@ -550,9 +550,10 @@ def _fill_uploaded_template(db, tpl, orders, action):
         vals = _order_values(db, o)
         if action == "新单" and tpl.code == "MB-008":
             vals["task_id"] = ""
-        changed = set(json.loads(o.change_fields_json or "[]")) if action == "改单" else None
+        raw_changed = o.change_fields_json
+        changed = set(json.loads(raw_changed)) if raw_changed else None  # None 表示整单改单，填充全部字段
         urls = vals.get("url") or []
-        if action == "改单" and "url" not in changed:
+        if action == "改单" and changed is not None and "url" not in changed:
             urls = []
         if multiline_url:
             urls = ["\n".join(urls)] if urls else [""]
@@ -564,7 +565,7 @@ def _fill_uploaded_template(db, tpl, orders, action):
                 if not m:
                     continue
                 kind, key = m
-                if action == "改单" and kind == "field" and key not in ("task_id", "task_name") and key not in changed:
+                if action == "改单" and kind == "field" and key not in ("task_id", "task_name") and changed is not None and key not in changed:
                     value = ""
                 else:
                     value = _cell_value_split(kind, key, vals, url)

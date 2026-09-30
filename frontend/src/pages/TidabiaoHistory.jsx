@@ -25,7 +25,7 @@ const FILTER_COLS = [
 ]
 
 export default function TidabiaoHistory() {
-  const toast = useToast()
+  const { toast, showError } = useToast()
   const { visible: cols, picker, openPicker } = useColumnConfig(COLS, 'cols_tidabiao_history')
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
@@ -71,7 +71,7 @@ export default function TidabiaoHistory() {
     api.get('/api/orders/tidabiao-history?' + qs + '&page=1&per_page=500').then(r => {
       downloadCsv('提单历史.csv', cols, r.data.rows)
       toast('已导出')
-    }).catch(e => toast(e.message))
+    }).catch(e => showError(e.message))
   }
 
   return (

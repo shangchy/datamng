@@ -12,7 +12,7 @@ const SOURCE_LABELS = {
 const emptyStyle = { zebra: 'FFFFFF', border: true, font: '宋体', font_size: 11, row_height: 20, center: true }
 
 export default function Templates() {
-  const toast = useToast()
+  const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
   const [rows, setRows] = useState([])
   const [modal, setModal] = useState(null) // {isNew, form}
@@ -40,18 +40,18 @@ export default function Templates() {
 
   async function save() {
     const f = modal.form
-    if (!f.code || !f.name) { toast('请填写编码和名称'); return }
+    if (!f.code || !f.name) { showError('请填写编码和名称'); return }
     const cols = f.columns.filter(c => c.name || c.source || c.fixed)
     try {
       if (modal.isNew) await api.post('/api/order-templates', { ...f, columns: cols })
       else await api.put(`/api/order-templates/${f.id}`, { ...f, columns: cols })
       toast('已保存'); setModal(null); load()
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   async function del(t) {
     if (!(await confirm(`确认删除模版「${t.name}」？`))) return
-    try { await api.del(`/api/order-templates/${t.id}`); toast('已删除'); load() } catch (e) { toast(e.message) }
+    try { await api.del(`/api/order-templates/${t.id}`); toast('已删除'); load() } catch (e) { showError(e.message) }
   }
 
   return (

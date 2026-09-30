@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/customers", tags=["customers"])
 @router.get("")
 def list_customers(db: Session = Depends(get_db), _=Depends(get_current_user),
                    q: str = "", code: str = "", name: str = "", ctype: str = "",
-                   tg_id: str = "", wash_mode: str = "", status: str = "", note: str = "",
+                   tg_id: str = "", status: str = "", note: str = "",
                    page: int = 1, per_page: int = 10):
     qy = db.query(Customer)
     if q:
@@ -35,8 +35,6 @@ def list_customers(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(Customer.ctype == ctype)
     if tg_id:
         qy = qy.filter(Customer.tg_id.like(f"%{tg_id}%"))
-    if wash_mode:
-        qy = qy.filter(Customer.wash_mode == wash_mode)
     if status:
         qy = qy.filter(Customer.status == int(status))
     if note:
@@ -166,12 +164,12 @@ def customer_orders(cid: int, db: Session = Depends(get_db), _=Depends(get_curre
 def _customer_dict(c: Customer):
     return {
         "id": c.id, "code": c.code, "name": c.name, "ctype": c.ctype, "tg_id": c.tg_id,
-        "wash_mode": c.wash_mode, "is_accounted": c.is_accounted,
-        "discount": float(c.discount) if c.discount is not None else 1,
+        "is_accounted": c.is_accounted,
         "balance": float(c.balance) if c.balance is not None else 0,
         "warn_amount": float(c.warn_amount) if c.warn_amount is not None else 0,
         "start_date": str(c.start_date) if c.start_date else None,
         "end_date": str(c.end_date) if c.end_date else None,
+        "bill_tpl_id": c.bill_tpl_id,
         "note": c.note, "status": c.status,
         "created_at": fmt_dt(c.created_at),
         "updated_at": fmt_dt(c.updated_at),

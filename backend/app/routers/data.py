@@ -492,9 +492,7 @@ def _phone_str(v):
 
 @router.get("/daily-data/wash-export")
 def wash_export(date: str = "", db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """洗名：导出所选日期下，姓名为空且关联订单「是否加名=是」的手机号"""
-    from urllib.parse import quote
-    from fastapi.responses import Response
+    """洗名：导出所选日期下，姓名为空且关联订单「是否加名=是」的手机号（Excel）"""
     date_obj = _parse_biz_date(date)
     if not date_obj:
         raise HTTPException(status_code=422, detail="请选择数据日期")
@@ -509,9 +507,7 @@ def wash_export(date: str = "", db: Session = Depends(get_db), _=Depends(get_cur
         qy = qy.filter(DailyData.id < 0)
     rows = qy.order_by(DailyData.id).all()
     phones = [r.phone for r in rows if r.phone]
-    text = "\n".join(phones)
-    return Response(content=text, media_type="text/plain",
-                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('洗名-' + date + '.txt')}"})
+    return xlsx_response(["手机号", "姓名"], [[p, ""] for p in phones], f"洗名-{date}.xlsx", "洗名")
 
 
 def _parse_wash_file(fn, content):
@@ -598,13 +594,16 @@ async def import_wash(file: UploadFile = File(...), db: Session = Depends(get_db
         n = db.query(DailyData).filter(DailyData.phone == phone).update({"name": rec["name"]})
         updated += n
     for phone, rec in rec_map.items():
-        # 更新洗名库（手机号存在则更新，不存在则插入）
+        # 更新洗名库（手机号存在则更新，不存在则插入；省/市/运营商仅在文件提供时覆盖，避免清空已有数据）
         w = db.query(WashName).filter(WashName.phone == phone).first()
         if w:
             w.name = rec["name"]
-            w.province = rec["province"]
-            w.city = rec["city"]
-            w.operator = rec["operator"]
+            if rec["province"]:
+                w.province = rec["province"]
+            if rec["city"]:
+                w.city = rec["city"]
+            if rec["operator"]:
+                w.operator = rec["operator"]
         else:
             db.add(WashName(phone=phone, name=rec["name"], province=rec["province"],
                             city=rec["city"], operator=rec["operator"]))
@@ -702,8 +701,10 @@ def _fill_distribute_file(tpl_bytes, records):
     return bio
 
 
-def _fill_bill_file(cust_label, date_str, bill):
-    """生成单个代理的账单 excel"""
+def _fill_bill_file(cust_label, date_str, bill, tpl_bytes=None):
+    """生成单个代理的账单 excel；配置了账单模版则按模版填充，否则用默认格式"""
+    if tpl_bytes:
+        return _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill)
     from openpyxl import Workbook
     wb = Workbook()
     ws = wb.active
@@ -730,7 +731,151 @@ def _fill_bill_file(cust_label, date_str, bill):
     return bio
 
 
-def _build_distribute_zip(jobs, bills, date_str, progress_cb):
+def _copy_cell_style(src, dst):
+    """把源单元格的字体/边框/填充/对齐/数字格式复制到目标单元格"""
+    import copy as _copy
+    if src.has_style:
+        dst.font = _copy.copy(src.font)
+        dst.border = _copy.copy(src.border)
+        dst.fill = _copy.copy(src.fill)
+        dst.number_format = src.number_format
+        dst.protection = _copy.copy(src.protection)
+        dst.alignment = _copy.copy(src.alignment)
+
+
+def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
+    """按账单模版结构填充：
+    汇总区（客户/业务日期/进货量/销售金额/余额）填右侧值单元格；
+    明细表（任务名/数量/单价/是否洗名/金额）按表头定位列并填充数据行，
+    当模版空白行数不足时自动插行并复制样式，不影响整体版式。
+    """
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(tpl_bytes))
+    ws = wb.active
+
+    qty = bill["qty"]
+    sales = round(float(bill["sales"]), 2)
+    balance = bill.get("balance")
+    groups = sorted(bill.get("groups", {}).items())
+
+    # ---- 1. 汇总区：标签 -> 右侧值单元格 ----
+    def _summary_field(s):
+        if s in ("客户", "客户名称", "代理", "代理名称", "客户名"):
+            return "客户"
+        if "日期" in s:
+            return "日期"
+        if "进货" in s:
+            return "进货量"
+        if "销售" in s:
+            return "销售金额"
+        if "余额" in s:
+            return "余额"
+        return None
+
+    summary_vals = {
+        "客户": cust_label,
+        "日期": date_str,
+        "进货量": qty,
+        "销售金额": sales,
+        "余额": (round(float(balance), 2) if balance is not None else ""),
+    }
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value is None:
+                continue
+            field = _summary_field(str(cell.value).strip())
+            if field:
+                ws.cell(row=cell.row, column=cell.column + 1, value=summary_vals[field])
+
+    # ---- 2. 明细表：定位表头行与各列 ----
+    header_row = None
+    cols = {}
+    for row in ws.iter_rows():
+        rowvals = {}
+        for cell in row:
+            if cell.value is not None:
+                rowvals[cell.column] = str(cell.value).strip()
+        has_task = any(("任务" in v or "小组" in v) for v in rowvals.values())
+        has_qty = any("数量" in v for v in rowvals.values())
+        has_amount = any("金额" in v for v in rowvals.values())
+        if has_task and has_qty and has_amount:
+            header_row = row[0].row
+            for col, v in rowvals.items():
+                if "任务" in v or "小组" in v:
+                    cols["task"] = col
+                elif "单价" in v or "价格" in v:
+                    cols["price"] = col
+                elif "洗名" in v or "加名" in v:
+                    cols["name"] = col
+                elif "数量" in v:
+                    cols["qty"] = col
+                elif "金额" in v:
+                    cols["amount"] = col
+            break
+
+    if header_row is None:
+        return _fill_bill_file(cust_label, date_str, bill, None)
+
+    # 找合计行（表头下方第一个含「合计/总计」的行）
+    total_row = None
+    for r in range(header_row + 1, ws.max_row + 2):
+        for c in range(1, ws.max_column + 2):
+            v = ws.cell(row=r, column=c).value
+            if v is not None and ("合计" in str(v) or "总计" in str(v)):
+                total_row = r
+                break
+        if total_row:
+            break
+
+    data_start = header_row + 1
+    data_end = (total_row - 1) if total_row else ws.max_row
+    n_blank = max(0, data_end - data_start + 1)
+    n_groups = len(groups)
+
+    # 空白行不足时自动插行（插在合计行之前，或末尾）
+    if n_groups > n_blank:
+        insert_at = total_row if total_row else (data_end + 1)
+        ws.insert_rows(insert_at, amount=n_groups - n_blank)
+
+    # 参考样式行：优先第一条数据行（空白行自带边框样式），否则用表头行
+    ref_row = data_start if n_blank >= 1 else header_row
+    ref_cols = [c for c in cols.values() if c is not None]
+
+    for i, (g, gg) in enumerate(groups):
+        r = data_start + i
+        if "task" in cols:
+            ws.cell(row=r, column=cols["task"], value=g)
+        if "qty" in cols:
+            ws.cell(row=r, column=cols["qty"], value=gg["qty"])
+        if "price" in cols:
+            ws.cell(row=r, column=cols["price"], value=(gg.get("unit") or 0))
+        if "name" in cols:
+            ws.cell(row=r, column=cols["name"], value=("是" if gg.get("add_name") else "否"))
+        if "amount" in cols:
+            ws.cell(row=r, column=cols["amount"], value=round(float(gg["amount"]), 2))
+        # 仅对「新插入」的行复制样式（原有空白行保留模版本来的样式）
+        if i >= n_blank:
+            for c in ref_cols:
+                _copy_cell_style(ws.cell(row=ref_row, column=c), ws.cell(row=r, column=c))
+
+    # 修正合计行的 SUM 公式范围（openpyxl 插行不会自动调整公式范围）
+    if n_groups > n_blank and total_row:
+        from openpyxl.utils import get_column_letter
+        new_total_row = total_row + (n_groups - n_blank)
+        end_row = data_start + n_groups - 1
+        for c in range(1, ws.max_column + 1):
+            cell = ws.cell(row=new_total_row, column=c)
+            if cell.value is not None and "SUM(" in str(cell.value):
+                letter = get_column_letter(c)
+                cell.value = f"=SUM({letter}{data_start}:{letter}{end_row})"
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio
+
+
+def _build_distribute_zip(jobs, bills, date_str, progress_cb, bill_tpls=None):
     import zipfile
     buf = io.BytesIO()
     used_names = set()
@@ -763,7 +908,8 @@ def _build_distribute_zip(jobs, bills, date_str, progress_cb):
             folder = folder_of.get(cc)
             if not folder:
                 continue
-            bio = _fill_bill_file(bill.get("cust_label") or cc, date_str, bill)
+            tpl = (bill_tpls or {}).get(cc)
+            bio = _fill_bill_file(bill.get("cust_label") or cc, date_str, bill, tpl)
             zf.writestr(f"{folder}/账单-{cc}-{date_str}.xlsx", bio.read())
     buf.seek(0)
     return buf
@@ -803,6 +949,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             "tpl_bytes": bytes(tpl.file_data) if tpl and tpl.file_data else None,
             "price": float(order.price) if order.price is not None else 0,
             "customer_id": order.customer_id,
+            "add_name": bool(order.add_name),
         }
 
     if not orders_info:
@@ -885,11 +1032,15 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
         cc = info["cust_code"]
         if cc not in bills:
             label = (f"{cc} {info['cust_name']}".strip() if info["cust_name"] else cc)
+            cust = db.query(Customer).filter(Customer.id == info["customer_id"]).first()
             bills[cc] = {"customer_id": info["customer_id"], "cust_label": label,
-                         "qty": 0, "sales": 0.0, "groups": {}}
+                         "qty": 0, "sales": 0.0,
+                         "balance": float(cust.balance) if cust and cust.balance is not None else 0,
+                         "groups": {}}
         bills[cc]["qty"] += 1
         bills[cc]["sales"] += info["price"]
-        gg = bills[cc]["groups"].setdefault(info["group_name"], {"qty": 0, "amount": 0.0})
+        gg = bills[cc]["groups"].setdefault(info["group_name"],
+                                            {"qty": 0, "amount": 0.0, "unit": info["price"], "add_name": info["add_name"]})
         gg["qty"] += 1
         gg["amount"] += info["price"]
 
@@ -910,13 +1061,25 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
                         sales=b["sales"], balance=balance, profit=0))
     db.commit()
 
+    # 7.5 各代理账单模版（客户配置了账单模版则按模版生成）
+    bill_tpls = {}
+    for cc, b in bills.items():
+        cid = b.get("customer_id")
+        if not cid:
+            continue
+        cust = db.query(Customer).filter(Customer.id == cid).first()
+        if cust and cust.bill_tpl_id:
+            tpl = db.query(Template).filter(Template.id == cust.bill_tpl_id).first()
+            if tpl and tpl.file_data:
+                bill_tpls[cc] = bytes(tpl.file_data)
+
     task_id = uuid.uuid4().hex
     _DISTRIBUTE_TASKS[task_id] = {"total": len(jobs), "done": 0, "status": "running",
                                   "error": "", "buffer": None, "date_str": date_obj.strftime("%m%d")}
 
     def run():
         try:
-            buf = _build_distribute_zip(jobs, bills, date_obj.strftime("%m%d"), lambda done: _DISTRIBUTE_TASKS[task_id].update(done=done))
+            buf = _build_distribute_zip(jobs, bills, date_obj.strftime("%m%d"), lambda done: _DISTRIBUTE_TASKS[task_id].update(done=done), bill_tpls)
             _DISTRIBUTE_TASKS[task_id]["buffer"] = buf
             _DISTRIBUTE_TASKS[task_id]["status"] = "done"
         except Exception as e:  # noqa
@@ -1293,7 +1456,6 @@ def distinct_values(db: Session = Depends(get_db), _=Depends(get_current_user),
         "daily_data": {"province", "city", "platform", "upstream", "wash_status"},
         "orders": {"province", "city"},
         "fund": {"province", "city", "company_type", "operator", "source_file"},
-        "customer": {"wash_mode"},
     }
     if model not in allowed or field not in allowed[model]:
         return {"code": 0, "data": [], "msg": "ok"}

@@ -33,7 +33,7 @@ function RichTextEditor({ value, onChange }) {
 }
 
 export default function TemplateManager() {
-  const toast = useToast()
+  const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
   const [rows, setRows] = useState([])
   const [modal, setModal] = useState(null) // {isNew, form}
@@ -54,27 +54,27 @@ export default function TemplateManager() {
     setRows(r.data || [])
   }
 
-  function openCreate() { setModal({ isNew: true, form: { ttype: '', code: '', description: '', status: 1, has_file: false, file_name: '' } }) }
-  function openEdit(t) { setModal({ isNew: false, form: { id: t.id, ttype: t.ttype, code: t.code, description: t.description || '', status: t.status, has_file: t.has_file, file_name: t.file_name || t.name } }) }
+  function openCreate() { setModal({ isNew: true, form: { ttype: '', tpl_type: '其他', code: '', description: '', status: 1, has_file: false, file_name: '' } }) }
+  function openEdit(t) { setModal({ isNew: false, form: { id: t.id, ttype: t.ttype, tpl_type: t.tpl_type || '其他', code: t.code, description: t.description || '', status: t.status, has_file: t.has_file, file_name: t.file_name || t.name } }) }
   function setF(k, v) { setModal({ ...modal, form: { ...modal.form, [k]: v } }) }
 
   async function save() {
     const f = modal.form
     try {
       if (modal.isNew) {
-        const r = await api.post('/api/templates', { ttype: f.ttype, description: f.description, status: f.status })
+        const r = await api.post('/api/templates', { ttype: f.ttype, tpl_type: f.tpl_type, description: f.description, status: f.status })
         toast(`已创建，模版编号 ${r.data.code}`)
       } else {
-        await api.put(`/api/templates/${f.id}`, { ttype: f.ttype, description: f.description, status: f.status })
+        await api.put(`/api/templates/${f.id}`, { ttype: f.ttype, tpl_type: f.tpl_type, description: f.description, status: f.status })
         toast('已保存')
       }
       setModal(null); load()
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   async function del(t) {
     if (!(await confirm(`确认删除模版「${t.code}」？`))) return
-    try { await api.del(`/api/templates/${t.id}`); toast('已删除'); load() } catch (e) { toast(e.message) }
+    try { await api.del(`/api/templates/${t.id}`); toast('已删除'); load() } catch (e) { showError(e.message) }
   }
 
   async function upload(file) {
@@ -96,7 +96,7 @@ export default function TemplateManager() {
     try {
       const r = await api.get(`/api/templates/${t.id}/preview`)
       setPreview(r.data)
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   async function deleteFile() {
@@ -105,7 +105,7 @@ export default function TemplateManager() {
       await api.del(`/api/templates/${modal.form.id}/file`)
       setModal({ ...modal, form: { ...modal.form, has_file: false, file_name: '' } })
       toast('模版文件已删除'); load()
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   return (
@@ -113,9 +113,9 @@ export default function TemplateManager() {
       {confirmEl}
       {busy && <Loading text="正在上传模版，请稍候…" />}
       <input type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} ref={fileRef}
-        onChange={e => { if (e.target.files[0]) upload(e.target.files[0]).catch(err => toast(err.message)); e.target.value = '' }} />
+        onChange={e => { if (e.target.files[0]) upload(e.target.files[0]).catch(err => showError(err.message)); e.target.value = '' }} />
       <div className="toolbar">
-        <input placeholder="类型 / 编号 / 文件名" style={{ width: 220 }} value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') search() }} />
+        <input placeholder="名称 / 编号 / 文件名" style={{ width: 220 }} value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') search() }} />
         <button className="btn" onClick={search}>查询</button>
         <span className="spacer" />
         <button className="btn primary" onClick={openCreate}>+ 新增模版</button>
@@ -123,10 +123,11 @@ export default function TemplateManager() {
       <div className="panel">
         <div className="table-scroll">
           <table>
-            <thead><tr><th>模版类型</th><th>模版编号</th><th>文件名</th><th>创建时间</th><th>更新时间</th><th className="ops">操作</th></tr></thead>
+            <thead><tr><th>模版类型</th><th>模版名称</th><th>模版编号</th><th>文件名</th><th>创建时间</th><th>更新时间</th><th className="ops">操作</th></tr></thead>
             <tbody>
               {rows.map(t => (
                 <tr key={t.id} className="clickable" onDoubleClick={() => setDetail(t)}>
+                  <td><Badge value={t.tpl_type || '其他'} /></td>
                   <td>{t.ttype || '—'}</td>
                   <td><code>{t.code}</code></td>
                   <td>{t.has_file ? <a className="link" onClick={() => showPreview(t)}>{t.file_name || t.name}</a> : <Badge value="未上传" />}</td>
@@ -134,7 +135,7 @@ export default function TemplateManager() {
                   <td>{t.updated_at || '—'}</td>
                   <td className="ops">
                     <button className="btn small" onClick={() => openEdit(t)}>编辑</button>{' '}
-                    {t.has_file && <button className="btn small green" onClick={() => downloadFile(`/api/templates/${t.id}/download`).catch(e => toast(e.message))}>下载</button>}{' '}
+                    {t.has_file && <button className="btn small green" onClick={() => downloadFile(`/api/templates/${t.id}/download`).catch(e => showError(e.message))}>下载</button>}{' '}
                     <button className="btn small danger" onClick={() => del(t)}>删除</button>
                   </td>
                 </tr>
@@ -148,7 +149,11 @@ export default function TemplateManager() {
       {modal && (
         <Modal title={modal.isNew ? '新增模版' : '编辑模版'} onClose={() => setModal(null)} wide>
           <div className="field" style={{ marginBottom: 10 }}><label>模版类型</label>
-            <input value={modal.form.ttype} onChange={e => setF('ttype', e.target.value)} placeholder="如 提单表 / 回执表" /></div>
+            <select value={modal.form.tpl_type} onChange={e => setF('tpl_type', e.target.value)}>
+              <option value="订单">订单</option><option value="出数">出数</option><option value="账单">账单</option><option value="其他">其他</option>
+            </select></div>
+          <div className="field" style={{ marginBottom: 10 }}><label>模版名称</label>
+            <input value={modal.form.ttype} onChange={e => setF('ttype', e.target.value)} placeholder="如 提单表 / 出数模版A" /></div>
           <div className="field" style={{ marginBottom: 14 }}><label>模版编号</label>
             <input value={modal.form.code} disabled placeholder={modal.isNew ? '保存后自动生成' : ''} /></div>
           <div className="field" style={{ marginBottom: 14 }}><label>说明（模版用途、填写注意事项等）</label>
@@ -161,7 +166,7 @@ export default function TemplateManager() {
                   ? <span style={{ fontSize: 13 }}><a className="link" onClick={() => showPreview(modal.form)}>{modal.form.file_name}</a></span>
                   : <span style={{ fontSize: 13, color: 'var(--sub)' }}>未上传</span>}
                 <button className="btn small" onClick={() => fileRef.current.click()}>上传</button>
-                {modal.form.has_file && <button className="btn small green" onClick={() => downloadFile(`/api/templates/${modal.form.id}/download`).catch(e => toast(e.message))}>下载</button>}
+                {modal.form.has_file && <button className="btn small green" onClick={() => downloadFile(`/api/templates/${modal.form.id}/download`).catch(e => showError(e.message))}>下载</button>}
                 {modal.form.has_file && <button className="btn small danger" onClick={deleteFile}>删除文件</button>}
               </div>
             </div>
@@ -198,7 +203,8 @@ export default function TemplateManager() {
       {detail && (
         <Modal title={`模版详情 · ${detail.code}`} onClose={() => setDetail(null)} wide>
           <table className="kv"><tbody>
-            <tr><td>模版类型</td><td>{detail.ttype || '—'}</td></tr>
+            <tr><td>模版类型</td><td><Badge value={detail.tpl_type || '其他'} /></td></tr>
+            <tr><td>模版名称</td><td>{detail.ttype || '—'}</td></tr>
             <tr><td>模版编号</td><td>{detail.code}</td></tr>
             <tr><td>文件名</td><td>{detail.has_file ? (detail.file_name || detail.name) : '未上传'}</td></tr>
             <tr><td>创建时间</td><td>{detail.created_at || '—'}</td></tr>

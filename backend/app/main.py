@@ -90,6 +90,8 @@ def _migrate_schema():
                 conn.execute(text("ALTER TABLE url ADD COLUMN platform_id INTEGER"))
             if "description" not in tpl_cols:
                 conn.execute(text("ALTER TABLE template ADD COLUMN description TEXT"))
+            if "tpl_type" not in tpl_cols:
+                conn.execute(text("ALTER TABLE template ADD COLUMN tpl_type VARCHAR(20)"))
             for col, ddl in [
                 ("task_id", "VARCHAR(100)"),
                 ("operator", "VARCHAR(50)"),
@@ -116,18 +118,42 @@ def _migrate_schema():
             for col, ddl in [
                 ("start_date", "DATE"),
                 ("end_date", "DATE"),
+                ("bill_tpl_id", "INTEGER"),
             ]:
                 if col not in cust_cols:
                     conn.execute(text(f"ALTER TABLE customer ADD COLUMN {col} {ddl}"))
+            # 去掉过严的唯一索引：同一任务可有多条不同 URL 的订单，重复判定交给「验重」逻辑（url+地区+运营商）
             conn.execute(text("DROP INDEX IF EXISTS uq_order_up_date_task"))
-            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_order_up_date_task ON orders (upstream_id, order_date, task_name, operator_id)"))
             conn.execute(text("DROP INDEX IF EXISTS uq_order_active_task"))
-            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_order_active_task ON orders (upstream_id, task_name, operator_id) WHERE status = '在执'"))
     except Exception as e:  # noqa
         print(f"[migrate] 跳过: {e}")
 
 
+def _backfill_tpl_types():
+    """给已有模版回填模版类型（订单/出数/账单/其他）"""
+    try:
+        from .models import Template
+        db = SessionLocal()
+        try:
+            for t in db.query(Template).filter((Template.tpl_type.is_(None)) | (Template.tpl_type == "")).all():
+                name = f"{t.ttype or ''} {t.code or ''}"
+                if "出数" in name:
+                    t.tpl_type = "出数"
+                elif "账单" in name:
+                    t.tpl_type = "账单"
+                elif any(k in name for k in ("提单", "改单", "停单", "导入导出", "订单")):
+                    t.tpl_type = "订单"
+                else:
+                    t.tpl_type = "其他"
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:  # noqa
+        print(f"[backfill tpl_type] 跳过: {e}")
+
+
 _migrate_schema()
+_backfill_tpl_types()
 
 app = FastAPI(title="LM订单管理系统")
 

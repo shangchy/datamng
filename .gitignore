@@ -41,15 +41,15 @@ Thumbs.db
 *.log
 *.pid
 *.err
+backend/logs/
 
 # ===== 业务数据文件（Excel 回执/样本等） =====
 *.xlsx
 *.xls
 *.csv
 
-# ===== 部署产物 / 打包 / 启动脚本（不入库） =====
+# ===== 部署产物 / 打包 / 启动脚本 =====
 *.zip
-run.bat
 tunnel.bat
 cloudflared/
 

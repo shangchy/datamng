@@ -381,7 +381,7 @@ def create_order(body: OrderBody, db: Session = Depends(get_db), user=Depends(ge
         raise HTTPException(status_code=422, detail=f"缺少必填字段：{'、'.join(missing)}")
     dup = _find_dup_task(db, body.upstream_id, body.order_date, body.task_name, status="未提", operator_id=body.operator_id)
     if dup:
-        raise HTTPException(status_code=409, detail=f"任务「{body.task_name}」已存在未停订单或相同更新日期记录，请勿重复提交")
+        raise HTTPException(status_code=409, detail=f"工单号「{body.task_id or '—'}」与 工单号「{dup.task_id or '—'}」重复，请勿重复提交")
     province = body.province or ("全国" if not body.city else "")
     order_no = _next_order_no(db, body.order_date)
     o = Order(order_no=order_no, customer_id=body.customer_id, upstream_id=body.upstream_id,
@@ -436,7 +436,7 @@ def update_order(oid: int, body: OrderBody, db: Session = Depends(get_db), user=
 
     dup = _find_dup_task(db, body.upstream_id, body.order_date, body.task_name, status=new_status, exclude_id=oid, operator_id=body.operator_id)
     if dup:
-        raise HTTPException(status_code=409, detail=f"任务「{body.task_name}」已存在未停订单或相同更新日期记录")
+        raise HTTPException(status_code=409, detail=f"工单号「{body.task_id or '—'}」与 工单号「{dup.task_id or '—'}」重复")
     body.province = body.province or ("全国" if not body.city else "")
     for k in ["customer_id", "upstream_id", "channel_id", "operator_id", "task_name", "task_id", "qty", "duration",
               "province", "city", "excl_province", "excl_city", "age_min", "age_max", "pv",
@@ -510,9 +510,14 @@ def stop_order(oid: int, body: StopBody, db: Session = Depends(get_db), _=Depend
 
 @router.post("/batch-stop")
 def batch_stop(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    if body.order_date:
+        if body.order_date > date.today():
+            raise HTTPException(status_code=400, detail="更新日期不能是未来日期，请修改更新日期")
     rows = db.query(Order).filter(Order.id.in_(body.ids)).all()
     task_names = []
     for o in rows:
+        if body.order_date:
+            o.order_date = body.order_date
         o.status = "待停"
         o.stop_date = date.today()
         o.updated_at = datetime.now()
@@ -549,40 +554,35 @@ def batch_group(body: BatchGroupBody, db: Session = Depends(get_db), _=Depends(g
 
 @router.post("/check-duplicates")
 def check_duplicates(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """查重：url + 地区 + 运营商 至少一个组合相同即视为重复，把其他订单编号写入 dup_order_nos"""
-    orders = db.query(Order).all()
+    """查重：只验证「在执」订单，运营商 + url集合 + 地区集合 全部一致才算重复"""
+    orders = db.query(Order).filter(Order.status == "在执").all()
     for o in orders:
         o.dup_order_nos = None
 
-    comb_map: dict = {}
-    order_combos: dict = {}
+    def split_regions(province, city):
+        rs = []
+        for v in re.split(r"[|｜,，;；]", (province or "")):
+            v = v.strip()
+            if v:
+                rs.append(v)
+        for v in re.split(r"[|｜,，;；]", (city or "")):
+            v = v.strip()
+            if v:
+                rs.append(v)
+        return rs
+
+    sig_map = {}
+    order_sig = {}
     for o in orders:
         op = _operator_name(db, o)
-        urls = [u.url.strip() for u in o.urls if (u.url or "").strip()]
-        regions = _order_regions(o)
-        combos = set()
-        for u in urls:
-            for r in regions:
-                combos.add((op, u, r))
-        if urls and not regions:
-            for u in urls:
-                combos.add((op, u, ""))
-        if regions and not urls:
-            for r in regions:
-                combos.add((op, "", r))
-        order_combos[o.id] = combos
-        for c in combos:
-            comb_map.setdefault(c, []).append(o.id)
-
-    dup_map: dict = {o.id: set() for o in orders}
-    for o in orders:
-        for c in order_combos.get(o.id, set()):
-            for other_id in comb_map.get(c, []):
-                if other_id != o.id:
-                    dup_map[o.id].add(other_id)
+        urls = frozenset(u.url.strip() for u in o.urls if (u.url or "").strip())
+        regions = frozenset(split_regions(o.province, o.city))
+        sig = (op, urls, regions)
+        order_sig[o.id] = sig
+        sig_map.setdefault(sig, []).append(o.id)
 
     for o in orders:
-        others = dup_map.get(o.id, set())
+        others = [oid for oid in sig_map.get(order_sig[o.id], []) if oid != o.id]
         if others:
             nos = []
             for oid in sorted(others):
@@ -593,7 +593,7 @@ def check_duplicates(db: Session = Depends(get_db), _=Depends(get_current_user))
     db.commit()
     dup_count = sum(1 for o in orders if o.dup_order_nos)
     return {"code": 0, "data": {"total": len(orders), "duplicates": dup_count},
-            "msg": f"查重完成：共 {len(orders)} 单，{dup_count} 单存在重复"}
+            "msg": f"查重完成：共 {len(orders)} 单（在执），{dup_count} 单存在重复"}
 
 
 def _parse_channel(name):
@@ -620,9 +620,9 @@ def _export_row(db, o):
     operator = _operator_name(db, o)
     urls = "\n".join(u.url for u in o.urls)
     return [
-        str(o.start_date) if o.start_date else "",
-        str(o.end_date) if o.end_date else "",
-        str(o.order_date) if o.order_date else "",
+        o.start_date.strftime("%m%d") if o.start_date else "",
+        o.end_date.strftime("%m%d") if o.end_date else "",
+        o.order_date.strftime("%m%d") if o.order_date else "",
         o.status or "",
         up.name if up else "",
         o.order_no or "",
@@ -793,7 +793,7 @@ def export_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
 
 
 def _map_import_status(raw_status):
-    """把文件里的状态原样映射为系统状态"""
+    """把文件里的状态原样映射为系统状态：停相关→已停，其余原样，空→未提"""
     s = (raw_status or "").strip()
     if s in ("已停", "停", "停单", "已停单"):
         return "已停"
@@ -827,15 +827,9 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
 
     imported = 0
     updated = 0
-    duplicated = 0
     imported_nos = []
     updated_nos = []
     errors = []
-    seen_keys = set()
-    existing_keys = set()
-    for (e_up, e_date, e_tn, e_op) in db.query(Order.upstream_id, Order.order_date, Order.task_name, Order.operator_id).all():
-        if e_tn:
-            existing_keys.add((e_up, e_date, e_tn, e_op))
     tpl_code_map = {t.id: t.code for t in db.query(Template).all()}
     cust_code_map = {c.id: c.code for c in db.query(Customer).all()}
     group_consistency = {}
@@ -844,6 +838,8 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
             "tpl_code": tpl_code_map.get(o.tpl_id, ""),
             "cust_code": cust_code_map.get(o.customer_id, ""),
         })
+    # 预加载已有订单号，导入按订单号匹配（订单号相同才更新，无订单号则插入）
+    existing_order_no = {o.order_no: o for o in db.query(Order).all() if o.order_no}
     for idx, r in enumerate(rows):
         if not any((str(v) if v is not None else "").strip() for v in r.values()):
             continue
@@ -857,8 +853,6 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
             ch = db.query(Channel).filter(Channel.name == r.get("channel")).first() if r.get("channel") else None
             op = db.query(Operator).filter(Operator.name == r.get("operator")).first() if r.get("operator") else None
             tpl_code = _resolve_tpl_code(r.get("tpl_code"))
-            if ch and ch.name == "小程序":
-                tpl_code = "MB-002"
             tpl = db.query(Template).filter(Template.code == tpl_code).first() if tpl_code else None
             task_name = r.get("task_name")
             start_date = _date(r.get("start_date"))
@@ -911,30 +905,15 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
             url_str = str(r.get("url") or "")
             add_name = str(r.get("add_name") or "").strip() in ("是", "true", "1", "True", "yes", "YES")
 
-            key = (up_id, order_date, task_name, op_id)
-            if key in seen_keys:
-                duplicated += 1
-                continue
-            seen_keys.add(key)
-
-            existing = None
-            if key in existing_keys:
-                existing = db.query(Order).filter(
-                    Order.upstream_id == up_id,
-                    Order.order_date == order_date,
-                    Order.task_name == task_name,
-                    Order.operator_id == op_id,
-                ).first()
-            # 未按更新日期匹配到，但存在同(甲方+任务名+运营商)的未停订单，则更新该订单（含更新日期）
-            if existing is None and import_status in ACTIVE_STATUSES:
-                existing = db.query(Order).filter(
-                    Order.upstream_id == up_id,
-                    Order.task_name == task_name,
-                    Order.operator_id == op_id,
-                    Order.status.in_(ACTIVE_STATUSES),
-                ).first()
+            # 按订单号匹配：订单号相同才更新，无订单号则插入
+            order_no = (r.get("order_no") or "").strip()
+            existing = existing_order_no.get(order_no) if order_no else None
 
             if existing:
+                before_urls = sorted((u.url or "").strip() for u in db.query(OrderUrl).filter(OrderUrl.order_id == existing.id).all())
+                before_vals = {"qty": existing.qty, "province": existing.province, "city": existing.city,
+                               "excl_province": existing.excl_province, "excl_city": existing.excl_city,
+                               "age_min": existing.age_min, "age_max": existing.age_max, "pv": existing.pv}
                 existing.channel_id = ch.id if ch else None
                 existing.operator_id = op.id if op else None
                 existing.order_date = order_date
@@ -971,6 +950,17 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                     urls = [u for u in re.split(r"[|\n\r｜]+", url_str) if u.strip()]
                     for i, u in enumerate(urls):
                         db.add(OrderUrl(order_id=existing.id, url=u.strip(), level="高", sort_no=i))
+                new_urls = sorted(u.strip() for u in re.split(r"[|\n\r｜]+", url_str) if u.strip())
+                changed = []
+                if before_urls != new_urls:
+                    changed.append("url")
+                new_vals = {"qty": qty, "province": province, "city": r.get("city"),
+                            "excl_province": r.get("excl_province"), "excl_city": r.get("excl_city"),
+                            "age_min": _int(r.get("age_min")), "age_max": _int(r.get("age_max")), "pv": _int(r.get("pv"))}
+                for f in ("qty", "province", "city", "excl_province", "excl_city", "age_min", "age_max", "pv"):
+                    if _norm(before_vals.get(f)) != _norm(new_vals.get(f)):
+                        changed.append(f)
+                existing.change_fields_json = json.dumps(changed, ensure_ascii=False) if changed else None
                 updated += 1
                 updated_nos.append(existing.order_no)
             else:
@@ -1001,11 +991,11 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                 imported_nos.append(order_no)
         except Exception as e:  # noqa
             errors.append({"row": idx + 2, "reason": str(e)})
-    _op_log(db, user, "import_orders", f"导入 {imported} 条，更新 {updated} 条，重复 {duplicated} 条，失败 {len(errors)} 条",
-            None, {"imported": imported, "updated": updated, "duplicated": duplicated, "failed": len(errors), "order_nos": imported_nos, "updated_nos": updated_nos})
+    _op_log(db, user, "import_orders", f"导入 {imported} 条，更新 {updated} 条，失败 {len(errors)} 条",
+            None, {"imported": imported, "updated": updated, "failed": len(errors), "order_nos": imported_nos, "updated_nos": updated_nos})
     db.commit()
-    return {"code": 0, "data": {"imported": imported, "updated": updated, "duplicated": duplicated, "errors": errors},
-            "msg": f"导入 {imported} 条，更新 {updated} 条，重复 {duplicated} 条，失败 {len(errors)} 条"}
+    return {"code": 0, "data": {"imported": imported, "updated": updated, "errors": errors},
+            "msg": f"导入 {imported} 条，更新 {updated} 条，失败 {len(errors)} 条"}
 
 
 @router.post("/import-receipt")
@@ -1073,10 +1063,11 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
             Order.upstream_id == up_id,
             Order.operator_id == (op.id if op else None),
             Order.channel_id == (ch.id if ch else None),
+            Order.status != "已停",
             or_(Order.task_id.is_(None), Order.task_id == ""),
         ).all()
         if len(orders) == 0:
-            errors.append({"task_name": task_name, "reason": "未找到匹配订单（甲方+任务名+运营商+渠道 且工单号为空）"})
+            errors.append({"task_name": task_name, "reason": "未找到匹配订单（甲方+任务名+运营商+渠道 且工单号为空、非已停）"})
             continue
         if len(orders) > 1:
             errors.append({"task_name": task_name, "reason": f"匹配到 {len(orders)} 个订单"})

@@ -94,7 +94,7 @@ const KINDS = {
 export default function SimpleList({ kind }) {
   const cfg = KINDS[kind]
   const hasRowOps = !!(cfg.simple || cfg.editUrl || cfg.del || cfg.dl || cfg.handle || cfg.reset || cfg.pwd || cfg.detail)
-  const toast = useToast()
+  const { toast, showError } = useToast()
   const nav = useNavigate()
   const [confirm, confirmEl] = useConfirm()
   const { visible: cols, picker, openPicker } = useColumnConfig(cfg.cols, `cols_${kind}`)
@@ -253,12 +253,12 @@ export default function SimpleList({ kind }) {
     setSelected(selected.length === ids.length ? [] : ids)
   }
   async function batchDelete() {
-    if (!selected.length) { toast('请先勾选要删除的数据'); return }
+    if (!selected.length) { showError('请先勾选要删除的数据'); return }
     if (!(await confirm(`确认删除选中的 ${selected.length} 条数据？此操作不可恢复。`))) return
     try {
       await api.post(`${cfg.endpoint}/batch-delete`, { ids: selected })
       toast('已删除'); setSelected([]); load()
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
   function openAddUrl() {
     setUrlModal({ mode: 'add', name: '', level: '高', owner_id: '', channel_id: '', platform_id: '', urls: [''] })
@@ -287,6 +287,11 @@ export default function SimpleList({ kind }) {
     toast(m.mode === 'edit' ? '已保存' : '已新增'); setUrlModal(null); load()
   }
   async function handleAlert(r) {
+    try {
+      await api.put(`/api/alerts/${r.id}`)
+      load()
+      window.dispatchEvent(new Event('alert-count-refresh'))
+    } catch (e) { showError(e.message) }
     if (r.type === '账单预警') {
       nav(`/customers?recharge=${r.customer_id}`)
       return
@@ -297,12 +302,12 @@ export default function SimpleList({ kind }) {
     if (await confirm('确认重置该账户密码？')) { await api.post(`/api/users/${id}/reset-password`); toast('密码已重置') }
   }
   async function savePwd() {
-    if (!pwdModal.password || pwdModal.password.length < 6) { toast('密码长度至少 6 位'); return }
-    if (pwdModal.password !== pwdModal.confirm) { toast('两次输入的新密码不一致'); return }
+    if (!pwdModal.password || pwdModal.password.length < 6) { showError('密码长度至少 6 位'); return }
+    if (pwdModal.password !== pwdModal.confirm) { showError('两次输入的新密码不一致'); return }
     try {
       await api.post(`/api/users/${pwdModal.id}/set-password`, { password: pwdModal.password })
       toast('密码已修改'); setPwdModal(null)
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   async function openRolePerms() {
@@ -310,16 +315,16 @@ export default function SimpleList({ kind }) {
       const r = await api.get('/api/roles')
       const roles = r.data || []
       const editable = roles.filter(x => x.code !== 'admin')
-      if (!editable.length) { toast('无可配置角色'); return }
+      if (!editable.length) { showError('无可配置角色'); return }
       const pr = await api.get(`/api/roles/${editable[0].id}/permissions`)
       setRolePermModal({ roles, rid: editable[0].id, codes: pr.data.codes || [] })
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
   async function selectRolePerms(rid) {
     try {
       const pr = await api.get(`/api/roles/${rid}/permissions`)
       setRolePermModal({ ...rolePermModal, rid, codes: pr.data.codes || [] })
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
   function togglePerm(code) {
     const codes = rolePermModal.codes.includes(code)
@@ -331,7 +336,7 @@ export default function SimpleList({ kind }) {
     try {
       await api.put(`/api/roles/${rolePermModal.rid}/permissions`, { codes: rolePermModal.codes })
       toast('权限已保存'); setRolePermModal(null)
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   function cell(c, r) {
@@ -343,7 +348,7 @@ export default function SimpleList({ kind }) {
       return <a className="link" onClick={() => openOrderByTaskId(v)}>{v}</a>
     }
     if (kind === 'daily' && c.k === 'source_file' && r.source_file_id) {
-      return <a className="link" onClick={() => downloadFile(`/api/source-files/${r.source_file_id}/download`).catch(e => toast(e.message))}>{v || '—'}</a>
+      return <a className="link" onClick={() => downloadFile(`/api/source-files/${r.source_file_id}/download`).catch(e => showError(e.message))}>{v || '—'}</a>
     }
     if (c.k === 'size') {
       if (v == null) return '—'
@@ -360,8 +365,8 @@ export default function SimpleList({ kind }) {
 
   function exportExcel() {
     const qs = buildQuery(filters)
-    if (kind === 'fund') { downloadFile('/api/fund/export?' + qs).catch(e => toast(e.message)); toast('正在导出...'); return }
-    if (kind === 'daily') { downloadFile('/api/daily-data/export?' + qs).catch(e => toast(e.message)); toast('正在导出...'); return }
+    if (kind === 'fund') { downloadFile('/api/fund/export?' + qs).catch(e => showError(e.message)); toast('正在导出...'); return }
+    if (kind === 'daily') { downloadFile('/api/daily-data/export?' + qs).catch(e => showError(e.message)); toast('正在导出...'); return }
     downloadCsv(`${cfg.title}.csv`, cfg.cols, rows)
     toast('已导出')
   }
@@ -381,8 +386,8 @@ export default function SimpleList({ kind }) {
 
   async function importDaily() {
     const fs = dailyFileRef.current?.files
-    if (!fs || !fs.length) { toast('请选择文件'); return }
-    if (!dailyDate) { toast('请选择数据日期'); return }
+    if (!fs || !fs.length) { showError('请选择文件'); return }
+    if (!dailyDate) { showError('请选择数据日期'); return }
     setDailyModal(false)
     const files = Array.from(fs)
     const buildFd = (confirmFlag) => {
@@ -404,11 +409,11 @@ export default function SimpleList({ kind }) {
       }
       setBusyMsg('正在处理数据，请稍候…'); setBusyProgress(100)
       toast(data.msg); load()
-    } catch (e) { toast(e.message) } finally { setBusy(false); setBusyProgress(null) }
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
   async function doDistribute() {
-    if (!distDate) { toast('请选择数据日期'); return }
+    if (!distDate) { showError('请选择数据日期'); return }
     setDistModal(false)
     try {
       let r = await api.post('/api/daily-data/distribute', { date: distDate })
@@ -435,39 +440,39 @@ export default function SimpleList({ kind }) {
         }
         await new Promise(res => setTimeout(res, 500))
       }
-    } catch (e) { toast(e.message) } finally { setBusy(false); setBusyProgress(null) }
+    } catch (e) { showError(e.message || '分数据失败') } finally { setBusy(false); setBusyProgress(null) }
   }
 
   async function doWashExport() {
-    if (!washDate) { toast('请选择数据日期'); return }
+    if (!washDate) { showError('请选择数据日期'); return }
     setWashModal(false)
     try {
       await downloadFile(`/api/daily-data/wash-export?date=${encodeURIComponent(washDate)}`)
       toast('洗名手机号已导出')
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   async function importWash() {
     const f = washFileRef.current?.files?.[0]
-    if (!f) { toast('请选择洗名文件'); return }
+    if (!f) { showError('请选择洗名文件'); return }
     setBusy(true); setBusyMsg('正在导入洗名…'); setBusyProgress(null)
     try {
       const fd = new FormData()
       fd.append('file', f)
       const data = await uploadFile('/api/daily-data/import-wash', fd)
       toast(data.msg); load()
-    } catch (e) { toast(e.message) } finally { setBusy(false); setBusyProgress(null) }
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
   function downloadSourceFile(r) {
-    downloadFile(`/api/source-files/${r.id}/download`).catch(e => toast(e.message))
+    downloadFile(`/api/source-files/${r.id}/download`).catch(e => showError(e.message))
   }
 
   async function viewBillDetail(id) {
     try {
       const r = await api.get(`/api/bills/${id}`)
       setBillDetail(r.data)
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   async function openOrderByTaskId(taskId) {
@@ -475,8 +480,8 @@ export default function SimpleList({ kind }) {
     try {
       const r = await api.get('/api/orders?task_id=' + encodeURIComponent(taskId) + '&per_page=1')
       if (r.data.rows.length) setOrderDetail(r.data.rows[0])
-      else toast('未找到订单 ' + taskId)
-    } catch (e) { toast(e.message) }
+      else showError('未找到订单 ' + taskId)
+    } catch (e) { showError(e.message) }
   }
 
   async function clearData() {
@@ -484,7 +489,7 @@ export default function SimpleList({ kind }) {
     try {
       await api.del(cfg.endpoint)
       toast('已清空'); load()
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   return (
@@ -492,8 +497,8 @@ export default function SimpleList({ kind }) {
       {confirmEl}
       {picker}
       {busy && <Loading text={busyMsg} progress={busyProgress} />}
-      <input type="file" accept=".csv,.xlsx,.xls" style={{ display: 'none' }} ref={fileRef} onChange={e => { if (e.target.files[0]) importFile(e.target.files[0]).catch(err => toast(err.message)); e.target.value = '' }} />
-      <input type="file" accept=".csv,.xlsx,.xls" style={{ display: 'none' }} ref={washFileRef} onChange={e => { if (e.target.files[0]) importWash().catch(err => toast(err.message)); e.target.value = '' }} />
+      <input type="file" accept=".csv,.xlsx,.xls" style={{ display: 'none' }} ref={fileRef} onChange={e => { if (e.target.files[0]) importFile(e.target.files[0]).catch(err => showError(err.message)); e.target.value = '' }} />
+      <input type="file" accept=".csv,.xlsx,.xls" style={{ display: 'none' }} ref={washFileRef} onChange={e => { if (e.target.files[0]) importWash().catch(err => showError(err.message)); e.target.value = '' }} />
       <div className="toolbar">
         <div className={`filter-wrap ${filterCollapsed ? 'collapsed' : ''}`}>
           <FilterBar cols={cfg.cols} filters={filters} setFilters={setFilters} onSearch={search} fieldOptions={fieldOptions} actions={false} />
@@ -572,7 +577,7 @@ export default function SimpleList({ kind }) {
             <input type="file" accept=".zip,.xlsx,.xls" multiple ref={dailyFileRef} /></div>
           <div className="foot">
             <button className="btn" onClick={() => setDailyModal(false)}>取消</button>
-            <button className="btn primary" onClick={() => importDaily().catch(e => toast(e.message))}>开始导入</button>
+            <button className="btn primary" onClick={() => importDaily().catch(e => showError(e.message))}>开始导入</button>
           </div>
         </Modal>
       )}
@@ -584,7 +589,7 @@ export default function SimpleList({ kind }) {
             <input type="date" value={distDate} onChange={e => setDistDate(e.target.value)} /></div>
           <div className="foot">
             <button className="btn" onClick={() => setDistModal(false)}>取消</button>
-            <button className="btn primary" onClick={() => doDistribute().catch(e => toast(e.message))}>分数据</button>
+            <button className="btn primary" onClick={() => doDistribute().catch(e => showError(e.message))}>分数据</button>
           </div>
         </Modal>
       )}
@@ -596,7 +601,7 @@ export default function SimpleList({ kind }) {
             <input type="date" value={washDate} onChange={e => setWashDate(e.target.value)} /></div>
           <div className="foot">
             <button className="btn" onClick={() => setWashModal(false)}>取消</button>
-            <button className="btn primary" onClick={() => doWashExport().catch(e => toast(e.message))}>导出</button>
+            <button className="btn primary" onClick={() => doWashExport().catch(e => showError(e.message))}>导出</button>
           </div>
         </Modal>
       )}

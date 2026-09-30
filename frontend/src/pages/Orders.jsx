@@ -71,7 +71,7 @@ function toComma(val) {
 }
 
 export default function Orders({ variant = 'orders' }) {
-  const toast = useToast()
+  const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
   const isStop = variant === 'stop'
   const BASE_COLS = isStop ? [{ k: 'batch_no', l: '提单批次' }, ...COLS] : COLS
@@ -91,6 +91,7 @@ export default function Orders({ variant = 'orders' }) {
   const [detail, setDetail] = useState(null)
   const [stopTarget, setStopTarget] = useState(null)
   const [stopDate, setStopDate] = useState('')
+  const [stopReason, setStopReason] = useState('业务调整')
   const [urlDetail, setUrlDetail] = useState(null)
   const [regionDetail, setRegionDetail] = useState(null)
   const [geo, setGeo] = useState({ provinces: [], citiesMap: {} })
@@ -185,29 +186,28 @@ export default function Orders({ variant = 'orders' }) {
     const ids = sorted().map(o => o.id)
     setSelected(selected.length === ids.length ? [] : ids)
   }
-  async function batchStop() {
-    if (!selected.length) { toast('请先勾选要停单的订单'); return }
-    if (!(await confirm(`确认停单选中的 ${selected.length} 个订单？`))) return
-    try {
-      await api.post('/api/orders/batch-stop', { ids: selected })
-      toast('已批量停单'); setSelected([]); load()
-    } catch (e) { toast(e.message) }
+  function batchStop() {
+    if (!selected.length) { showError('请先勾选要停单的订单'); return }
+    const d = new Date()
+    setStopDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
+    setStopReason('业务调整')
+    setStopTarget({ ids: selected, batch: true })
   }
 
   async function batchDelete() {
-    if (!selected.length) { toast('请先勾选要删除的订单'); return }
+    if (!selected.length) { showError('请先勾选要删除的订单'); return }
     if (!(await confirm(`确认删除选中的 ${selected.length} 个订单？此操作不可恢复。`))) return
     try {
       await api.post('/api/orders/batch-delete', { ids: selected })
       toast('已批量删除'); setSelected([]); load()
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   async function batchGroup() {
     try {
       await api.post('/api/orders/batch-group', { ids: selected, group_name: groupVal })
       toast('小组已批量修改'); setGroupModal(false); setSelected([]); load()
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   function openEdit(o) {
@@ -238,24 +238,30 @@ export default function Orders({ variant = 'orders' }) {
     if (!form.end_date) missing.push('截止日期')
     if (!form.upstream_id) missing.push('上游')
     if (!form.customer_id) missing.push('一级代理')
-    if (missing.length) { toast('缺少必填字段：' + missing.join('、')); return }
+    if (missing.length) { showError('缺少必填字段：' + missing.join('、')); return }
     if (!(await confirm('确认保存该订单？'))) return
     try {
       const body = { ...form, qty: form.qty === '' ? null : Number(form.qty), age_min: form.age_min === '' ? null : Number(form.age_min), age_max: form.age_max === '' ? null : Number(form.age_max), pv: form.pv === '' ? null : Number(form.pv), customer_id: Number(form.customer_id), upstream_id: form.upstream_id ? Number(form.upstream_id) : null, channel_id: form.channel_id ? Number(form.channel_id) : null, operator_id: form.operator_id ? Number(form.operator_id) : null, template_id: form.template_id === '' || form.template_id == null ? null : Number(form.template_id), tpl_id: form.tpl_id === '' || form.tpl_id == null ? null : Number(form.tpl_id), price: form.price === '' || form.price == null ? null : Number(form.price), order_date: form.order_date || null, duration: computedDuration, urls: (form.url || '').split('\n').map(s => s.trim()).filter(Boolean).map(u => ({ url: u, level: '高' })) }
       if (modal === 'create') await api.post('/api/orders', body)
       else await api.put(`/api/orders/${form.id}`, body)
       toast(modal === 'modify' ? '改单已保存（状态：改单）' : '已保存（状态：未提）'); setModal(null); load()
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   async function stop() {
-    if (!stopDate) { toast('请选择更新日期'); return }
-    if (await confirm('确认停单？')) {
-      try {
-        await api.post(`/api/orders/${stopTarget.id}/stop`, { reason: '', note: '', order_date: stopDate })
-        toast('已停'); setStopTarget(null); setStopDate(''); load()
-      } catch (e) { toast(e.message) }
-    }
+    if (!stopDate) { showError('请选择更新日期'); return }
+    const isBatch = stopTarget && stopTarget.batch
+    if (!(await confirm(isBatch ? `确认停单选中的 ${stopTarget.ids.length} 个订单？` : '确认停单？'))) return
+    try {
+      if (isBatch) {
+        await api.post('/api/orders/batch-stop', { ids: stopTarget.ids, reason: stopReason, note: '', order_date: stopDate })
+        toast('已批量停单'); setSelected([])
+      } else {
+        await api.post(`/api/orders/${stopTarget.id}/stop`, { reason: stopReason, note: '', order_date: stopDate })
+        toast('已停')
+      }
+      setStopTarget(null); setStopDate(''); load(); window.dispatchEvent(new Event('alert-count-refresh'))
+    } catch (e) { showError(e.message) }
   }
 
   async function delOrder(o) {
@@ -263,7 +269,7 @@ export default function Orders({ variant = 'orders' }) {
     try {
       await api.del(`/api/orders/${o.id}`)
       toast('已删除'); setSelected(s => s.filter(x => x !== o.id)); load()
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   async function importOrders(file) {
@@ -323,7 +329,7 @@ export default function Orders({ variant = 'orders' }) {
       const body = { date: confirmDate, order_ids: selected.length ? selected : [] }
       const r = await api.post('/api/orders/confirm-tidabiao', body)
       toast(r.msg || '提单确认完成'); setSelected([]); load()
-    } catch (e) { toast(e.message) } finally { setBusy(false) }
+    } catch (e) { showError(e.message) } finally { setBusy(false) }
   }
 
   function showTpl(o) {
@@ -335,8 +341,8 @@ export default function Orders({ variant = 'orders' }) {
     try {
       const r = await api.get('/api/orders?order_no=' + encodeURIComponent(no) + '&per_page=1')
       if (r.data.rows.length) setDetail(r.data.rows[0])
-      else toast('未找到订单 ' + no)
-    } catch (e) { toast(e.message) }
+      else showError('未找到订单 ' + no)
+    } catch (e) { showError(e.message) }
   }
 
   async function checkDuplicates() {
@@ -344,7 +350,7 @@ export default function Orders({ variant = 'orders' }) {
     try {
       const r = await api.post('/api/orders/check-duplicates')
       toast(r.msg || '验重完成'); load()
-    } catch (e) { toast(e.message) } finally { setBusy(false) }
+    } catch (e) { showError(e.message) } finally { setBusy(false) }
   }
 
   function orderCell(o, c) {
@@ -389,7 +395,7 @@ export default function Orders({ variant = 'orders' }) {
     const summary = summarizeFilters()
     if (!(await confirm(`确认按以下筛选条件导出订单数据？\n\n${summary}`))) return
     const qs = buildQuery(filters)
-    downloadFile('/api/orders/export?' + qs).catch(e => toast(e.message))
+    downloadFile('/api/orders/export?' + qs).catch(e => showError(e.message))
     toast('正在导出订单...')
   }
 
@@ -412,7 +418,7 @@ export default function Orders({ variant = 'orders' }) {
           {!isStop && <button className="btn primary" onClick={() => setConfirmModal(true)}>提单确认</button>}
           {!isStop && <button className="btn" onClick={checkDuplicates}>订单验重</button>}
           <button className="btn green" onClick={exportExcel}>导出订单</button>
-          {!isStop && <button className="btn" onClick={() => downloadFile('/api/orders/export-template').catch(e => toast(e.message))}>导出模版</button>}
+          {!isStop && <button className="btn" onClick={() => downloadFile('/api/orders/export-template').catch(e => showError(e.message))}>导出模版</button>}
           {!isStop && selected.length > 0 && <button className="btn danger" onClick={batchStop}>批量停单({selected.length})</button>}
           {!isStop && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
           {!isStop && selected.length > 0 && <button className="btn" onClick={() => { setGroupVal(''); setGroupModal(true) }}>批量修改小组({selected.length})</button>}
@@ -441,7 +447,7 @@ export default function Orders({ variant = 'orders' }) {
                 <td className="ops">
                   {o.status === '未提' && <IconBtn title="编辑" color="#2563eb" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconEdit}</IconBtn>}
                   {['在执', '已停', '改单'].includes(o.status) && <IconBtn title="改单" color="#7c3aed" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconModify}</IconBtn>}
-                  {['在执', '改单'].includes(o.status) && <IconBtn title="停单" color="#d97706" onClick={e => { e.stopPropagation(); const d = new Date(); setStopDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); setStopTarget(o) }}>{IconStop}</IconBtn>}
+                  {['在执', '改单'].includes(o.status) && <IconBtn title="停单" color="#d97706" onClick={e => { e.stopPropagation(); const d = new Date(); setStopDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); setStopReason('业务调整'); setStopTarget(o) }}>{IconStop}</IconBtn>}
                   <IconBtn title="删除" color="#dc2626" onClick={e => { e.stopPropagation(); delOrder(o) }}>{IconDelete}</IconBtn>
                 </td>
                 )}
@@ -563,12 +569,12 @@ export default function Orders({ variant = 'orders' }) {
       )}
 
       {stopTarget && (
-        <Modal title="停单确认" onClose={() => setStopTarget(null)}>
-          <div className="note">停单后该订单将停止采集，并将更新日期更新为所选日期。</div>
+        <Modal title={stopTarget.batch ? '批量停单确认' : '停单确认'} onClose={() => setStopTarget(null)}>
+          <div className="note">{stopTarget.batch ? `停单选中的 ${stopTarget.ids.length} 个订单，停单后将停止采集，并将更新日期更新为所选日期。` : '停单后该订单将停止采集，并将更新日期更新为所选日期。'}</div>
           <div className="field" style={{ marginBottom: 12 }}><label className="required">更新日期</label>
             <input type="date" value={stopDate} onChange={e => setStopDate(e.target.value)} /></div>
           <div className="field" style={{ marginBottom: 12 }}><label>停单原因</label>
-            <select style={{ width: '100%' }}><option>业务调整</option><option>数据质量不达标</option><option>合同到期</option><option>其他</option></select></div>
+            <select style={{ width: '100%' }} value={stopReason} onChange={e => setStopReason(e.target.value)}><option>业务调整</option><option>数据质量不达标</option><option>合同到期</option><option>其他</option></select></div>
           <div className="foot">
             <button className="btn" onClick={() => setStopTarget(null)}>取消</button>
             <button className="btn danger" onClick={stop}>确认停单</button>
@@ -614,17 +620,17 @@ export default function Orders({ variant = 'orders' }) {
           <input type="file" accept=".csv,.xlsx,.xls" ref={importFileRef} />
           {importResult && (
             <div className="note" style={{ background: importResult.errors.length ? '#fef2f2' : '#ecfdf5', border: '1px solid ' + (importResult.errors.length ? '#fecaca' : '#a7f3d0') }}>
-              导入 {importResult.imported} 条，更新 {importResult.updated || 0} 条，重复 {importResult.duplicated || 0} 条，失败 {importResult.errors.length} 条
+              导入 {importResult.imported} 条，更新 {importResult.updated || 0} 条，失败 {importResult.errors.length} 条
               {importResult.errors.slice(0, 10).map((e, i) => <div key={i}>第 {e.row} 行：{e.reason}</div>)}
             </div>
           )}
           <div className="foot">
             <button className="btn" onClick={() => setImportModal(false)}>关闭</button>
-            <button className="btn primary" onClick={() => {
+            <button className="btn primary" disabled={importResult !== null} onClick={() => {
               const f = importFileRef.current?.files?.[0]
-              if (!f) { toast('请选择文件'); return }
-              importOrders(f).then(() => toast('导入完成')).catch(e => toast(e.message))
-            }}>开始导入</button>
+              if (!f) { showError('请选择文件'); return }
+              importOrders(f).then(() => toast('导入完成')).catch(e => showError(e.message))
+            }}>{importResult !== null ? '已导入' : '开始导入'}</button>
           </div>
         </Modal>
       )}
@@ -654,11 +660,11 @@ export default function Orders({ variant = 'orders' }) {
           )}
           <div className="foot">
             <button className="btn" onClick={() => setReceiptModal(false)}>关闭</button>
-            <button className="btn primary" onClick={() => {
+            <button className="btn primary" disabled={receiptResult !== null} onClick={() => {
               const f = receiptFileRef.current?.files?.[0]
-              if (!f) { toast('请选择文件'); return }
-              importReceipt(f).then(() => toast('回执导入完成')).catch(e => toast(e.message))
-            }}>开始导入</button>
+              if (!f) { showError('请选择文件'); return }
+              importReceipt(f).then(() => toast('回执导入完成')).catch(e => showError(e.message))
+            }}>{receiptResult !== null ? '已导入' : '开始导入'}</button>
           </div>
         </Modal>
       )}
@@ -670,7 +676,7 @@ export default function Orders({ variant = 'orders' }) {
             <input type="date" value={genDate} onChange={e => setGenDate(e.target.value)} /></div>
           <div className="foot">
             <button className="btn" onClick={() => setGenModal(false)}>取消</button>
-            <button className="btn primary" onClick={() => doGenerate().catch(e => toast(e.message))}>生成</button>
+            <button className="btn primary" onClick={() => doGenerate().catch(e => showError(e.message))}>生成</button>
           </div>
         </Modal>
       )}
@@ -682,7 +688,7 @@ export default function Orders({ variant = 'orders' }) {
             <input type="date" value={confirmDate} onChange={e => setConfirmDate(e.target.value)} /></div>
           <div className="foot">
             <button className="btn" onClick={() => setConfirmModal(false)}>取消</button>
-            <button className="btn primary" onClick={() => doConfirm().catch(e => toast(e.message))}>确认</button>
+            <button className="btn primary" onClick={() => doConfirm().catch(e => showError(e.message))}>确认</button>
           </div>
         </Modal>
       )}

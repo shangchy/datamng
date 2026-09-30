@@ -46,7 +46,10 @@ export default function Layout() {
   const [alertCounts, setAlertCounts] = useState({ stop: 0, bill: 0 })
 
   useEffect(() => {
-    api.get('/api/dashboard/alerts-count').then(r => setAlertCounts(r.data)).catch(() => {})
+    const refresh = () => api.get('/api/dashboard/alerts-count').then(r => setAlertCounts(r.data)).catch(() => {})
+    refresh()
+    window.addEventListener('alert-count-refresh', refresh)
+    return () => window.removeEventListener('alert-count-refresh', refresh)
   }, [])
 
   function logout() { clearAuth(); nav('/login') }

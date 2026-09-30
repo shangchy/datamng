@@ -24,7 +24,7 @@ function pieOption(data) {
 }
 
 export default function Dashboard() {
-  const toast = useToast()
+  const { toast, showError } = useToast()
   const [s, setS] = useState(null)
   const [rank, setRank] = useState([])
   const [trend, setTrend] = useState([])
@@ -43,7 +43,7 @@ export default function Dashboard() {
     api.get(`/api/dashboard/channel-pie?start=${start}&end=${end}`).then(r => setPieChan(r.data)).catch(() => {})
   }
   useEffect(() => {
-    api.get('/api/dashboard/summary').then(r => setS(r.data)).catch(e => toast(e.message))
+    api.get('/api/dashboard/summary').then(r => setS(r.data)).catch(e => showError(e.message))
     api.get('/api/dashboard/rank').then(r => setRank(r.data)).catch(() => {})
     loadCharts()
   }, [])

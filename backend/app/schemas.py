@@ -41,12 +41,11 @@ class CustomerBody(BaseModel):
     name: str
     ctype: str = "downstream"
     tg_id: Optional[str] = ""
-    wash_mode: str = "只分"
     is_accounted: bool = True
-    discount: float = 1
     warn_amount: float = 0
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    bill_tpl_id: Optional[int] = None
     note: Optional[str] = ""
     status: int = 1
 
@@ -125,6 +124,7 @@ class BatchGroupBody(BaseModel):
 
 class TemplateBody(BaseModel):
     ttype: str = ""
+    tpl_type: str = "其他"
     code: str = ""
     name: str = ""
     description: str = ""
@@ -163,6 +163,9 @@ class StopBody(BaseModel):
 
 class BatchStopBody(BaseModel):
     ids: list[int]
+    reason: str = ""
+    note: str = ""
+    order_date: Optional[date] = None
 
 
 class GenerateBody(BaseModel):

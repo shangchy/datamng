@@ -1,0 +1,2 @@
+# Windows 批处理脚本保持原始字节（GBK + CRLF），不做换行/编码转换
+*.bat -text

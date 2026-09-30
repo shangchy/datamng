@@ -5,16 +5,16 @@ import { Modal, Badge, useToast, useConfirm } from '../components/ui'
 import FilterBar, { buildQuery } from '../components/FilterBar'
 import Pagination from '../components/Pagination'
 
-const emptyForm = { code: '', name: '', ctype: 'downstream', tg_id: '', wash_mode: '只分', is_accounted: true, discount: 1, warn_amount: 0, start_date: '', end_date: '', note: '', status: 1 }
+const emptyForm = { code: '', name: '', ctype: 'downstream', tg_id: '', is_accounted: true, warn_amount: 0, start_date: '', end_date: '', bill_tpl_id: null, note: '', status: 1 }
 
 const CUST_COLS = [
   { k: 'code', l: '客户编号' }, { k: 'name', l: '客户名称' }, { k: 'ctype', l: '类型' },
-  { k: 'tg_id', l: '飞机账号ID' }, { k: 'wash_mode', l: '加工方式' }, { k: 'status', l: '状态' },
+  { k: 'tg_id', l: '飞机账号ID' }, { k: 'status', l: '状态' },
   { k: 'note', l: '备注' },
 ]
 
 export default function Customers() {
-  const toast = useToast()
+  const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
   const [searchParams] = useSearchParams()
   const [rows, setRows] = useState([])
@@ -29,6 +29,7 @@ export default function Customers() {
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState(10)
   const [sort, setSort] = useState({ k: 'code', dir: 'asc' })
+  const [billTpls, setBillTpls] = useState([])
 
   function toggleSort(k) {
     setSort(s => (s && s.k === k) ? (s.dir === 'asc' ? { k, dir: 'desc' } : null) : { k, dir: 'asc' })
@@ -62,33 +63,37 @@ export default function Customers() {
     if (rid) setRecharge({ customer_id: Number(rid), amount_u: '', recharge_date: new Date().toISOString().slice(0, 10), note: '', from_detail: false })
   }, [searchParams])
 
+  useEffect(() => {
+    api.get('/api/templates').then(r => setBillTpls((r.data || []).filter(t => (t.tpl_type || '').trim() === '账单'))).catch(() => {})
+  }, [])
+
   async function openDetail(c) {
     const r = await api.get(`/api/customers/${c.id}`)
     setDetail(r.data); setTab('orders')
   }
 
   async function saveRecharge() {
-    if (!recharge.amount_u || !recharge.recharge_date) { toast('请填写充值金额和日期'); return }
+    if (!recharge.amount_u || !recharge.recharge_date) { showError('请填写充值金额和日期'); return }
     try {
       await api.post(`/api/customers/${recharge.customer_id}/recharges`, { amount_u: Number(recharge.amount_u), recharge_date: recharge.recharge_date, note: recharge.note || '' })
       const cid = recharge.customer_id, fromDetail = recharge.from_detail
       toast('充值成功'); setRecharge(null)
       if (fromDetail) openDetail({ id: cid }); else load()
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   async function save() {
     if (!(await confirm('确认保存客户信息？'))) return
     try {
-      const body = { ...form, warn_amount: Number(form.warn_amount) || 0, discount: Number(form.discount) || 1, is_accounted: !!form.is_accounted }
+      const body = { ...form, warn_amount: Number(form.warn_amount) || 0, is_accounted: !!form.is_accounted, start_date: form.start_date || null, end_date: form.end_date || null }
       if (modal === 'create') await api.post('/api/customers', body)
       else await api.put(`/api/customers/${form.id}`, body)
       toast('已保存'); setModal(null); load()
-    } catch (e) { toast(e.message) }
+    } catch (e) { showError(e.message) }
   }
 
   function openEdit(c) {
-    setForm({ ...emptyForm, ...c, tg_id: c.tg_id || '', note: c.note || '', start_date: c.start_date || '', end_date: c.end_date || '', discount: c.discount ?? 1, is_accounted: c.is_accounted ?? true })
+    setForm({ ...emptyForm, ...c, tg_id: c.tg_id || '', note: c.note || '', start_date: c.start_date || '', end_date: c.end_date || '', bill_tpl_id: c.bill_tpl_id ?? null, is_accounted: c.is_accounted ?? true })
     setFormTab('orders')
     setModal('edit')
   }
@@ -109,7 +114,6 @@ export default function Customers() {
             <th onClick={() => toggleSort('name')}>客户名称{sort?.k === 'name' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
             <th onClick={() => toggleSort('ctype')}>类型{sort?.k === 'ctype' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
             <th onClick={() => toggleSort('tg_id')}>飞机账号ID{sort?.k === 'tg_id' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
-            <th onClick={() => toggleSort('wash_mode')}>加工方式{sort?.k === 'wash_mode' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
             <th className="num" onClick={() => toggleSort('balance')}>余额{sort?.k === 'balance' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
             <th className="num" onClick={() => toggleSort('warn_amount')}>预警额度{sort?.k === 'warn_amount' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
             <th onClick={() => toggleSort('note')}>备注{sort?.k === 'note' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
@@ -120,7 +124,7 @@ export default function Customers() {
             {sortedRows().map(c => (
               <tr key={c.id} className={c.has_alert ? 'row-alert' : 'clickable'} onDoubleClick={() => openDetail(c)}>
                 <td>{c.code}</td><td>{c.name}</td><td><Badge value={c.ctype === 'upstream' ? '上游' : '下游'} /></td>
-                <td>{c.tg_id || '—'}</td><td>{c.wash_mode}</td><td className="num">¥{c.balance}</td><td className="num">¥{c.warn_amount}</td>
+                <td>{c.tg_id || '—'}</td><td className="num">¥{c.balance}</td><td className="num">¥{c.warn_amount}</td>
                 <td style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{c.note || '—'}</td><td><Badge value={c.status === 1 ? '启用' : '停用'} /></td>
                 <td className="ops">
                   <button className="btn small" onClick={() => openDetail(c)}>详情</button>{' '}
@@ -148,7 +152,7 @@ export default function Customers() {
             <table className="kv"><tbody>
               <tr><td>客户编号</td><td>{detail.code}</td><td>客户名称</td><td>{detail.name}</td></tr>
               <tr><td>类型</td><td>{detail.ctype}</td><td>飞机账号ID</td><td>{detail.tg_id || '—'}</td></tr>
-              <tr><td>加工方式</td><td>{detail.wash_mode}</td><td>预警额度</td><td>¥{detail.warn_amount}</td></tr>
+              <tr><td>是否记账</td><td>{detail.is_accounted ? '是' : '否'}</td><td>预警额度</td><td>¥{detail.warn_amount}</td></tr>
               <tr><td>开始日期</td><td>{detail.start_date || '—'}</td><td>结束日期</td><td>{detail.end_date || '—'}</td></tr>
               <tr><td>状态</td><td>{detail.status === 1 ? '启用' : '停用'}</td><td>备注</td><td style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{detail.note || '—'}</td></tr>
             </tbody></table>
@@ -198,11 +202,7 @@ export default function Customers() {
             </div>
             <div className="row">
               <div className="field"><label>预警额度</label><input type="number" value={form.warn_amount} onChange={e => setForm({ ...form, warn_amount: e.target.value })} /></div>
-              <div className="field"><label>加工方式</label><select value={form.wash_mode} onChange={e => setForm({ ...form, wash_mode: e.target.value })}><option>洗名</option><option>只分</option><option>合并</option><option>跳过</option></select></div>
-            </div>
-            <div className="row">
               <div className="field"><label>是否记账</label><select value={form.is_accounted ? 1 : 0} onChange={e => setForm({ ...form, is_accounted: e.target.value === '1' })}><option value={1}>是</option><option value={0}>否</option></select></div>
-              <div className="field"><label>结算折扣</label><input type="number" step="0.1" value={form.discount} onChange={e => setForm({ ...form, discount: e.target.value })} /></div>
             </div>
             <div className="row">
               <div className="field"><label>开始日期</label><input type="date" value={form.start_date} onChange={e => setForm({ ...form, start_date: e.target.value })} /></div>
@@ -210,7 +210,12 @@ export default function Customers() {
             </div>
             <div className="row">
               <div className="field"><label>状态</label><select value={form.status} onChange={e => setForm({ ...form, status: Number(e.target.value) })}><option value={1}>启用</option><option value={0}>停用</option></select></div>
-              <div className="field" />
+              <div className="field"><label>账单模版</label>
+                <select value={form.bill_tpl_id ?? ''} onChange={e => setForm({ ...form, bill_tpl_id: e.target.value ? Number(e.target.value) : null })}>
+                  <option value="">默认模版</option>
+                  {billTpls.map(t => <option key={t.id} value={t.id}>{t.code} {t.name}</option>)}
+                </select>
+              </div>
             </div>
             <div className="row">
               <div className="field"><label>备注</label><textarea rows={3} value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} /></div>
@@ -241,7 +246,7 @@ export default function Customers() {
 function TabContent({ tab, customerId }) {
   const [data, setData] = useState([])
   const [prices, setPrices] = useState([])
-  const toast = useToast()
+  const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
   useEffect(() => {
     if (tab === 'orders') api.get(`/api/customers/${customerId}/orders`).then(r => setData(r.data)).catch(() => {})

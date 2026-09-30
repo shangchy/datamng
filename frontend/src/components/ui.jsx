@@ -1,18 +1,42 @@
 import React, { createContext, useContext, useState, useCallback } from 'react'
 
-const ToastCtx = createContext(() => {})
+const ToastCtx = createContext({ toast: () => {}, showError: () => {} })
 export const useToast = () => useContext(ToastCtx)
+
+export function ErrorModal({ message, onClose }) {
+  return (
+    <div className="mask" style={{ zIndex: 400 }}>
+      <div className="modal" style={{ width: 480 }}>
+        <h3>
+          <span className="modal-title" style={{ color: 'var(--red)' }}>提示</span>
+          <button className="modal-close" title="关闭" onClick={onClose}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+          </button>
+        </h3>
+        <div className="modal-body">
+          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--red)' }}>{message}</div>
+          <div className="foot">
+            <button className="btn primary" onClick={onClose}>知道了</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export function ToastProvider({ children }) {
   const [toast, setToast] = useState('')
+  const [error, setError] = useState('')
   const show = useCallback((msg) => {
     setToast(msg)
     setTimeout(() => setToast(''), 2000)
   }, [])
+  const showError = useCallback((msg) => setError(msg), [])
   return (
-    <ToastCtx.Provider value={show}>
+    <ToastCtx.Provider value={{ toast: show, showError }}>
       {children}
       {toast && <div className="toast">{toast}</div>}
+      {error && <ErrorModal message={error} onClose={() => setError('')} />}
     </ToastCtx.Provider>
   )
 }
@@ -78,6 +102,7 @@ export const BADGE = {
   '高': 'green', '中': 'amber', '低': 'gray', '上游': 'violet', '下游': 'blue',
   '已洗名': 'green', '只分': 'gray', '未命中': 'amber', '正常缴存': 'green', '封存': 'gray',
   '合作中': 'green', '已终止': 'gray', '男': 'blue', '女': 'violet',
+  '订单': 'blue', '出数': 'violet', '账单': 'green', '其他': 'gray',
 }
 
 export function Badge({ value }) {

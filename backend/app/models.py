@@ -71,6 +71,7 @@ class Customer(Base, TimestampMixin):
     warn_amount = Column(Numeric(14, 2), default=0)
     start_date = Column(Date)                        # 合作开始日期
     end_date = Column(Date)                          # 合作结束日期
+    bill_tpl_id = Column(Integer, ForeignKey("template.id"))   # 账单模版
     note = Column(Text)
     status = Column(SmallInteger, default=1)
 
@@ -194,7 +195,8 @@ class Order(Base, TimestampMixin):
 class Template(Base, TimestampMixin):
     __tablename__ = "template"
     id = Column(Integer, primary_key=True)
-    ttype = Column(String(50))                    # 模版类型
+    ttype = Column(String(50))                    # 模版名称
+    tpl_type = Column(String(20), default="其他")  # 模版类型：订单/出数/账单/其他
     code = Column(String(100), nullable=False, unique=True)  # 模版编号
     name = Column(String(200), nullable=False)    # 模版文件名
     file_data = Column(LargeBinary)               # 上传的模版文件

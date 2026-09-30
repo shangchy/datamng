@@ -3,7 +3,7 @@ import { api, getToken } from '../api'
 import { Modal, useToast, useConfirm, Loading } from '../components/ui'
 
 export default function Categories() {
-  const toast = useToast()
+  const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
   const [rows, setRows] = useState([])
   const [platforms, setPlatforms] = useState([])
@@ -33,7 +33,7 @@ export default function Categories() {
   }
 
   async function save() {
-    if (!modal.name.trim()) { toast('请输入名称'); return }
+    if (!modal.name.trim()) { showError('请输入名称'); return }
     if (modal.id) {
       if (modal.type === 'platform') await api.put(`/api/platforms/${modal.id}`, { name: modal.name, cat_id: modal.catId, status: 1 })
       else await api.put(`/api/categories/${modal.id}`, { name: modal.name, status: 1 })
@@ -51,10 +51,10 @@ export default function Categories() {
     setModal(null); load()
   }
   async function del(id) {
-    if (await confirm('确认删除？')) { try { await api.del(`/api/categories/${id}`); toast('已删除'); load() } catch (e) { toast(e.message) } }
+    if (await confirm('确认删除？')) { try { await api.del(`/api/categories/${id}`); toast('已删除'); load() } catch (e) { showError(e.message) } }
   }
   async function delPlatform(id) {
-    if (await confirm('确认删除该平台？')) { try { await api.del(`/api/platforms/${id}`); toast('已删除'); load() } catch (e) { toast(e.message) } }
+    if (await confirm('确认删除该平台？')) { try { await api.del(`/api/platforms/${id}`); toast('已删除'); load() } catch (e) { showError(e.message) } }
   }
   function platformsOf(catId) { return visPlats.filter(p => p.cat_id === catId) }
 
@@ -76,7 +76,7 @@ export default function Categories() {
     <div className="page">
       {confirmEl}
       {busy && <Loading text="正在导入品类，请稍候…" />}
-      <input type="file" accept=".xlsx,.xls" style={{ display: 'none' }} ref={fileRef} onChange={e => { if (e.target.files[0]) importCategories(e.target.files[0]).catch(err => toast(err.message)); e.target.value = '' }} />
+      <input type="file" accept=".xlsx,.xls" style={{ display: 'none' }} ref={fileRef} onChange={e => { if (e.target.files[0]) importCategories(e.target.files[0]).catch(err => showError(err.message)); e.target.value = '' }} />
       <div className="toolbar">
         <input list="cat1-list" placeholder="一级品类" style={{ width: 130 }} value={q.cat1} onChange={e => setQ({ ...q, cat1: e.target.value })} />
         <datalist id="cat1-list">{rows.map(c => <option key={c.id} value={c.name} />)}</datalist>

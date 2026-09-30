@@ -1,0 +1,60 @@
+name: Build Windows Package
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Python（语法校验用）
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 后端语法校验
+        run: |
+          python - <<'PY'
+          import ast, pathlib
+          for p in pathlib.Path('backend/app').rglob('*.py'):
+              ast.parse(p.read_text(encoding='utf-8'))
+          print('backend syntax OK')
+          PY
+
+      - name: 构建前端
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: 打包 Windows 部署包
+        run: |
+          PKG=dist-package/LM-order-system
+          mkdir -p "$PKG/logs"
+          rsync -a --exclude '__pycache__' --exclude '*.pyc' backend/app/ "$PKG/app/"
+          cp -r frontend/dist "$PKG/static"
+          cp backend/requirements.txt "$PKG/requirements.txt"
+          cp run.bat "$PKG/run.bat"
+          cp backend/.env.example "$PKG/.env"
+          touch "$PKG/logs/app.log"
+          cd dist-package
+          zip -r -q ../LM-order-system-win.zip LM-order-system
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: LM-order-system-win
+          path: LM-order-system-win.zip
+          retention-days: 30
