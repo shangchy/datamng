@@ -4,7 +4,7 @@ import io
 import re
 import threading
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -14,7 +14,8 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import (DailyData, Fund, Bill, Alert, Customer, Channel, Category,
-                      Order, SysConfig, Operator, SourceFile, Template, WashName, Platform)
+                      Order, SysConfig, Operator, SourceFile, Template, WashName, Platform,
+                      CustomerRecharge)
 from ..pagination import paginate, ok_page
 from ..excel import xlsx_response
 from ..utils import fmt_dt
@@ -220,12 +221,13 @@ def _is_header_row(values):
     return any(k in joined for k in ("任务id", "任务名", "手机号", "运营商", "省", "市"))
 
 
-def _import_niu_excel(db, content, biz_date, source_file, source_file_id, errors):
+def _import_niu_excel(db, content, biz_date, source_file, source_file_id, errors, seen):
     """解析牛的数据 excel（第一行是表头）：任务id/任务名/手机号/省/市/运营商"""
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     ws = wb.active
     n = 0
+    deduped = 0
     header = None
     for values in ws.iter_rows(values_only=True):
         if header is None:
@@ -254,6 +256,11 @@ def _import_niu_excel(db, content, biz_date, source_file, source_file_id, errors
         operator = str(values[op]).strip() if op >= 0 and op < len(values) and values[op] is not None else ""
         if not phone:
             continue
+        key = (task_id, phone)
+        if key in seen:
+            deduped += 1
+            continue
+        seen.add(key)
         info = _order_info_by_task_id(db, task_id)
         cat1, cat2 = _cat_by_platform(db, info.get("platform") or "")
         db.add(DailyData(
@@ -277,15 +284,16 @@ def _import_niu_excel(db, content, biz_date, source_file, source_file_id, errors
         ))
         n += 1
     wb.close()
-    return n
+    return n, deduped
 
 
-def _import_new_excel(db, content, biz_date, source_file, source_file_id, errors):
+def _import_new_excel(db, content, biz_date, source_file, source_file_id, errors, seen):
     """解析新的数据 excel（第一行是数据，无表头）：手机号/甲方工单号/平台/省/市"""
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     ws = wb.active
     n = 0
+    deduped = 0
     for values in ws.iter_rows(values_only=True):
         if not any((str(v) if v is not None else "").strip() for v in values):
             continue
@@ -296,6 +304,11 @@ def _import_new_excel(db, content, biz_date, source_file, source_file_id, errors
         city = vals[4] if len(vals) > 4 else ""
         if not phone:
             continue
+        key = (task_id, phone)
+        if key in seen:
+            deduped += 1
+            continue
+        seen.add(key)
         info = _order_info_by_task_id(db, task_id)
         cat1, cat2 = _cat_by_platform(db, info.get("platform") or "")
         db.add(DailyData(
@@ -319,16 +332,17 @@ def _import_new_excel(db, content, biz_date, source_file, source_file_id, errors
         ))
         n += 1
     wb.close()
-    return n
+    return n, deduped
 
 
-def _import_one_daily_file(db, fn, content, date_obj, source_file_id, errors):
-    """处理单个文件（zip 或 excel），返回导入条数"""
+def _import_one_daily_file(db, fn, content, date_obj, source_file_id, errors, seen):
+    """处理单个文件（zip 或 excel），返回 (导入条数, 去重条数)"""
     ext = fn.rsplit(".", 1)[-1].lower() if "." in fn else ""
     if ext not in ("zip", "xlsx", "xls"):
         errors.append(f"{fn}: 仅支持 zip / xlsx / xls 文件")
-        return 0
+        return 0, 0
     n = 0
+    deduped = 0
     if ext == "zip":
         import zipfile
         try:
@@ -336,7 +350,9 @@ def _import_one_daily_file(db, fn, content, date_obj, source_file_id, errors):
             for name in zf.namelist():
                 if name.lower().endswith((".xlsx", ".xls")):
                     try:
-                        n += _import_niu_excel(db, zf.read(name), date_obj, fn, source_file_id, errors)
+                        nn, dd = _import_niu_excel(db, zf.read(name), date_obj, fn, source_file_id, errors, seen)
+                        n += nn
+                        deduped += dd
                     except Exception as e:  # noqa
                         errors.append(f"{name}: {e}")
             zf.close()
@@ -352,10 +368,12 @@ def _import_one_daily_file(db, fn, content, date_obj, source_file_id, errors):
             break
         wb.close()
         if _is_header_row(first):
-            n += _import_niu_excel(db, content, date_obj, fn, source_file_id, errors)
+            nn, dd = _import_niu_excel(db, content, date_obj, fn, source_file_id, errors, seen)
         else:
-            n += _import_new_excel(db, content, date_obj, fn, source_file_id, errors)
-    return n
+            nn, dd = _import_new_excel(db, content, date_obj, fn, source_file_id, errors, seen)
+        n += nn
+        deduped += dd
+    return n, deduped
 
 
 def _extract_task_ids_from_excel(content):
@@ -415,14 +433,41 @@ def _extract_task_ids(fn, content):
 
 
 def _count_unmatched(db, file_list):
-    """统计未匹配到订单的日活数据条数"""
+    """统计未匹配到订单的日活数据条数，返回 (条数, 去重后的未匹配工单号列表)"""
     order_tids = {r[0] for r in db.query(Order.task_id).all() if r[0]}
     total = 0
+    unmatched_tids = set()
     for fn, content in file_list:
         for tid in _extract_task_ids(fn, content):
             if tid not in order_tids:
                 total += 1
-    return total
+                if tid:
+                    unmatched_tids.add(tid)
+    return total, sorted(unmatched_tids)
+
+
+def _count_stopped_abnormal(db, file_list, date_obj):
+    """统计关联到已停订单、且数据日期 >= 订单更新日期+2 的异常数据，返回 (条数, 去重工单号列表)"""
+    stopped = {o.task_id: o.order_date for o in db.query(Order).filter(Order.status == "已停").all() if o.task_id}
+    total = 0
+    tids = set()
+    for fn, content in file_list:
+        for tid in _extract_task_ids(fn, content):
+            od = stopped.get(tid)
+            if od and date_obj >= od + timedelta(days=2):
+                total += 1
+                tids.add(tid)
+    return total, sorted(tids)
+
+
+def _count_inactive_orders(db, date_obj):
+    """统计在执订单中，数据日期 >= 订单更新日期+2 但当天无数据的工单号"""
+    has_data = {r[0] for r in db.query(DailyData.task_id).filter(DailyData.biz_date == date_obj).all() if r[0]}
+    tids = []
+    for o in db.query(Order).filter(Order.status == "在执").all():
+        if o.task_id and o.order_date and date_obj >= o.order_date + timedelta(days=2) and o.task_id not in has_data:
+            tids.append(o.task_id)
+    return sorted(tids)
 
 
 @router.post("/daily-data/import")
@@ -440,14 +485,20 @@ async def import_daily(files: List[UploadFile] = File(...), biz_date: str = Form
         if content:
             file_list.append((fn, content))
 
-    # 未匹配订单时，弹出提示确认
+    # 未匹配订单 或 已停订单异常数据时，弹出提示确认
     if not confirm:
-        unmatched = _count_unmatched(db, file_list)
-        if unmatched > 0:
-            return {"code": 0, "data": {"needs_confirm": True, "unmatched": unmatched},
-                    "msg": f"有 {unmatched} 条数据未匹配到订单"}
+        unmatched, unmatched_tids = _count_unmatched(db, file_list)
+        stopped_abnormal, stopped_tids = _count_stopped_abnormal(db, file_list, date_obj)
+        if unmatched > 0 or stopped_abnormal > 0:
+            return {"code": 0, "data": {"needs_confirm": True, "unmatched": unmatched, "unmatched_tids": unmatched_tids,
+                                        "stopped_abnormal": stopped_abnormal, "stopped_tids": stopped_tids},
+                    "msg": f"有 {unmatched} 条数据未匹配到订单，{stopped_abnormal} 条关联到已停订单"}
+
+    # 当天已有 (任务id, 手机号)，用于同任务内去重
+    seen = {(r.task_id, r.phone) for r in db.query(DailyData).filter(DailyData.biz_date == date_obj).all()}
 
     imported = 0
+    deduped = 0
     errors = []
     for fn, content in file_list:
         ext = fn.rsplit(".", 1)[-1].lower() if "." in fn else ""
@@ -459,10 +510,13 @@ async def import_daily(files: List[UploadFile] = File(...), biz_date: str = Form
                         biz_date=date_obj.strftime("%Y-%m-%d"), size=len(content))
         db.add(sf)
         db.flush()
-        imported += _import_one_daily_file(db, fn, content, date_obj, sf.id, errors)
+        n, dd = _import_one_daily_file(db, fn, content, date_obj, sf.id, errors, seen)
+        imported += n
+        deduped += dd
     db.commit()
-    return {"code": 0, "data": {"imported": imported, "errors": errors},
-            "msg": f"导入 {imported} 条，失败 {len(errors)} 条"}
+    inactive_tids = _count_inactive_orders(db, date_obj)
+    return {"code": 0, "data": {"imported": imported, "deduped": deduped, "errors": errors, "inactive_tids": inactive_tids},
+            "msg": f"导入 {imported} 条，去重 {deduped} 条，失败 {len(errors)} 条"}
 
 
 @router.post("/daily-data/batch-delete")
@@ -659,6 +713,31 @@ def _task_suffix(task_name):
     return tn.rsplit("-", 1)[-1] if "-" in tn else tn
 
 
+def _strip_task_prefix(task_name, city, province):
+    """去掉任务名中的「代理编号+代理名+地区」前缀，返回实际任务名"""
+    tn = (task_name or "").strip()
+    parts = [p for p in tn.split("-") if p.strip()]
+    if not parts:
+        return tn
+    idx = 1 if parts[0].isdigit() else 0
+    region = (city or "").strip() or (province or "").strip()
+    if region:
+        for i in range(idx, len(parts)):
+            if parts[i] == region:
+                idx = i + 1
+                break
+    return "-".join(parts[idx:]) if idx < len(parts) else tn
+
+
+def _pinyin_key(s):
+    """把中文转成拼音（用于排序）"""
+    try:
+        from pypinyin import lazy_pinyin
+        return "".join(lazy_pinyin(str(s or "")))
+    except Exception:  # noqa
+        return str(s or "")
+
+
 def _fill_distribute_file(tpl_bytes, records):
     """用模版字节 + 日活数据记录（含手机号/省市/运营商/渠道/平台/任务名）生成单个文件"""
     from openpyxl import load_workbook, Workbook
@@ -722,9 +801,10 @@ def _fill_bill_file(cust_label, date_str, bill, tpl_bytes=None):
     for r in rows:
         ws.append(r)
     ws.append([])
-    ws.append(["小组", "手机号数量", "金额(元)"])
-    for g, gg in sorted(bill.get("groups", {}).items()):
-        ws.append([g, gg["qty"], round(float(gg["amount"]), 2)])
+    ws.append(["任务名", "手机号数量", "金额(元)"])
+    for g, gg in sorted(bill.get("groups", {}).items(),
+                        key=lambda kv: _pinyin_key(kv[1].get("task_name") or kv[0])):
+        ws.append([gg.get("task_name") or g, gg["qty"], round(float(gg["amount"]), 2)])
     bio = io.BytesIO()
     wb.save(bio)
     bio.seek(0)
@@ -756,7 +836,8 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
     qty = bill["qty"]
     sales = round(float(bill["sales"]), 2)
     balance = bill.get("balance")
-    groups = sorted(bill.get("groups", {}).items())
+    groups = sorted(bill.get("groups", {}).items(),
+                    key=lambda kv: _pinyin_key(kv[1].get("task_name") or kv[0]))
 
     # ---- 1. 汇总区：标签 -> 右侧值单元格 ----
     def _summary_field(s):
@@ -777,15 +858,21 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
         "日期": date_str,
         "进货量": qty,
         "销售金额": sales,
-        "余额": (round(float(balance), 2) if balance is not None else ""),
+        "余额": (round(float(balance) - sales, 2) if balance is not None else ""),
     }
+    # 值单元格：标签右侧的第一个合并区间左上角（如 E 列），无合并则用相邻列
+    merged_by_row = {}
+    for rng in ws.merged_cells.ranges:
+        if rng.min_col > 1:
+            merged_by_row.setdefault(rng.min_row, rng.min_col)
     for row in ws.iter_rows():
         for cell in row:
             if cell.value is None:
                 continue
             field = _summary_field(str(cell.value).strip())
             if field:
-                ws.cell(row=cell.row, column=cell.column + 1, value=summary_vals[field])
+                target_col = merged_by_row.get(cell.row, cell.column + 1)
+                ws.cell(row=cell.row, column=target_col, value=summary_vals[field])
 
     # ---- 2. 明细表：定位表头行与各列 ----
     header_row = None
@@ -803,6 +890,12 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
             for col, v in rowvals.items():
                 if "任务" in v or "小组" in v:
                     cols["task"] = col
+                elif "工单" in v or "任务id" in v or "订单编号" in v or "订单号" in v:
+                    cols["task_id"] = col
+                elif "类型" in v or "渠道" in v:
+                    cols["channel"] = col
+                elif "运营商" in v:
+                    cols["operator"] = col
                 elif "单价" in v or "价格" in v:
                     cols["price"] = col
                 elif "洗名" in v or "加名" in v:
@@ -844,7 +937,13 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
     for i, (g, gg) in enumerate(groups):
         r = data_start + i
         if "task" in cols:
-            ws.cell(row=r, column=cols["task"], value=g)
+            ws.cell(row=r, column=cols["task"], value=(gg.get("task_name") or g))
+        if "task_id" in cols:
+            ws.cell(row=r, column=cols["task_id"], value=(gg.get("order_no") or g))
+        if "channel" in cols:
+            ws.cell(row=r, column=cols["channel"], value=(gg.get("channel") or ""))
+        if "operator" in cols:
+            ws.cell(row=r, column=cols["operator"], value=(gg.get("operator") or ""))
         if "qty" in cols:
             ws.cell(row=r, column=cols["qty"], value=gg["qty"])
         if "price" in cols:
@@ -868,6 +967,17 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
             if cell.value is not None and "SUM(" in str(cell.value):
                 letter = get_column_letter(c)
                 cell.value = f"=SUM({letter}{data_start}:{letter}{end_row})"
+
+    # 任务名列宽度自适应内容（中文按 2 个字符宽度计）
+    if "task" in cols:
+        from openpyxl.utils import get_column_letter as _gcl
+        max_w = 0
+        for i, (g, gg) in enumerate(groups):
+            name = str(gg.get("task_name") or g)
+            w = sum(2 if ord(ch) > 127 else 1 for ch in name)
+            max_w = max(max_w, w)
+        if max_w > 0:
+            ws.column_dimensions[_gcl(cols["task"])].width = min(max_w + 2, 60)
 
     bio = io.BytesIO()
     wb.save(bio)
@@ -910,7 +1020,11 @@ def _build_distribute_zip(jobs, bills, date_str, progress_cb, bill_tpls=None):
                 continue
             tpl = (bill_tpls or {}).get(cc)
             bio = _fill_bill_file(bill.get("cust_label") or cc, date_str, bill, tpl)
-            zf.writestr(f"{folder}/账单-{cc}-{date_str}.xlsx", bio.read())
+            bal = float(bill.get("balance") or 0) - float(bill.get("sales") or 0)
+            sign = "正" if bal >= 0 else "负"
+            abs_bal = round(abs(bal), 2)
+            filename = f"账单-{date_str}（余额{sign}{abs_bal}）.xlsx"
+            zf.writestr(f"{folder}/{filename}", bio.read())
     buf.seek(0)
     return buf
 
@@ -940,9 +1054,17 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             continue
         cust = db.query(Customer).filter(Customer.id == order.customer_id).first()
         tpl = db.query(Template).filter(Template.id == order.tpl_id).first() if order.tpl_id else None
+        ch = db.query(Channel).filter(Channel.id == order.channel_id).first()
+        op = db.query(Operator).filter(Operator.id == order.operator_id).first()
         orders_info[d.task_id] = {
             "tpl_code": tpl.code if tpl else "",
             "group_name": order.group_name or "",
+            "task_name": order.task_name or "",
+            "order_no": order.order_no or "",
+            "city": order.city or "",
+            "province": order.province or "",
+            "channel": ch.name if ch else "",
+            "operator": op.name if op else "",
             "cust_code": cust.code if cust else "",
             "cust_name": cust.name if cust else "",
             "sec_agent": order.secondary_agent or "",
@@ -1012,6 +1134,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             }
         jobs[g]["records"].append({
             "url": d.phone or "",
+            "name": d.name or "",
             "province": d.province or "",
             "city": d.city or "",
             "operator": d.operator or "",
@@ -1038,11 +1161,15 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
                          "balance": float(cust.balance) if cust and cust.balance is not None else 0,
                          "groups": {}}
         bills[cc]["qty"] += 1
-        bills[cc]["sales"] += info["price"]
-        gg = bills[cc]["groups"].setdefault(info["group_name"],
-                                            {"qty": 0, "amount": 0.0, "unit": info["price"], "add_name": info["add_name"]})
+        eff_price = info["price"] + (0.01 if info["add_name"] else 0)
+        bills[cc]["sales"] += eff_price
+        gg = bills[cc]["groups"].setdefault(d.task_id,
+                                            {"task_name": info["task_name"] or info["group_name"],
+                                             "order_no": info["order_no"],
+                                             "channel": info["channel"], "operator": info["operator"],
+                                             "qty": 0, "amount": 0.0, "unit": info["price"], "add_name": info["add_name"]})
         gg["qty"] += 1
-        gg["amount"] += info["price"]
+        gg["amount"] += eff_price
 
     # 7. 保存账单（按客户+日期 upsert）
     for cc, b in bills.items():
@@ -1339,7 +1466,7 @@ def list_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
             "id": b.id, "customer": f"{c.code} {c.name}" if c else "", "customer_id": b.customer_id,
             "biz_date": str(b.biz_date), "purchase_qty": b.purchase_qty,
             "sales": float(b.sales) if b.sales is not None else 0,
-            "balance": float(b.balance) if b.balance is not None else None,
+            "balance": float(c.balance) if c and c.balance is not None else None,
             "profit": float(b.profit) if b.profit is not None else 0,
             "created_at": fmt_dt(b.created_at),
         })
@@ -1354,6 +1481,156 @@ def clear_bills(db: Session = Depends(get_db), _=Depends(get_current_user)):
     return {"code": 0, "data": {"cleared": n}, "msg": f"已清空 {n} 条账单"}
 
 
+@router.post("/bills/import")
+async def import_bills(file: UploadFile = File(...), db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """导入账单：读取「余额总览」sheet，按编号匹配客户，更新客户余额与账单
+    （销售金额=本周出货金额，余额=整体所剩余额；文件名需含日期，如 账单-2026-09-29.xlsx）"""
+    fn = file.filename or ""
+    content = await file.read()
+    if not fn.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=422, detail="仅支持 xlsx / xls 文件")
+    m = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", fn)
+    if not m:
+        raise HTTPException(status_code=422, detail="文件名需包含日期，如 账单-2026-09-29.xlsx")
+    try:
+        biz_date = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="文件名日期无效")
+
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+    ws = None
+    for name in wb.sheetnames:
+        if "总览" in name or "汇总" in name:
+            ws = wb[name]
+            break
+    if ws is None:
+        ws = wb.active
+
+    header_row = None
+    code_col = sales_col = balance_col = None
+    for r in range(1, ws.max_row + 1):
+        rowvals = {}
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(row=r, column=c).value
+            if v is not None:
+                rowvals[c] = str(v).strip()
+        if any("编号" in v for v in rowvals.values()) and any("名称" in v for v in rowvals.values()):
+            header_row = r
+            for c, v in rowvals.items():
+                if "编号" in v:
+                    code_col = c
+                elif "出货" in v:
+                    sales_col = c
+                elif "余额" in v and "上月" not in v:
+                    balance_col = c
+            break
+
+    if header_row is None or code_col is None:
+        raise HTTPException(status_code=422, detail="未找到账单汇总表头（需含「编号」「名称」列）")
+
+    updated = 0
+    errors = []
+    for r in range(header_row + 1, ws.max_row + 1):
+        code = str(ws.cell(row=r, column=code_col).value or "").strip() if code_col else ""
+        if not code:
+            continue
+        cust = db.query(Customer).filter(Customer.code == code).first()
+        if not cust:
+            name = code.replace("甲方", "").strip()
+            cust = db.query(Customer).filter(Customer.name == name).first() if name else None
+        if not cust:
+            errors.append(f"{code}: 客户不存在")
+            continue
+        sales = _num(ws.cell(row=r, column=sales_col).value) if sales_col else None
+        balance = _num(ws.cell(row=r, column=balance_col).value) if balance_col else None
+        if sales is None and balance is None:
+            errors.append(f"{code}: 出货金额/余额为空（请在 Excel 中打开并保存后再导入，以缓存公式结果）")
+            continue
+        if balance is not None:
+            cust.balance = balance
+        bill = db.query(Bill).filter(Bill.customer_id == cust.id, Bill.biz_date == biz_date).first()
+        if bill:
+            if sales is not None:
+                bill.sales = sales
+            if balance is not None:
+                bill.balance = balance
+        else:
+            db.add(Bill(customer_id=cust.id, biz_date=biz_date, purchase_qty=0,
+                        sales=(sales if sales is not None else 0),
+                        balance=(balance if balance is not None else 0), profit=0))
+        updated += 1
+    db.commit()
+    return {"code": 0, "data": {"updated": updated, "errors": errors},
+            "msg": f"已更新 {updated} 个客户账单，失败 {len(errors)} 个"}
+
+
+@router.get("/bills/export")
+def export_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
+                 start_date: str = "", end_date: str = "", customer_id: int = 0):
+    """按日期期间导出账单明细（含充值记录和余额）；customer_id=0 导出全部代理"""
+    from urllib.parse import quote
+    from fastapi.responses import Response
+    import openpyxl
+
+    cust_map = {c.id: c for c in db.query(Customer).all()}
+
+    qy = db.query(Bill).order_by(Bill.biz_date, Bill.customer_id)
+    if customer_id:
+        qy = qy.filter(Bill.customer_id == customer_id)
+    if start_date:
+        qy = qy.filter(Bill.biz_date >= start_date)
+    if end_date:
+        qy = qy.filter(Bill.biz_date <= end_date)
+    bills = qy.all()
+
+    rqy = db.query(CustomerRecharge).order_by(CustomerRecharge.recharge_date, CustomerRecharge.customer_id)
+    if customer_id:
+        rqy = rqy.filter(CustomerRecharge.customer_id == customer_id)
+    if start_date:
+        rqy = rqy.filter(CustomerRecharge.recharge_date >= start_date)
+    if end_date:
+        rqy = rqy.filter(CustomerRecharge.recharge_date <= end_date)
+    recharges = rqy.all()
+
+    wb = openpyxl.Workbook()
+
+    ws1 = wb.active
+    ws1.title = "账单明细"
+    ws1.append(["客户编号", "客户名称", "业务日期", "进货量", "销售金额(元)", "余额(元)", "利润(元)"])
+    for b in bills:
+        c = cust_map.get(b.customer_id)
+        ws1.append([
+            c.code if c else "", c.name if c else "",
+            str(b.biz_date) if b.biz_date else "",
+            b.purchase_qty if b.purchase_qty is not None else 0,
+            float(b.sales) if b.sales is not None else 0,
+            float(c.balance) if c and c.balance is not None else 0,
+            float(b.profit) if b.profit is not None else 0,
+        ])
+
+    ws2 = wb.create_sheet("充值记录")
+    ws2.append(["客户编号", "客户名称", "充值日期", "充值金额(U)", "折算人民币(元)", "备注"])
+    for r in recharges:
+        c = cust_map.get(r.customer_id)
+        ws2.append([
+            c.code if c else "", c.name if c else "",
+            str(r.recharge_date) if r.recharge_date else "",
+            float(r.amount_u) if r.amount_u is not None else 0,
+            float(r.amount_rmb) if r.amount_rmb is not None else 0,
+            r.note or "",
+        ])
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    period = f"{start_date or '起'}-{end_date or '止'}"
+    filename = f"账单明细-{period}.xlsx"
+    return Response(content=bio.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
+
+
 @router.get("/bills/{bid}")
 def bill_detail(bid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     b = db.query(Bill).filter(Bill.id == bid).first()
@@ -1366,10 +1643,19 @@ def bill_detail(bid: int, db: Session = Depends(get_db), _=Depends(get_current_u
             .all())
     groups = {}
     for d, o in rows:
-        g = o.group_name or "未分组"
-        gg = groups.setdefault(g, {"qty": 0, "amount": 0.0})
+        ch = db.query(Channel).filter(Channel.id == o.channel_id).first()
+        op = db.query(Operator).filter(Operator.id == o.operator_id).first()
+        task_label = o.task_name or o.group_name or "未分组"
+        gg = groups.setdefault(o.task_id or "", {
+            "task_name": task_label,
+            "order_no": o.order_no or "",
+            "channel": ch.name if ch else "",
+            "operator": op.name if op else "",
+            "qty": 0, "amount": 0.0,
+        })
         gg["qty"] += 1
-        gg["amount"] += float(o.price) if o.price is not None else 0
+        eff_price = (float(o.price) if o.price is not None else 0) + (0.01 if o.add_name else 0)
+        gg["amount"] += eff_price
     detail = {
         "id": b.id,
         "customer": (f"{c.code} {c.name}" if c else ""),
@@ -1379,8 +1665,10 @@ def bill_detail(bid: int, db: Session = Depends(get_db), _=Depends(get_current_u
         "balance": float(b.balance) if b.balance is not None else 0,
         "profit": float(b.profit) if b.profit is not None else 0,
         "created_at": fmt_dt(b.created_at),
-        "groups": [{"group_name": g, "qty": gg["qty"], "amount": round(float(gg["amount"]), 2)}
-                   for g, gg in sorted(groups.items())],
+        "groups": [{"task_name": gg["task_name"], "task_id": g, "order_no": gg["order_no"],
+                    "channel": gg["channel"], "operator": gg["operator"], "qty": gg["qty"],
+                    "amount": round(float(gg["amount"]), 2)}
+                   for g, gg in sorted(groups.items(), key=lambda kv: _pinyin_key(kv[1]["task_name"]))],
     }
     return {"code": 0, "data": detail, "msg": "ok"}
 
@@ -1424,10 +1712,19 @@ def handle_alert(aid: int, db: Session = Depends(get_db), _=Depends(get_current_
     return {"code": 0, "data": None, "msg": "已处理"}
 
 
+def _alert_days(db):
+    cfg = db.query(SysConfig).filter(SysConfig.key == "alert_days").first()
+    try:
+        return int(cfg.value) if cfg and cfg.value else 0
+    except (TypeError, ValueError):
+        return 0
+
+
 @router.get("/alert-config")
 def get_alert_config(db: Session = Depends(get_db), _=Depends(get_current_user)):
     cfg = db.query(SysConfig).filter(SysConfig.key == "alert_trigger_time").first()
-    return {"code": 0, "data": {"trigger_time": cfg.value if cfg else "00:00"}, "msg": "ok"}
+    return {"code": 0, "data": {"trigger_time": cfg.value if cfg else "00:00",
+                                "alert_days": _alert_days(db)}, "msg": "ok"}
 
 
 @router.put("/alert-config")
@@ -1438,6 +1735,16 @@ def set_alert_config(body: dict, db: Session = Depends(get_db), _=Depends(get_cu
         cfg.value = value
     else:
         db.add(SysConfig(key="alert_trigger_time", value=value))
+    if "alert_days" in body:
+        try:
+            days = int(body.get("alert_days"))
+        except (TypeError, ValueError):
+            days = 0
+        dc = db.query(SysConfig).filter(SysConfig.key == "alert_days").first()
+        if dc:
+            dc.value = str(days)
+        else:
+            db.add(SysConfig(key="alert_days", value=str(days)))
     db.commit()
     return {"code": 0, "data": None, "msg": "已保存"}
 
@@ -1466,15 +1773,19 @@ def distinct_values(db: Session = Depends(get_db), _=Depends(get_current_user),
 
 
 def run_alert_scan(db: Session):
-    """定时：停单日到达 -> 停单提醒；余额低于预警额度 -> 账单预警"""
+    """定时：停单日临近（按预警天数）-> 停单提醒；余额低于预警额度 -> 账单预警"""
     today = date.today()
-    # 停单提醒
-    for o in db.query(Order).filter(Order.stop_date == today).all():
+    # 停单提醒（预警天数内到期的订单）
+    alert_days = _alert_days(db)
+    target = today + timedelta(days=alert_days)
+    for o in db.query(Order).filter(Order.stop_date.isnot(None),
+                                    Order.stop_date >= today,
+                                    Order.stop_date <= target).all():
         if not db.query(Alert).filter(Alert.type == "停单提醒", Alert.task_name == o.task_name,
                                       Alert.trigger_time >= datetime(today.year, today.month, today.day)).first():
-            c = db.query(Customer).filter(Customer.id == o.customer_id).first()
             db.add(Alert(level="提醒", type="停单提醒", customer_id=o.customer_id,
-                         task_name=o.task_name, content=f"停单日 {today} 已到达，请确认是否停单",
+                         task_name=o.task_name,
+                         content=f"停单日 {o.stop_date} 已到达，请确认是否停单",
                          trigger_time=datetime.now()))
     # 账单预警
     for c in db.query(Customer).filter(Customer.ctype == "downstream", Customer.status == 1).all():

@@ -283,6 +283,8 @@ def _header_field(h):
         return ("field", "url")
     if "手机号" in h or "号码" in h:
         return ("field", "url")
+    if "姓名" in h or "名字" in h:
+        return ("field", "name")
     if "工单" in h or "任务id" in h:
         return ("field", "task_id")
     if "任务名" in h:

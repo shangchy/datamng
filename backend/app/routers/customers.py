@@ -9,12 +9,40 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import (Customer, CustomerRecharge, CustomerPrice, Channel,
-                      Bill, Order, Url, Category, Alert)
+                      Bill, Order, Url, Category, Alert, SysConfig)
 from ..schemas import CustomerBody, RechargeBody, PriceBody
 from ..pagination import paginate, ok_page
 from ..utils import fmt_dt
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
+
+
+def _recharge_rate(db):
+    cfg = db.query(SysConfig).filter(SysConfig.key == "recharge_rate").first()
+    try:
+        return float(cfg.value) if cfg and cfg.value else 6.7
+    except (TypeError, ValueError):
+        return 6.7
+
+
+@router.get("/recharge-rate")
+def get_recharge_rate(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    return {"code": 0, "data": {"rate": _recharge_rate(db)}, "msg": "ok"}
+
+
+@router.put("/recharge-rate")
+def set_recharge_rate(body: dict, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    try:
+        rate = float(body.get("rate"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="汇率无效")
+    cfg = db.query(SysConfig).filter(SysConfig.key == "recharge_rate").first()
+    if cfg:
+        cfg.value = str(rate)
+    else:
+        db.add(SysConfig(key="recharge_rate", value=str(rate)))
+    db.commit()
+    return {"code": 0, "data": {"rate": rate}, "msg": "汇率已保存"}
 
 
 @router.get("")
@@ -110,10 +138,22 @@ def create_recharge(cid: int, body: RechargeBody, db: Session = Depends(get_db),
     c = db.query(Customer).filter(Customer.id == cid).first()
     if not c:
         raise HTTPException(status_code=404, detail="客户不存在")
-    rmb = body.amount_rmb if body.amount_rmb is not None else round(body.amount_u * 6.7, 2)
+    rate = _recharge_rate(db)
+    if body.amount_rmb is not None:
+        rmb = round(float(body.amount_rmb), 2)
+        u = round(rmb / rate, 2)
+    elif body.amount_u is not None:
+        u = round(float(body.amount_u), 2)
+        rmb = round(u * rate, 2)
+    else:
+        raise HTTPException(status_code=422, detail="请填写充值金额（U 或 人民币）")
     db.add(CustomerRecharge(customer_id=cid, recharge_date=body.recharge_date,
-                            amount_u=body.amount_u, amount_rmb=rmb, note=body.note))
+                            amount_u=u, amount_rmb=rmb, note=body.note))
     c.balance = (c.balance if c.balance is not None else Decimal("0")) + Decimal(str(rmb))
+    # 联动最新账单余额（保持与客户余额一致）
+    latest_bill = db.query(Bill).filter(Bill.customer_id == cid).order_by(Bill.biz_date.desc()).first()
+    if latest_bill:
+        latest_bill.balance = c.balance
     db.query(Alert).filter(Alert.type == "账单预警", Alert.customer_id == cid, Alert.status == "未处理").delete()
     db.commit()
     return {"code": 0, "data": None, "msg": "充值成功"}
@@ -146,14 +186,26 @@ def save_prices(cid: int, body: PriceBody, db: Session = Depends(get_db), _=Depe
 
 @router.get("/{cid}/orders")
 def customer_orders(cid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    rows = db.query(Order).filter(Order.customer_id == cid).order_by(Order.id.desc()).all()
+    c = db.query(Customer).filter(Customer.id == cid).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="客户不存在")
+    name = c.name or ""
+    code = c.code or ""
+    conds = [Order.customer_id == cid, Order.upstream_id == cid]
+    if name:
+        conds.append(Order.secondary_agent == name)
+    if code and code != name:
+        conds.append(Order.secondary_agent == code)
+    rows = db.query(Order).filter(or_(*conds)).order_by(Order.id.desc()).all()
     data = []
     for o in rows:
         ch = db.query(Channel).filter(Channel.id == o.channel_id).first()
+        up = db.query(Customer).filter(Customer.id == o.upstream_id).first()
         urls = [u.url for u in o.urls]
         data.append({
             "order_no": o.order_no, "status": o.status, "start_date": str(o.start_date) if o.start_date else None,
-            "end_date": str(o.end_date) if o.end_date else None, "upstream": o.upstream,
+            "end_date": str(o.end_date) if o.end_date else None,
+            "upstream": (f"{up.code} {up.name}".strip() if up else ""),
             "channel": ch.name if ch else "", "task_name": o.task_name,
             "url": urls[0] + f" 等{len(urls)}个" if len(urls) > 1 else (urls[0] if urls else ""),
             "qty": o.qty,

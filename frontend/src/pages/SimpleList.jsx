@@ -73,7 +73,7 @@ const KINDS = {
     cols: [
       { k: 'customer', l: '客户' }, { k: 'biz_date', l: '业务日期' }, { k: 'purchase_qty', l: '进货量', num: true },
       { k: 'sales', l: '销售金额', num: true }, { k: 'balance', l: '余额', num: true }, { k: 'profit', l: '利润', num: true }, { k: 'created_at', l: '创建日期' },
-    ], clear: true, detail: true,
+    ], clear: true, detail: true, imp: true, impEndpoint: '/api/bills/import', billExp: true,
   },
   alerts: {
     title: '预警中心', endpoint: '/api/alerts',
@@ -114,6 +114,7 @@ export default function SimpleList({ kind }) {
   const [rolePermModal, setRolePermModal] = useState(null)
   const [sort, setSort] = useState(null)
   const [alertTrigger, setAlertTrigger] = useState('00:00')
+  const [alertDays, setAlertDays] = useState(0)
   const [busy, setBusy] = useState(false)
   const [busyMsg, setBusyMsg] = useState('正在导入，请稍候…')
   const [busyProgress, setBusyProgress] = useState(null)
@@ -137,13 +138,17 @@ export default function SimpleList({ kind }) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
   const washFileRef = useRef(null)
+  const [billExpModal, setBillExpModal] = useState(false)
+  const [billExpStart, setBillExpStart] = useState('')
+  const [billExpEnd, setBillExpEnd] = useState('')
+  const [billExpCustId, setBillExpCustId] = useState(0)
 
   useEffect(() => {
-    if (kind === 'alerts') api.get('/api/alert-config').then(r => setAlertTrigger(r.data.trigger_time)).catch(() => {})
+    if (kind === 'alerts') api.get('/api/alert-config').then(r => { setAlertTrigger(r.data.trigger_time); setAlertDays(r.data.alert_days ?? 0) }).catch(() => {})
   }, [kind])
   async function saveAlertConfig() {
-    await api.put('/api/alert-config', { trigger_time: alertTrigger })
-    toast('触发时间已保存')
+    await api.put('/api/alert-config', { trigger_time: alertTrigger, alert_days: Number(alertDays) || 0 })
+    toast('预警配置已保存')
   }
   async function manualScan() {
     if (!(await confirm('确认立即执行预警扫描？'))) return
@@ -403,12 +408,28 @@ export default function SimpleList({ kind }) {
       if (data.data && data.data.needs_confirm) {
         setBusy(false); setBusyProgress(null)
         const n = data.data.unmatched || 0
-        if (!(await confirm(`有 ${n} 条数据未匹配到订单，是否继续导入？`))) return
+        const tids = data.data.unmatched_tids || []
+        const sn = data.data.stopped_abnormal || 0
+        const stids = data.data.stopped_tids || []
+        let msg = ''
+        if (n > 0) {
+          const tidsStr = tids.length ? `\n未匹配工单号：${tids.join('、')}` : ''
+          msg += `有 ${n} 条数据未匹配到订单${tidsStr}\n`
+        }
+        if (sn > 0) {
+          const stidsStr = stids.length ? `\n已停订单工单号：${stids.join('、')}` : ''
+          msg += `\n有 ${sn} 条数据关联到已停订单（异常）${stidsStr}`
+        }
+        if (!(await confirm(`${msg}\n\n是否继续导入？`))) return
         setBusy(true); setBusyMsg('正在导入…'); setBusyProgress(0)
         data = await uploadFile('/api/daily-data/import', buildFd(true), p => setBusyProgress(p))
       }
       setBusyMsg('正在处理数据，请稍候…'); setBusyProgress(100)
+      const inactive = (data.data && data.data.inactive_tids) || []
       toast(data.msg); load()
+      if (inactive.length) {
+        showError(`以下在执任务未匹配到数据：\n${inactive.join('、')}`)
+      }
     } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
@@ -449,6 +470,19 @@ export default function SimpleList({ kind }) {
     try {
       await downloadFile(`/api/daily-data/wash-export?date=${encodeURIComponent(washDate)}`)
       toast('洗名手机号已导出')
+    } catch (e) { showError(e.message) }
+  }
+
+  async function doBillExport() {
+    if (!billExpStart || !billExpEnd) { showError('请选择开始和结束日期'); return }
+    setBillExpModal(false)
+    try {
+      const p = new URLSearchParams()
+      p.set('start_date', billExpStart)
+      p.set('end_date', billExpEnd)
+      if (billExpCustId) p.set('customer_id', billExpCustId)
+      await downloadFile(`/api/bills/export?${p.toString()}`)
+      toast('账单已导出')
     } catch (e) { showError(e.message) }
   }
 
@@ -515,6 +549,7 @@ export default function SimpleList({ kind }) {
         {cfg.batchDel && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
         {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
         {cfg.export && <button className="btn green" onClick={exportExcel}>导出 Excel</button>}
+        {cfg.billExp && <button className="btn green" onClick={() => setBillExpModal(true)}>导出账单</button>}
         {cfg.simple && <button className="btn primary" onClick={() => setSimpleModal({ name: '', status: 1 })}>+ 新增</button>}
         {cfg.addUrl && <button className="btn primary" onClick={openAddUrl}>+ 新增 URL</button>}
         {cfg.clear && <button className="btn danger" onClick={clearData}>清空数据</button>}
@@ -523,6 +558,8 @@ export default function SimpleList({ kind }) {
           <>
             <label style={{ fontSize: 12, color: 'var(--sub)' }}>触发时间</label>
             <input type="time" value={alertTrigger} onChange={e => setAlertTrigger(e.target.value)} />
+            <label style={{ fontSize: 12, color: 'var(--sub)' }}>提前预警天数</label>
+            <input type="number" style={{ width: 70 }} value={alertDays} onChange={e => setAlertDays(e.target.value)} />
             <button className="btn small" onClick={saveAlertConfig}>保存</button>
             <button className="btn" onClick={manualScan}>立即执行</button>
           </>
@@ -606,6 +643,27 @@ export default function SimpleList({ kind }) {
         </Modal>
       )}
 
+      {billExpModal && (
+        <Modal title="导出账单明细" onClose={() => setBillExpModal(false)}>
+          <div className="note">按日期期间导出账单明细（含充值记录和余额）；不选代理则导出全部代理。</div>
+          <div className="row">
+            <div className="field"><label className="required">开始日期</label>
+              <input type="date" value={billExpStart} onChange={e => setBillExpStart(e.target.value)} /></div>
+            <div className="field"><label className="required">结束日期</label>
+              <input type="date" value={billExpEnd} onChange={e => setBillExpEnd(e.target.value)} /></div>
+          </div>
+          <div className="field" style={{ marginBottom: 14 }}><label>代理</label>
+            <select value={billExpCustId} onChange={e => setBillExpCustId(Number(e.target.value))}>
+              <option value={0}>全部代理</option>
+              {customers.map(c => <option key={c.id} value={c.id}>{c.code} {c.name}</option>)}
+            </select></div>
+          <div className="foot">
+            <button className="btn" onClick={() => setBillExpModal(false)}>取消</button>
+            <button className="btn primary" onClick={() => doBillExport().catch(e => showError(e.message))}>导出</button>
+          </div>
+        </Modal>
+      )}
+
       {billDetail && (
         <Modal title="账单详情" onClose={() => setBillDetail(null)} wide>
           <div className="row">
@@ -621,11 +679,11 @@ export default function SimpleList({ kind }) {
           <div className="panel" style={{ marginTop: 8 }}>
             <div className="table-scroll">
               <table>
-                <thead><tr><th>小组</th><th className="num">手机号数量</th><th className="num">金额(元)</th></tr></thead>
+                <thead><tr><th>任务名</th><th className="num">手机号数量</th><th className="num">金额(元)</th></tr></thead>
                 <tbody>
                   {(billDetail.groups || []).map(g => (
-                    <tr key={g.group_name}>
-                      <td>{g.group_name}</td>
+                    <tr key={g.task_name}>
+                      <td>{g.task_name}</td>
                       <td className="num">{g.qty}</td>
                       <td className="num">{g.amount}</td>
                     </tr>

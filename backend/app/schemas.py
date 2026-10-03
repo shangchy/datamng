@@ -51,7 +51,7 @@ class CustomerBody(BaseModel):
 
 
 class RechargeBody(BaseModel):
-    amount_u: float
+    amount_u: Optional[float] = None
     amount_rmb: Optional[float] = None
     recharge_date: date
     note: str = ""
