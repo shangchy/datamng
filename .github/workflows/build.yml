@@ -47,7 +47,6 @@ jobs:
           cp -r frontend/dist "$PKG/static"
           cp backend/requirements.txt "$PKG/requirements.txt"
           cp run.bat "$PKG/run.bat"
-          cp add_indexes.bat "$PKG/add_indexes.bat"
           cp backend/.env.example "$PKG/.env"
           touch "$PKG/logs/app.log"
           cd dist-package
