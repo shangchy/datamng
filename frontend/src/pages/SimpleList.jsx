@@ -26,7 +26,7 @@ const KINDS = {
       { k: 'city', l: '市' }, { k: 'operator', l: '运营商' }, { k: 'cat1', l: '一级品类' }, { k: 'cat2', l: '二级品类' }, { k: 'platform', l: '平台' },
       { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' }, { k: 'channel', l: '渠道' },
       { k: 'source_file', l: '来源文件名' }, { k: 'created_at', l: '创建时间' }, { k: 'updated_at', l: '更新时间' },
-    ], export: true, dailyImp: true, batchDel: true, dist: true, clear: true,
+    ], export: true, dailyImp: true, batchDel: true, dist: true, check: true,
   },
   sourcefiles: {
     title: '元文件管理', endpoint: '/api/source-files',
@@ -73,7 +73,7 @@ const KINDS = {
     cols: [
       { k: 'customer', l: '客户' }, { k: 'biz_date', l: '业务日期' }, { k: 'purchase_qty', l: '进货量', num: true },
       { k: 'sales', l: '销售金额', num: true }, { k: 'balance', l: '余额', num: true }, { k: 'profit', l: '利润', num: true }, { k: 'created_at', l: '创建日期' },
-    ], clear: true, detail: true, imp: true, impEndpoint: '/api/bills/import', billExp: true,
+    ], detail: true, imp: true, impEndpoint: '/api/bills/import', billExp: true,
   },
   alerts: {
     title: '预警中心', endpoint: '/api/alerts',
@@ -142,6 +142,12 @@ export default function SimpleList({ kind }) {
   const [billExpStart, setBillExpStart] = useState('')
   const [billExpEnd, setBillExpEnd] = useState('')
   const [billExpCustId, setBillExpCustId] = useState(0)
+  const [checkModal, setCheckModal] = useState(false)
+  const [checkDate, setCheckDate] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
+  const [checkResult, setCheckResult] = useState(null)
 
   useEffect(() => {
     if (kind === 'alerts') api.get('/api/alert-config').then(r => { setAlertTrigger(r.data.trigger_time); setAlertDays(r.data.alert_days ?? 0) }).catch(() => {})
@@ -468,8 +474,10 @@ export default function SimpleList({ kind }) {
     if (!washDate) { showError('请选择数据日期'); return }
     setWashModal(false)
     try {
+      const r = await api.get(`/api/daily-data/wash-stats?date=${encodeURIComponent(washDate)}`)
+      const s = r.data || {}
       await downloadFile(`/api/daily-data/wash-export?date=${encodeURIComponent(washDate)}`)
-      toast('洗名手机号已导出')
+      showError(`洗名导出完成\n\n一共要导出：${s.total ?? 0} 条\n已匹配洗名库：${s.matched ?? 0} 条\n需要去小逸洗名：${s.need_wash ?? 0} 条`)
     } catch (e) { showError(e.message) }
   }
 
@@ -483,6 +491,22 @@ export default function SimpleList({ kind }) {
       if (billExpCustId) p.set('customer_id', billExpCustId)
       await downloadFile(`/api/bills/export?${p.toString()}`)
       toast('账单已导出')
+    } catch (e) { showError(e.message) }
+  }
+
+  async function doCheck() {
+    if (!checkDate) { showError('请选择数据日期'); return }
+    try {
+      const r = await api.get(`/api/daily-data/check?date=${encodeURIComponent(checkDate)}`)
+      setCheckResult(r.data || [])
+    } catch (e) { showError(e.message) }
+  }
+
+  async function doCheckExport() {
+    if (!checkDate) { showError('请选择数据日期'); return }
+    try {
+      await downloadFile(`/api/daily-data/check-export?date=${encodeURIComponent(checkDate)}`)
+      toast('检查结果已导出')
     } catch (e) { showError(e.message) }
   }
 
@@ -546,6 +570,7 @@ export default function SimpleList({ kind }) {
         {cfg.dist && <button className="btn" onClick={() => setWashModal(true)}>② 导出洗名</button>}
         {cfg.dist && <button className="btn" onClick={() => washFileRef.current.click()}>③ 导入洗名</button>}
         {cfg.dist && <button className="btn green" onClick={() => setDistModal(true)}>④ 分发数据</button>}
+        {cfg.check && <button className="btn" onClick={() => { setCheckResult(null); setCheckModal(true) }}>工单检查</button>}
         {cfg.batchDel && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
         {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
         {cfg.export && <button className="btn green" onClick={exportExcel}>导出 Excel</button>}
@@ -660,6 +685,40 @@ export default function SimpleList({ kind }) {
           <div className="foot">
             <button className="btn" onClick={() => setBillExpModal(false)}>取消</button>
             <button className="btn primary" onClick={() => doBillExport().catch(e => showError(e.message))}>导出</button>
+          </div>
+        </Modal>
+      )}
+
+      {checkModal && (
+        <Modal title="工单检查" onClose={() => setCheckModal(false)} wide>
+          <div className="note">统计所有「在执」工单在所选数据日期的数据量情况（按数据量降序）。</div>
+          <div className="row">
+            <div className="field"><label className="required">数据日期</label>
+              <input type="date" value={checkDate} onChange={e => setCheckDate(e.target.value)} /></div>
+            <div className="field" style={{ display: 'flex', alignItems: 'flex-end' }}>
+              <button className="btn primary" onClick={() => doCheck().catch(e => showError(e.message))}>检查</button>
+            </div>
+          </div>
+          {checkResult && (
+            <div className="table-scroll" style={{ maxHeight: 420 }}>
+              <table>
+                <thead><tr><th>工单号</th><th>任务名</th><th className="num">数据量</th></tr></thead>
+                <tbody>
+                  {checkResult.map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.task_id || '—'}</td>
+                      <td>{r.task_name || '—'}</td>
+                      <td className="num">{r.count}</td>
+                    </tr>
+                  ))}
+                  {checkResult.length === 0 && <tr><td colSpan={3} className="empty">无匹配的在执工单</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="foot">
+            {checkResult && checkResult.length > 0 && <button className="btn green" onClick={() => doCheckExport().catch(e => showError(e.message))}>导出检查结果</button>}
+            <button className="btn primary" onClick={() => setCheckModal(false)}>关闭</button>
           </div>
         </Modal>
       )}

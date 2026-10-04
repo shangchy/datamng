@@ -564,6 +564,65 @@ def wash_export(date: str = "", db: Session = Depends(get_db), _=Depends(get_cur
     return xlsx_response(["手机号", "姓名"], [[p, ""] for p in phones], f"洗名-{date}.xlsx", "洗名")
 
 
+@router.get("/daily-data/wash-stats")
+def wash_stats(date: str = "", db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """洗名导出统计：一共要导出、已匹配洗名库、需要去小逸洗名"""
+    date_obj = _parse_biz_date(date)
+    if not date_obj:
+        raise HTTPException(status_code=422, detail="请选择数据日期")
+    add_name_tids = [o.task_id for o in db.query(Order).filter(Order.add_name.is_(True)).all() if o.task_id]
+    qy = db.query(DailyData).filter(DailyData.biz_date == date_obj)
+    if add_name_tids:
+        qy = qy.filter(DailyData.task_id.in_(add_name_tids))
+    else:
+        qy = qy.filter(DailyData.id < 0)
+    total = qy.count()
+    matched = qy.filter(DailyData.name.isnot(None), DailyData.name != "").count()
+    need_wash = total - matched
+    return {"code": 0, "data": {"total": total, "matched": matched, "need_wash": need_wash}, "msg": "ok"}
+
+
+def _check_daily_result(db, date_obj):
+    """工单检查：统计所有在执工单在所选日期的数据量（按数据量降序）"""
+    orders = db.query(Order).filter(Order.status == "在执").all()
+    counts = {}
+    for tid, cnt in db.query(DailyData.task_id, func.count(DailyData.id)) \
+            .filter(DailyData.biz_date == date_obj, DailyData.task_id.isnot(None)) \
+            .group_by(DailyData.task_id).all():
+        counts[tid] = int(cnt)
+    result = []
+    for o in orders:
+        result.append({
+            "task_id": o.task_id or "",
+            "task_name": o.task_name or "",
+            "order_no": o.order_no or "",
+            "count": counts.get(o.task_id, 0),
+        })
+    result.sort(key=lambda x: (-x["count"], x["task_id"]))
+    return result
+
+
+@router.get("/daily-data/check")
+def check_daily(date: str = "", db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """工单检查：统计所有在执工单在所选日期的数据量（按数据量降序）"""
+    date_obj = _parse_biz_date(date)
+    if not date_obj:
+        raise HTTPException(status_code=422, detail="请选择数据日期")
+    return {"code": 0, "data": _check_daily_result(db, date_obj), "msg": "ok"}
+
+
+@router.get("/daily-data/check-export")
+def check_export(date: str = "", db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """工单检查结果导出（Excel）"""
+    date_obj = _parse_biz_date(date)
+    if not date_obj:
+        raise HTTPException(status_code=422, detail="请选择数据日期")
+    result = _check_daily_result(db, date_obj)
+    headers = ["工单号", "任务名", "订单编号", "数据量"]
+    rows = [[r["task_id"], r["task_name"], r["order_no"], r["count"]] for r in result]
+    return xlsx_response(headers, rows, f"工单检查-{date}.xlsx", "工单检查")
+
+
 def _parse_wash_file(fn, content):
     """解析洗名文件，返回 [(phone, name, province, city, operator)]"""
     ext = fn.rsplit(".", 1)[-1].lower() if "." in fn else ""
@@ -858,7 +917,7 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
         "日期": date_str,
         "进货量": qty,
         "销售金额": sales,
-        "余额": (round(float(balance) - sales, 2) if balance is not None else ""),
+        "余额": (round(float(balance), 2) if balance is not None else ""),
     }
     # 值单元格：标签右侧的第一个合并区间左上角（如 E 列），无合并则用相邻列
     merged_by_row = {}
@@ -934,6 +993,17 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
     ref_row = data_start if n_blank >= 1 else header_row
     ref_cols = [c for c in cols.values() if c is not None]
 
+    # 斑马纹：识别模版已有数据行中「填充行」的奇偶性与填充样式，用于还原新插入行的斑马纹
+    import copy as _copy
+    striped_fill = None
+    striped_parity = None
+    for i in range(n_blank):
+        c = ws.cell(row=data_start + i, column=ref_cols[0])
+        if c.fill and c.fill.patternType == 'solid':
+            striped_fill = _copy.copy(c.fill)
+            striped_parity = i % 2
+            break
+
     for i, (g, gg) in enumerate(groups):
         r = data_start + i
         if "task" in cols:
@@ -956,6 +1026,10 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
         if i >= n_blank:
             for c in ref_cols:
                 _copy_cell_style(ws.cell(row=ref_row, column=c), ws.cell(row=r, column=c))
+            # 还原斑马纹：与模版填充行同奇偶的新行补上填充色
+            if striped_fill is not None and (i % 2) == striped_parity:
+                for c in ref_cols:
+                    ws.cell(row=r, column=c).fill = _copy.copy(striped_fill)
 
     # 修正合计行的 SUM 公式范围（openpyxl 插行不会自动调整公式范围）
     if n_groups > n_blank and total_row:
@@ -968,16 +1042,18 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
                 letter = get_column_letter(c)
                 cell.value = f"=SUM({letter}{data_start}:{letter}{end_row})"
 
-    # 任务名列宽度自适应内容（中文按 2 个字符宽度计）
-    if "task" in cols:
-        from openpyxl.utils import get_column_letter as _gcl
+    # 任务名 / 订单编号列宽度自适应内容（中文按 2 个字符宽度计）
+    from openpyxl.utils import get_column_letter as _gcl
+    for key, attr in [("task", "task_name"), ("task_id", "order_no")]:
+        if key not in cols:
+            continue
         max_w = 0
         for i, (g, gg) in enumerate(groups):
-            name = str(gg.get("task_name") or g)
-            w = sum(2 if ord(ch) > 127 else 1 for ch in name)
+            val = str(gg.get(attr) or g)
+            w = sum(2 if ord(ch) > 127 else 1 for ch in val)
             max_w = max(max_w, w)
         if max_w > 0:
-            ws.column_dimensions[_gcl(cols["task"])].width = min(max_w + 2, 60)
+            ws.column_dimensions[_gcl(cols[key])].width = min(max_w + 2, 60)
 
     bio = io.BytesIO()
     wb.save(bio)
@@ -1020,7 +1096,7 @@ def _build_distribute_zip(jobs, bills, date_str, progress_cb, bill_tpls=None):
                 continue
             tpl = (bill_tpls or {}).get(cc)
             bio = _fill_bill_file(bill.get("cust_label") or cc, date_str, bill, tpl)
-            bal = float(bill.get("balance") or 0) - float(bill.get("sales") or 0)
+            bal = float(bill.get("balance") or 0)
             sign = "正" if bal >= 0 else "负"
             abs_bal = round(abs(bal), 2)
             filename = f"账单-{date_str}（余额{sign}{abs_bal}）.xlsx"
@@ -1061,6 +1137,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             "group_name": order.group_name or "",
             "task_name": order.task_name or "",
             "order_no": order.order_no or "",
+            "stop_date": order.stop_date,
             "city": order.city or "",
             "province": order.province or "",
             "channel": ch.name if ch else "",
@@ -1076,6 +1153,10 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
 
     if not orders_info:
         raise HTTPException(status_code=404, detail="没有可分发的数据（任务id未关联到订单）")
+
+    # 停单(t+2)之后仍在出数的数据：不分发、不记账
+    stopped_tids = {tid for tid, info in orders_info.items()
+                    if info.get("stop_date") and date_obj > info["stop_date"] + timedelta(days=2)}
 
     # 2. 校验：小组名/一级代理 不能为空
     for tid, info in orders_info.items():
@@ -1119,7 +1200,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
     # 5. 按小组名分组（同一小组的数据合并到一个文件，使用小组已设定的出数模版）
     jobs = {}
     for d in rows:
-        if not d.task_id or d.task_id not in orders_info:
+        if not d.task_id or d.task_id not in orders_info or d.task_id in stopped_tids:
             continue
         info = orders_info[d.task_id]
         g = info["group_name"]
@@ -1149,7 +1230,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
     # 6. 计算各代理账单（进货量、销售金额 = 手机号 × 订单单价）
     bills = {}
     for d in rows:
-        if not d.task_id or d.task_id not in orders_info:
+        if not d.task_id or d.task_id not in orders_info or d.task_id in stopped_tids:
             continue
         info = orders_info[d.task_id]
         cc = info["cust_code"]
@@ -1171,21 +1252,28 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
         gg["qty"] += 1
         gg["amount"] += eff_price
 
-    # 7. 保存账单（按客户+日期 upsert）
+    # 7. 保存账单（按客户+日期 upsert；余额 = 客户余额 - 销售金额），并同步客户余额
     for cc, b in bills.items():
         cid = b.get("customer_id")
         if not cid:
             continue
         cust = db.query(Customer).filter(Customer.id == cid).first()
-        balance = float(cust.balance) if cust and cust.balance is not None else 0
         existing = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == date_obj).first()
+        balance = float(cust.balance) if cust and cust.balance is not None else 0
+        # 重复分发时：把上次已扣的销售金额加回来，恢复到扣减前的基础余额，避免重复扣减
+        if existing and existing.sales is not None:
+            balance = round(balance + float(existing.sales), 2)
+        bill_balance = round(balance - float(b["sales"]), 2)
+        b["balance"] = bill_balance
         if existing:
             existing.purchase_qty = b["qty"]
             existing.sales = b["sales"]
-            existing.balance = balance
+            existing.balance = bill_balance
         else:
             db.add(Bill(customer_id=cid, biz_date=date_obj, purchase_qty=b["qty"],
-                        sales=b["sales"], balance=balance, profit=0))
+                        sales=b["sales"], balance=bill_balance, profit=0))
+        if cust is not None:
+            cust.balance = bill_balance
     db.commit()
 
     # 7.5 各代理账单模版（客户配置了账单模版则按模版生成）
@@ -1662,7 +1750,7 @@ def bill_detail(bid: int, db: Session = Depends(get_db), _=Depends(get_current_u
         "biz_date": str(b.biz_date),
         "purchase_qty": b.purchase_qty,
         "sales": float(b.sales) if b.sales is not None else 0,
-        "balance": float(b.balance) if b.balance is not None else 0,
+        "balance": float(c.balance) if c and c.balance is not None else 0,
         "profit": float(b.profit) if b.profit is not None else 0,
         "created_at": fmt_dt(b.created_at),
         "groups": [{"task_name": gg["task_name"], "task_id": g, "order_no": gg["order_no"],
