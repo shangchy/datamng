@@ -26,7 +26,7 @@ const KINDS = {
       { k: 'city', l: '市' }, { k: 'operator', l: '运营商' }, { k: 'cat1', l: '一级品类' }, { k: 'cat2', l: '二级品类' }, { k: 'platform', l: '平台' },
       { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' }, { k: 'channel', l: '渠道' },
       { k: 'source_file', l: '来源文件名' }, { k: 'created_at', l: '创建时间' }, { k: 'updated_at', l: '更新时间' },
-    ], export: true, dailyImp: true, csvImp: true, batchDel: true, dist: true, check: true,
+    ], export: true, dailyImp: true, csvImp: true, batchDel: true, batchDelAdmin: true, dist: true, check: true,
   },
   sourcefiles: {
     title: '元文件管理', endpoint: '/api/source-files',

@@ -652,7 +652,7 @@ async def import_daily_csv(files: List[UploadFile] = File(...), biz_date: str = 
 
 
 @router.post("/daily-data/batch-delete")
-def batch_delete_daily(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def batch_delete_daily(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(require_admin)):
     rows = db.query(DailyData).filter(DailyData.id.in_(body.ids)).all()
     for r in rows:
         db.delete(r)
