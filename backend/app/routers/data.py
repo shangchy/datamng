@@ -1561,6 +1561,15 @@ def list_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
     return ok_page(data, total)
 
 
+@router.post("/bills/batch-delete")
+def batch_delete_bills(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    rows = db.query(Bill).filter(Bill.id.in_(body.ids)).all()
+    for r in rows:
+        db.delete(r)
+    db.commit()
+    return {"code": 0, "data": {"deleted": len(rows)}, "msg": f"已删除 {len(rows)} 条账单"}
+
+
 @router.delete("/bills")
 def clear_bills(db: Session = Depends(get_db), _=Depends(get_current_user)):
     n = db.query(Bill).count()

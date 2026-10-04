@@ -73,7 +73,7 @@ const KINDS = {
     cols: [
       { k: 'customer', l: '客户' }, { k: 'biz_date', l: '业务日期' }, { k: 'purchase_qty', l: '进货量', num: true },
       { k: 'sales', l: '销售金额', num: true }, { k: 'balance', l: '余额', num: true }, { k: 'profit', l: '利润', num: true }, { k: 'created_at', l: '创建日期' },
-    ], detail: true, imp: true, impEndpoint: '/api/bills/import', billExp: true,
+    ], batchDel: true, detail: true, imp: true, impEndpoint: '/api/bills/import', billExp: true,
   },
   alerts: {
     title: '预警中心', endpoint: '/api/alerts',
