@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import func, insert, or_
+from sqlalchemy import func, insert, or_, update, bindparam
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -849,11 +849,15 @@ async def import_wash(file: UploadFile = File(...), db: Session = Depends(get_db
     rec_map = {}
     for phone, name, province, city, operator in rows:
         rec_map[phone] = {"name": name, "province": province, "city": city, "operator": operator}
-    updated = 0
-    for phone, rec in rec_map.items():
-        n = db.query(DailyData).filter(DailyData.phone == phone).update({"name": rec["name"]})
-        updated += n
-    for phone, rec in rec_map.items():
+    phones = list(rec_map.keys())
+    if phones:
+        # 批量更新日活数据姓名（按手机号，走 phone 索引）
+        stmt = (update(DailyData.__table__)
+                .where(DailyData.__table__.c.phone == bindparam("ph"))
+                .values(name=bindparam("nm")))
+        db.execute(stmt, [{"ph": p, "nm": rec_map[p]["name"]} for p in phones])
+    for phone in phones:
+        rec = rec_map[phone]
         # 更新洗名库（手机号存在则更新，不存在则插入；省/市/运营商仅在文件提供时覆盖，避免清空已有数据）
         w = db.query(WashName).filter(WashName.phone == phone).first()
         if w:
@@ -868,7 +872,7 @@ async def import_wash(file: UploadFile = File(...), db: Session = Depends(get_db
             db.add(WashName(phone=phone, name=rec["name"], province=rec["province"],
                             city=rec["city"], operator=rec["operator"]))
     db.commit()
-    return {"code": 0, "data": {"updated": updated}, "msg": f"已更新 {updated} 条姓名，洗名库同步更新"}
+    return {"code": 0, "data": {"updated": len(phones)}, "msg": f"已更新 {len(phones)} 个手机号的姓名，洗名库同步更新"}
 
 
 # ============ 洗名库 ============

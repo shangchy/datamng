@@ -129,6 +129,21 @@ def _migrate_schema():
         print(f"[migrate] 跳过: {e}")
 
 
+def _ensure_indexes():
+    """给大表补关键索引（幂等，启动时自动创建，避免全表扫描）"""
+    indexes = [
+        ("idx_daily_data_phone", "daily_data", "phone"),
+        ("idx_daily_data_biz_date", "daily_data", "biz_date"),
+        ("idx_daily_data_task_id", "daily_data", "task_id"),
+    ]
+    try:
+        with engine.begin() as conn:
+            for name, table, col in indexes:
+                conn.execute(text(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ("{col}")'))
+    except Exception as e:  # noqa
+        print(f"[indexes] 跳过: {e}")
+
+
 def _backfill_tpl_types():
     """给已有模版回填模版类型（订单/出数/账单/其他）"""
     try:
@@ -153,6 +168,7 @@ def _backfill_tpl_types():
 
 
 _migrate_schema()
+_ensure_indexes()
 _backfill_tpl_types()
 
 app = FastAPI(title="LM订单管理系统")
