@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, getToken, downloadFile, uploadFile } from '../api'
+import { api, getToken, getUser, downloadFile, uploadFile } from '../api'
 import { Modal, Badge, useToast, useConfirm, Loading } from '../components/ui'
 import { useColumnConfig, downloadCsv } from '../components/columns'
 import FilterBar, { buildQuery } from '../components/FilterBar'
@@ -26,7 +26,7 @@ const KINDS = {
       { k: 'city', l: '市' }, { k: 'operator', l: '运营商' }, { k: 'cat1', l: '一级品类' }, { k: 'cat2', l: '二级品类' }, { k: 'platform', l: '平台' },
       { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' }, { k: 'channel', l: '渠道' },
       { k: 'source_file', l: '来源文件名' }, { k: 'created_at', l: '创建时间' }, { k: 'updated_at', l: '更新时间' },
-    ], export: true, dailyImp: true, batchDel: true, dist: true, check: true,
+    ], export: true, dailyImp: true, csvImp: true, batchDel: true, dist: true, check: true,
   },
   sourcefiles: {
     title: '元文件管理', endpoint: '/api/source-files',
@@ -41,7 +41,7 @@ const KINDS = {
       { k: 'phone', l: '手机号' }, { k: 'name', l: '姓名' },
       { k: 'province', l: '省' }, { k: 'city', l: '市' }, { k: 'operator', l: '运营商' },
       { k: 'created_at', l: '创建日期' }, { k: 'updated_at', l: '更新日期' },
-    ],
+    ], batchDel: true, imp: true, impEndpoint: '/api/wash-names/import',
   },
   fund: {
     title: '公积金', endpoint: '/api/fund',
@@ -73,7 +73,7 @@ const KINDS = {
     cols: [
       { k: 'customer', l: '客户' }, { k: 'biz_date', l: '业务日期' }, { k: 'purchase_qty', l: '进货量', num: true },
       { k: 'sales', l: '销售金额', num: true }, { k: 'balance', l: '余额', num: true }, { k: 'profit', l: '利润', num: true }, { k: 'created_at', l: '创建日期' },
-    ], batchDel: true, detail: true, imp: true, impEndpoint: '/api/bills/import', billExp: true,
+    ], batchDel: true, batchDelAdmin: true, detail: true, imp: true, impEndpoint: '/api/bills/import', billExp: true,
   },
   alerts: {
     title: '预警中心', endpoint: '/api/alerts',
@@ -93,6 +93,9 @@ const KINDS = {
 
 export default function SimpleList({ kind }) {
   const cfg = KINDS[kind]
+  const user = getUser() || {}
+  const isAdmin = user.role_code === 'admin' || (user.permissions || []).includes('*')
+  const showBatchDel = !!cfg.batchDel && (!cfg.batchDelAdmin || isAdmin)
   const hasRowOps = !!(cfg.simple || cfg.editUrl || cfg.del || cfg.dl || cfg.handle || cfg.reset || cfg.pwd || cfg.detail)
   const { toast, showError } = useToast()
   const nav = useNavigate()
@@ -132,6 +135,9 @@ export default function SimpleList({ kind }) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
   const dailyFileRef = useRef(null)
+  const [csvModal, setCsvModal] = useState(false)
+  const [csvFile, setCsvFile] = useState(null)
+  const csvFileRef = useRef(null)
   const [washModal, setWashModal] = useState(false)
   const [washDate, setWashDate] = useState(() => {
     const d = new Date()
@@ -439,6 +445,19 @@ export default function SimpleList({ kind }) {
     } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
+  async function importDailyCsv() {
+    if (!csvFile) { showError('请选择 csv 文件'); return }
+    setCsvModal(false)
+    try {
+      setBusy(true); setBusyMsg('正在导入 CSV…'); setBusyProgress(0)
+      const fd = new FormData()
+      fd.append('files', csvFile)
+      const data = await uploadFile('/api/daily-data/import-csv', fd, p => setBusyProgress(p))
+      setBusyMsg('正在入库，请稍候…'); setBusyProgress(100)
+      toast(data.msg); load()
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
+  }
+
   async function doDistribute() {
     if (!distDate) { showError('请选择数据日期'); return }
     setDistModal(false)
@@ -564,14 +583,21 @@ export default function SimpleList({ kind }) {
         <div className="toolbar-actions">
         <button className="btn primary" onClick={() => search()}>查询</button>
         <button className="btn" onClick={() => { setFilters({}); search({}) }}>重置</button>
+        {kind === 'washnames' && (
+          <label style={{ fontSize: 12, color: 'var(--sub)', display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+            <input type="checkbox" checked={filters.name_empty === '1'} onChange={e => setFilters({ ...filters, name_empty: e.target.checked ? '1' : '' })} />
+            仅看空姓名
+          </label>
+        )}
         <button className="btn icon" title={filterCollapsed ? '展开查询条件' : '隐藏查询条件'} onClick={() => setFilterCollapsed(!filterCollapsed)}>{filterCollapsed ? IconChevronDown : IconChevronUp}</button>
         {cfg.exp && <button className="btn green" onClick={exportExcel}>导出 Excel</button>}
         {cfg.dailyImp && <button className="btn primary" onClick={() => setDailyModal(true)}>① 导入日活</button>}
+        {cfg.csvImp && isAdmin && <button className="btn" onClick={() => { setCsvFile(null); setCsvModal(true) }}>导入CSV</button>}
         {cfg.dist && <button className="btn" onClick={() => setWashModal(true)}>② 导出洗名</button>}
         {cfg.dist && <button className="btn" onClick={() => washFileRef.current.click()}>③ 导入洗名</button>}
         {cfg.dist && <button className="btn green" onClick={() => setDistModal(true)}>④ 分发数据</button>}
         {cfg.check && <button className="btn" onClick={() => { setCheckResult(null); setCheckModal(true) }}>工单检查</button>}
-        {cfg.batchDel && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
+        {showBatchDel && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
         {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
         {cfg.export && <button className="btn green" onClick={exportExcel}>导出 Excel</button>}
         {cfg.billExp && <button className="btn green" onClick={() => setBillExpModal(true)}>导出账单</button>}
@@ -595,11 +621,11 @@ export default function SimpleList({ kind }) {
       <div className="panel">
         <div className="table-scroll">
           <table>
-            <thead><tr>{cfg.batchDel && <th style={{ width: 32 }}><input type="checkbox" checked={rows.length > 0 && selected.length === sortedRows().length} onChange={toggleAll} /></th>}{cols.map(c => <th key={c.k} className={c.num ? 'num' : ''} onClick={() => toggleSort(c.k)}>{c.l}{sort?.k === c.k ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>)}{hasRowOps && <th className="ops">操作</th>}</tr></thead>
+            <thead><tr>{showBatchDel && <th style={{ width: 32 }}><input type="checkbox" checked={rows.length > 0 && selected.length === sortedRows().length} onChange={toggleAll} /></th>}{cols.map(c => <th key={c.k} className={c.num ? 'num' : ''} onClick={() => toggleSort(c.k)}>{c.l}{sort?.k === c.k ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>)}{hasRowOps && <th className="ops">操作</th>}</tr></thead>
             <tbody>
               {sortedRows().map(r => (
                 <tr key={r.id}>
-                  {cfg.batchDel && <td><input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} /></td>}
+                  {showBatchDel && <td><input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} /></td>}
                   {cols.map(c => <td key={c.k} className={c.num ? 'num' : ''}>{cell(c, r)}</td>)}
                   {hasRowOps && <td className="ops">
                     {cfg.detail && <button className="btn small" onClick={() => viewBillDetail(r.id)}>详情</button>}
@@ -640,6 +666,18 @@ export default function SimpleList({ kind }) {
           <div className="foot">
             <button className="btn" onClick={() => setDailyModal(false)}>取消</button>
             <button className="btn primary" onClick={() => importDaily().catch(e => showError(e.message))}>开始导入</button>
+          </div>
+        </Modal>
+      )}
+
+      {csvModal && (
+        <Modal title="导入 CSV（原样入库）" onClose={() => setCsvModal(false)}>
+          <div className="note">按「日活数据」表结构逐行原样写入（不做订单关联/洗名补全/去重之外的加工）。表头需含：数据日期、甲方、任务id、任务名、手机号、姓名、省、市、运营商等。按（数据日期+任务id+手机号）自动去重。</div>
+          <div className="field" style={{ marginBottom: 14 }}><label className="required">CSV 文件</label>
+            <input type="file" accept=".csv" ref={csvFileRef} onChange={e => setCsvFile(e.target.files[0] || null)} /></div>
+          <div className="foot">
+            <button className="btn" onClick={() => setCsvModal(false)}>取消</button>
+            <button className="btn primary" onClick={() => importDailyCsv().catch(e => showError(e.message))}>开始导入</button>
           </div>
         </Modal>
       )}

@@ -36,6 +36,13 @@ def get_permissions(user: SysUser, db: Session) -> set[str]:
     return {r[0] for r in rows}
 
 
+def require_admin(user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)) -> SysUser:
+    """仅系统管理员（role.code == 'admin'，其权限集为 {'*'}）"""
+    if "*" in get_permissions(user, db):
+        return user
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="仅系统管理员可操作")
+
+
 def require_permission(perm: str):
     def checker(user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
         perms = get_permissions(user, db)

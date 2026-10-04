@@ -8,11 +8,11 @@ from datetime import date, datetime, timedelta
 from typing import List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import func, or_
+from sqlalchemy import func, insert, or_
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import get_current_user, require_admin
 from ..models import (DailyData, Fund, Bill, Alert, Customer, Channel, Category,
                       Order, SysConfig, Operator, SourceFile, Template, WashName, Platform,
                       CustomerRecharge)
@@ -519,6 +519,138 @@ async def import_daily(files: List[UploadFile] = File(...), biz_date: str = Form
             "msg": f"导入 {imported} 条，去重 {deduped} 条，失败 {len(errors)} 条"}
 
 
+# ============ 日活数据：LM 结构 CSV 原样导入 ============
+_CSV_FIELD_ALIASES = {
+    "数据日期": "biz_date", "日期": "biz_date", "biz_date": "biz_date",
+    "甲方": "upstream", "upstream": "upstream",
+    "任务id": "task_id", "任务ID": "task_id", "工单号": "task_id", "task_id": "task_id",
+    "任务名": "task_name", "task_name": "task_name",
+    "手机号": "phone", "联系方式": "phone", "phone": "phone",
+    "姓名": "name", "name": "name",
+    "省": "province", "省份": "province", "province": "province",
+    "市": "city", "城市": "city", "city": "city",
+    "运营商": "operator", "operator": "operator",
+    "一级品类": "cat1", "cat1": "cat1",
+    "二级品类": "cat2", "cat2": "cat2",
+    "平台": "platform", "platform": "platform",
+    "一级代理": "customer", "customer": "customer",
+    "二级代理": "secondary_agent", "secondary_agent": "secondary_agent",
+    "渠道": "channel", "channel": "channel",
+    "来源文件名": "source_file", "source_file": "source_file",
+}
+
+
+def _norm_csv_header(h):
+    return re.sub(r"[\s\u3000]+", "", str(h or "")).strip().lstrip("\ufeff")
+
+
+def _import_daily_csv_stream(db, fh, filename, default_date, stats):
+    """流式解析 LM 结构 CSV，按行原样写入 daily_data。
+
+    规则：不关联订单、不查洗名库、不做品类映射（原样入库）；
+    按（数据日期+任务id+手机号）去重（含库内已有行，可重复导入不重复计数）。
+    """
+    import csv as _csv
+    reader = _csv.reader(fh)
+    header = next(reader, None)
+    if header is None:
+        return
+    idx = {}
+    for i, h in enumerate(header):
+        key = _CSV_FIELD_ALIASES.get(_norm_csv_header(h))
+        if key and key not in idx:
+            idx[key] = i
+    if "phone" not in idx:
+        stats["errors"].append(f"{filename}: 缺少「手机号」列")
+        return
+
+    batch = []
+    now = datetime.now()
+    for values in reader:
+        if not any((str(v).strip() if v is not None else "") for v in values):
+            continue
+
+        def g(field):
+            i = idx.get(field)
+            if i is None or i >= len(values):
+                return ""
+            v = values[i]
+            return "" if v is None else str(v).strip()
+
+        phone = g("phone")
+        if not phone:
+            continue
+        d = _parse_biz_date(g("biz_date")) or default_date
+        if not d:
+            stats["skipped"] += 1
+            continue
+        ds = str(d)
+        # 首次遇到某日期时，把库里该日期已有 (任务id, 手机号) 载入去重集
+        if ds not in stats["loaded_dates"]:
+            stats["loaded_dates"].add(ds)
+            for tid, ph in db.query(DailyData.task_id, DailyData.phone).filter(DailyData.biz_date == d).all():
+                stats["seen"].add((ds, tid or "", ph or ""))
+
+        task_id = g("task_id")
+        key = (ds, task_id, phone)
+        if key in stats["seen"]:
+            stats["deduped"] += 1
+            continue
+        stats["seen"].add(key)
+        batch.append({
+            "biz_date": d, "upstream": g("upstream"), "task_id": task_id,
+            "task_name": g("task_name"), "phone": phone, "name": g("name"),
+            "province": g("province"), "city": g("city"), "operator": g("operator"),
+            "cat1": g("cat1"), "cat2": g("cat2"), "platform": g("platform"),
+            "customer": g("customer"), "secondary_agent": g("secondary_agent"),
+            "channel": g("channel"), "source_file": g("source_file") or filename,
+            "source_file_id": None, "created_at": now, "updated_at": now,
+        })
+        if len(batch) >= 5000:
+            db.execute(insert(DailyData), batch)
+            db.commit()
+            stats["imported"] += len(batch)
+            batch.clear()
+    if batch:
+        db.execute(insert(DailyData), batch)
+        db.commit()
+        stats["imported"] += len(batch)
+        batch.clear()
+
+
+@router.post("/daily-data/import-csv")
+async def import_daily_csv(files: List[UploadFile] = File(...), biz_date: str = Form(""),
+                           db: Session = Depends(get_db), _=Depends(require_admin)):
+    """原样导入 LM 结构 CSV（表头：数据日期/甲方/任务id/任务名/手机号/姓名/省/市/运营商/…）。
+
+    与 /daily-data/import 的区别：不做订单关联、不查洗名库，字段按 CSV 原样入库。
+    数据日期以每行的「数据日期」为准，缺省用表单 biz_date 兜底。
+    """
+    default_date = _parse_biz_date(biz_date)
+    stats = {"imported": 0, "deduped": 0, "skipped": 0, "errors": [],
+             "seen": set(), "loaded_dates": set()}
+    seen_files = 0
+    for file in files:
+        fn = file.filename or ""
+        if not fn.lower().endswith(".csv"):
+            stats["errors"].append(f"{fn}: 仅支持 csv 文件")
+            continue
+        seen_files += 1
+        try:
+            raw = await file.read()
+            text = io.StringIO(raw.decode("utf-8-sig", errors="ignore"))
+            _import_daily_csv_stream(db, text, fn, default_date, stats)
+            text.close()
+            del raw
+        except Exception as e:  # noqa
+            stats["errors"].append(f"{fn}: {e}")
+    if seen_files == 0 and not stats["errors"]:
+        raise HTTPException(status_code=422, detail="请选择 csv 文件")
+    return {"code": 0, "data": {"imported": stats["imported"], "deduped": stats["deduped"],
+                                 "skipped": stats["skipped"], "errors": stats["errors"]},
+            "msg": f"CSV 原样导入 {stats['imported']} 条，去重 {stats['deduped']} 条，跳过 {stats['skipped']} 条"}
+
+
 @router.post("/daily-data/batch-delete")
 def batch_delete_daily(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
     rows = db.query(DailyData).filter(DailyData.id.in_(body.ids)).all()
@@ -728,7 +860,7 @@ async def import_wash(file: UploadFile = File(...), db: Session = Depends(get_db
 
 @router.get("/wash-names")
 def list_wash_names(db: Session = Depends(get_db), _=Depends(get_current_user),
-                    q: str = "", phone: str = "", name: str = "",
+                    q: str = "", phone: str = "", name: str = "", name_empty: str = "",
                     province: str = "", city: str = "", operator: str = "",
                     page: int = 1, per_page: int = 10):
     qy = db.query(WashName)
@@ -739,6 +871,8 @@ def list_wash_names(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(WashName.phone.like(f"%{phone}%"))
     if name:
         qy = qy.filter(WashName.name.like(f"%{name}%"))
+    if name_empty in ("1", "true", "yes", "on"):
+        qy = qy.filter(or_(WashName.name.is_(None), WashName.name == ""))
     if province:
         provs = [p for p in province.split(",") if p.strip()]
         if provs:
@@ -756,6 +890,98 @@ def list_wash_names(db: Session = Depends(get_db), _=Depends(get_current_user),
         "created_at": fmt_dt(w.created_at), "updated_at": fmt_dt(w.updated_at),
     } for w in rows]
     return ok_page(data, total)
+
+
+def _map_wash_row(header, values):
+    row = {}
+    for i, h in enumerate(header):
+        if i >= len(values):
+            continue
+        hn = re.sub(r"\s+", "", str(h))
+        v = values[i]
+        sv = None if v is None else str(v).strip()
+        if not sv:
+            continue
+        if "手机号" in hn:
+            row["phone"] = sv
+        elif "姓名" in hn:
+            row["name"] = sv
+        elif "省" in hn:
+            row["province"] = sv
+        elif "市" in hn:
+            row["city"] = sv
+        elif "运营商" in hn:
+            row["operator"] = sv
+    return row
+
+
+def _parse_wash_csv(content):
+    text = content.decode("utf-8-sig")
+    reader = csv.reader(io.StringIO(text))
+    header = next(reader, None)
+    if not header:
+        return []
+    return [_map_wash_row(header, values) for values in reader]
+
+
+def _parse_wash_xlsx(content):
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    ws = wb.active
+    rows = []
+    header = None
+    for values in ws.iter_rows(values_only=True):
+        if header is None:
+            header = values
+            continue
+        rows.append(_map_wash_row(header, values))
+    wb.close()
+    return rows
+
+
+@router.post("/wash-names/import")
+async def import_wash_names(file: UploadFile = File(...), db: Session = Depends(get_db), _=Depends(get_current_user)):
+    fn = file.filename or ""
+    content = await file.read()
+    if fn.lower().endswith(".csv"):
+        rows = _parse_wash_csv(content)
+    elif fn.lower().endswith((".xlsx", ".xls")):
+        rows = _parse_wash_xlsx(content)
+    else:
+        raise HTTPException(status_code=422, detail="仅支持 csv / xlsx 文件")
+    imported = 0
+    updated = 0
+    for r in rows:
+        phone = r.get("phone")
+        if not phone:
+            continue
+        w = db.query(WashName).filter(WashName.phone == phone).first()
+        if w:
+            if r.get("name"):
+                w.name = r["name"]
+            if r.get("province"):
+                w.province = r["province"]
+            if r.get("city"):
+                w.city = r["city"]
+            if r.get("operator"):
+                w.operator = r["operator"]
+            updated += 1
+        else:
+            db.add(WashName(phone=phone, name=r.get("name"), province=r.get("province"),
+                            city=r.get("city"), operator=r.get("operator")))
+            imported += 1
+    db.commit()
+    return {"code": 0, "data": {"imported": imported, "updated": updated},
+            "msg": f"导入 {imported} 条，更新 {updated} 条"}
+
+
+@router.post("/wash-names/batch-delete")
+def batch_delete_wash_names(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    rows = db.query(WashName).filter(WashName.id.in_(body.ids)).all()
+    for r in rows:
+        db.delete(r)
+    db.commit()
+    return {"code": 0, "data": {"deleted": len(rows)}, "msg": f"已删除 {len(rows)} 条洗名数据"}
 
 
 @router.delete("/wash-names")
@@ -1562,7 +1788,7 @@ def list_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
 
 
 @router.post("/bills/batch-delete")
-def batch_delete_bills(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def batch_delete_bills(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(require_admin)):
     rows = db.query(Bill).filter(Bill.id.in_(body.ids)).all()
     for r in rows:
         db.delete(r)
