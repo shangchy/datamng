@@ -585,14 +585,18 @@ def _import_daily_csv_stream(db, fh, filename, default_date, stats):
             stats["skipped"] += 1
             continue
         ds = str(d)
-        # 首次遇到某日期时，把库里该日期已有 (任务id, 手机号) 载入去重集
+        # 首次遇到某日期时，把库里该日期已有行按去重键载入
         if ds not in stats["loaded_dates"]:
             stats["loaded_dates"].add(ds)
-            for tid, ph in db.query(DailyData.task_id, DailyData.phone).filter(DailyData.biz_date == d).all():
-                stats["seen"].add((ds, tid or "", ph or ""))
+            for tid, ph, pf, cu, ch, tn in db.query(
+                    DailyData.task_id, DailyData.phone, DailyData.platform,
+                    DailyData.customer, DailyData.channel, DailyData.task_name).filter(
+                    DailyData.biz_date == d).all():
+                stats["seen"].add((ds, tid or "", ph or "", pf or "", cu or "", ch or "", tn or ""))
 
         task_id = g("task_id")
-        key = (ds, task_id, phone)
+        # 去重键：任务id 为空时（历史日活文件），用平台/一级代理/渠道/任务名 补充区分，避免误吞同日同号的不同行
+        key = (ds, task_id, phone, g("platform"), g("customer"), g("channel"), g("task_name"))
         if key in stats["seen"]:
             stats["deduped"] += 1
             continue
@@ -658,6 +662,17 @@ def batch_delete_daily(body: BatchStopBody, db: Session = Depends(get_db), _=Dep
         db.delete(r)
     db.commit()
     return {"code": 0, "data": {"deleted": len(rows)}, "msg": f"已删除 {len(rows)} 条"}
+
+
+@router.post("/daily-data/delete-by-date")
+def delete_daily_by_date(body: GenerateBody, db: Session = Depends(get_db), _=Depends(require_admin)):
+    d = _parse_biz_date(body.date)
+    if not d:
+        raise HTTPException(status_code=422, detail="请选择数据日期")
+    n = db.query(DailyData).filter(DailyData.biz_date == d).count()
+    db.query(DailyData).filter(DailyData.biz_date == d).delete()
+    db.commit()
+    return {"code": 0, "data": {"deleted": n}, "msg": f"已删除 {body.date} 的 {n} 条日活数据"}
 
 
 @router.delete("/daily-data")

@@ -154,6 +154,11 @@ export default function SimpleList({ kind }) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
   const [checkResult, setCheckResult] = useState(null)
+  const [delByDateModal, setDelByDateModal] = useState(false)
+  const [delByDate, setDelByDate] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
 
   useEffect(() => {
     if (kind === 'alerts') api.get('/api/alert-config').then(r => { setAlertTrigger(r.data.trigger_time); setAlertDays(r.data.alert_days ?? 0) }).catch(() => {})
@@ -275,6 +280,14 @@ export default function SimpleList({ kind }) {
     try {
       await api.post(`${cfg.endpoint}/batch-delete`, { ids: selected })
       toast('已删除'); setSelected([]); load()
+    } catch (e) { showError(e.message) }
+  }
+  async function doDeleteByDate() {
+    if (!delByDate) { showError('请选择数据日期'); return }
+    if (!(await confirm(`确认删除数据日期为 ${delByDate} 的全部日活数据？此操作不可恢复。`))) return
+    try {
+      const r = await api.post('/api/daily-data/delete-by-date', { date: delByDate })
+      toast(r.msg); setDelByDateModal(false); load()
     } catch (e) { showError(e.message) }
   }
   function openAddUrl() {
@@ -598,6 +611,7 @@ export default function SimpleList({ kind }) {
         {cfg.dist && <button className="btn green" onClick={() => setDistModal(true)}>④ 分发数据</button>}
         {cfg.check && <button className="btn" onClick={() => { setCheckResult(null); setCheckModal(true) }}>工单检查</button>}
         {showBatchDel && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
+        {kind === 'daily' && isAdmin && <button className="btn danger" onClick={() => setDelByDateModal(true)}>按日期删除</button>}
         {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
         {cfg.export && <button className="btn green" onClick={exportExcel}>导出 Excel</button>}
         {cfg.billExp && <button className="btn green" onClick={() => setBillExpModal(true)}>导出账单</button>}
@@ -690,6 +704,18 @@ export default function SimpleList({ kind }) {
           <div className="foot">
             <button className="btn" onClick={() => setDistModal(false)}>取消</button>
             <button className="btn primary" onClick={() => doDistribute().catch(e => showError(e.message))}>分数据</button>
+          </div>
+        </Modal>
+      )}
+
+      {delByDateModal && (
+        <Modal title="按日期删除日活数据" onClose={() => setDelByDateModal(false)}>
+          <div className="note">删除所选数据日期下的全部日活数据（仅管理员可用，不可恢复）。</div>
+          <div className="field" style={{ marginBottom: 14 }}><label className="required">数据日期</label>
+            <input type="date" value={delByDate} onChange={e => setDelByDate(e.target.value)} /></div>
+          <div className="foot">
+            <button className="btn" onClick={() => setDelByDateModal(false)}>取消</button>
+            <button className="btn danger" onClick={() => doDeleteByDate().catch(e => showError(e.message))}>删除</button>
           </div>
         </Modal>
       )}
