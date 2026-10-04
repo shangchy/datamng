@@ -281,7 +281,7 @@ def _header_field(h):
         return ("fixed", "")
     if "拓展码" in h:
         return ("field", "url")
-    if "手机号" in h or "号码" in h:
+    if "手机号" in h or "号码" in h or "联系方式" in h:
         return ("field", "url")
     if "姓名" in h or "名字" in h:
         return ("field", "name")

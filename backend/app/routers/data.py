@@ -1466,7 +1466,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             "operator": d.operator or "",
             "channel": d.channel or "",
             "platform": d.platform or "",
-            "task_name": _task_suffix(d.task_name),
+            "task_name": d.task_name or "",
         })
 
     jobs = list(jobs.values())
