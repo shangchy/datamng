@@ -54,15 +54,15 @@ export default function TidabiaoHistory() {
   function cell(o, c) {
     const num = ['qty', 'pv', 'age_min', 'age_max'].includes(c.k)
     if (c.k === 'status') return <td><Badge value={o.status} /></td>
-    if (c.k === 'url') return <td style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', textAlign: 'left' }}>{o.url || '—'}</td>
+    if (c.k === 'url') return <td style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }} title={o.url || ''}>{o.url || '—'}</td>
     if (c.k === 'add_name') return <td><Badge value={o.add_name === '是' ? '是' : '否'} /></td>
     if (['province', 'city', 'excl_province', 'excl_city'].includes(c.k)) {
       const val = o[c.k] || ''
-      const parts = val.split(',').map(s => s.trim()).filter(Boolean)
-      if (parts.length > 3) return <td title={val}>{parts.slice(0, 3).join(',')} 等{parts.length}个</td>
-      return <td title={val}>{val || '—'}</td>
+      const parts = val.split(/[|｜,，;；]/).map(s => s.trim()).filter(Boolean)
+      if (parts.length > 3) return <td title={val}>{parts[0]} 等{parts.length}个</td>
+      return <td title={val}>{parts.join(',') || '—'}</td>
     }
-    if (c.k === 'price' && o.price) return <td className="num">{o.price}</td>
+    if (c.k === 'price') return <td className="num">{o.price != null && o.price !== '' ? o.price : '—'}</td>
     return <td className={num ? 'num' : ''}>{o[c.k] || '—'}</td>
   }
 

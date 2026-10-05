@@ -62,6 +62,7 @@ def _migrate_schema():
         daily_cols = {c["name"] for c in insp.get_columns("daily_data")} if "daily_data" in insp.get_table_names() else set()
         wash_cols = {c["name"] for c in insp.get_columns("wash_name")} if "wash_name" in insp.get_table_names() else set()
         cust_cols = {c["name"] for c in insp.get_columns("customer")} if "customer" in insp.get_table_names() else set()
+        th_cols = {c["name"] for c in insp.get_columns("tidabiao_history")} if "tidabiao_history" in insp.get_table_names() else set()
         with engine.begin() as conn:
             for col, ddl in [
                 ("task_id", "VARCHAR(100)"),
@@ -123,6 +124,11 @@ def _migrate_schema():
             ]:
                 if col not in cust_cols:
                     conn.execute(text(f"ALTER TABLE customer ADD COLUMN {col} {ddl}"))
+            for col, ddl in [
+                ("check_collision", "VARCHAR(10)"),
+            ]:
+                if col not in th_cols:
+                    conn.execute(text(f"ALTER TABLE tidabiao_history ADD COLUMN {col} {ddl}"))
             # 去掉过严的唯一索引：同一任务可有多条不同 URL 的订单，重复判定交给「验重」逻辑（url+地区+运营商）
             conn.execute(text("DROP INDEX IF EXISTS uq_order_up_date_task"))
             conn.execute(text("DROP INDEX IF EXISTS uq_order_active_task"))

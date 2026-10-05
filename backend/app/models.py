@@ -262,6 +262,7 @@ class TidabiaoHistory(Base):
     group_name = Column(String(100))
     tpl_code = Column(String(100))
     add_name = Column(String(10))
+    check_collision = Column(String(10))
     created_at = Column(DateTime, default=datetime.now)
 
 
