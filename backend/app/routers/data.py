@@ -1544,6 +1544,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             "channel": d.channel or "",
             "platform": d.platform or "",
             "task_name": d.task_name or "",
+            "task_id": d.task_id or "",
             "check_collision": info["check_collision"],
         })
 
