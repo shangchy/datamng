@@ -925,11 +925,6 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
     tpl_code_map = {t.id: t.code for t in db.query(Template).all()}
     cust_code_map = {c.id: c.code for c in db.query(Customer).all()}
     group_consistency = {}
-    for o in db.query(Order).filter(Order.group_name.isnot(None), Order.group_name != "").all():
-        group_consistency.setdefault(o.group_name, {
-            "tpl_code": tpl_code_map.get(o.tpl_id, ""),
-            "cust_code": cust_code_map.get(o.customer_id, ""),
-        })
     # 预加载已有订单号，导入按订单号匹配（订单号相同才更新，无订单号则插入）
     existing_order_no = {o.order_no: o for o in db.query(Order).all() if o.order_no}
     for idx, r in enumerate(rows):
@@ -977,12 +972,12 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                 known = group_consistency.get(gname)
                 if known:
                     if tpl_code and known["tpl_code"] and known["tpl_code"] != tpl_code:
-                        errors.append({"row": idx + 2, "reason": f"小组「{gname}」的出数模版必须一致（现有 {known['tpl_code']}，本次 {tpl_code}）"})
+                        errors.append({"row": idx + 2, "reason": f"小组「{gname}」的出数模版必须一致（文件内已有 {known['tpl_code']}，本次 {tpl_code}）"})
                         continue
                     if tpl_code and not known["tpl_code"]:
                         known["tpl_code"] = tpl_code
                     if known["cust_code"] != cust_code:
-                        errors.append({"row": idx + 2, "reason": f"小组「{gname}」的一级代理必须一致（现有 {known['cust_code'] or '空'}，本次 {cust_code}）"})
+                        errors.append({"row": idx + 2, "reason": f"小组「{gname}」的一级代理必须一致（文件内已有 {known['cust_code'] or '空'}，本次 {cust_code}）"})
                         continue
                 else:
                     group_consistency[gname] = {"tpl_code": tpl_code, "cust_code": cust_code}

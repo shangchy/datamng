@@ -27,6 +27,9 @@ const IconStop = (
 const IconDelete = (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
 )
+const IconCopy = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+)
 
 function IconBtn({ title, color, onClick, children }) {
   return (
@@ -251,6 +254,22 @@ export default function Orders({ variant = 'orders' }) {
     setModal(o.status === '未提' ? 'edit' : 'modify')
   }
 
+  function copyCreate(o) {
+    setForm({
+      ...emptyForm,
+      customer_id: o.customer_id, upstream_id: o.upstream_id, channel_id: o.channel_id, operator_id: o.operator_id ?? '', task_name: o.task_name,
+      qty: o.qty ?? '', duration: o.duration || '',
+      province: toComma(o.province), city: toComma(o.city), excl_province: toComma(o.excl_province),
+      excl_city: toComma(o.excl_city), age_min: o.age_min ?? '', age_max: o.age_max ?? '', pv: o.pv ?? '',
+      price: o.price ?? '', secondary_agent: o.secondary_agent || '',
+      platform: o.platform || '', tpl_id: o.tpl_id ?? '', group_name: o.group_name || '',
+      export_filename: o.export_filename || '', add_name: !!o.add_name, check_collision: !!o.check_collision,
+      template_id: o.template_id ?? '', filename_rule: o.filename_rule || '', dist_config: o.dist_config || null,
+      url: (o.urls || []).join('\n'),
+    })
+    setModal('create')
+  }
+
   async function save() {
     const missing = []
     if (!form.order_date) missing.push('更新日期')
@@ -260,6 +279,7 @@ export default function Orders({ variant = 'orders' }) {
     if (!form.end_date) missing.push('截止日期')
     if (!form.upstream_id) missing.push('上游')
     if (!form.customer_id) missing.push('一级代理')
+    if (!(form.url || '').trim()) missing.push('URL')
     if (missing.length) { showError('缺少必填字段：' + missing.join('、')); return }
     if (!(await confirm('确认保存该订单？'))) return
     try {
@@ -472,6 +492,7 @@ export default function Orders({ variant = 'orders' }) {
                   {o.status === '未提' && <IconBtn title="编辑" color="#2563eb" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconEdit}</IconBtn>}
                   {['在执', '已停', '改单'].includes(o.status) && <IconBtn title="改单" color="#7c3aed" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconModify}</IconBtn>}
                   {['在执', '改单'].includes(o.status) && <IconBtn title="停单" color="#d97706" onClick={e => { e.stopPropagation(); const d = new Date(); setStopDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); setStopReason('业务调整'); setStopTarget(o) }}>{IconStop}</IconBtn>}
+                  <IconBtn title="复制新增" color="#0891b2" onClick={e => { e.stopPropagation(); copyCreate(o) }}>{IconCopy}</IconBtn>
                   <IconBtn title="删除" color="#dc2626" onClick={e => { e.stopPropagation(); delOrder(o) }}>{IconDelete}</IconBtn>
                 </td>
                 )}
@@ -517,9 +538,9 @@ export default function Orders({ variant = 'orders' }) {
                 <option value="">请选择</option>{operators.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select></div>
             <div className="field"><label>平台</label>
-              <select value={form.platform} onChange={e => setForm({ ...form, platform: e.target.value })}>
-                <option value="">请选择</option>{platforms.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-              </select></div>
+              <input list="platform-list" value={form.platform} onChange={e => setForm({ ...form, platform: e.target.value })} placeholder="输入搜索或选择平台" />
+              <datalist id="platform-list">{platforms.map(p => <option key={p.id} value={p.name} />)}</datalist>
+            </div>
           </div>
           <div className="row">
             <div className="field"><label>分组</label><input value={form.group_name} onChange={e => setForm({ ...form, group_name: e.target.value })} placeholder="分组文本" /></div>
@@ -544,8 +565,6 @@ export default function Orders({ variant = 'orders' }) {
             <div className="field"><label>年龄下限</label><input type="number" value={form.age_min} onChange={e => setForm({ ...form, age_min: e.target.value })} /></div>
             <div className="field"><label>年龄上限</label><input type="number" value={form.age_max} onChange={e => setForm({ ...form, age_max: e.target.value })} /></div>
           </div>
-          <div className="field" style={{ marginBottom: 12 }}><label>URL（多行，一行一个）</label>
-            <textarea rows={3} value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} placeholder="https://..." /></div>
           <div className="row">
             <div className="field"><label>省份（含全国）</label><MultiSelect full searchable options={provinceOptions} value={form.province} onChange={v => {
               const provs = v.split(',').filter(Boolean)
@@ -563,6 +582,8 @@ export default function Orders({ variant = 'orders' }) {
             <div className="field"><label className="required">截止日期</label><input type="date" value={form.end_date} onChange={e => setForm({ ...form, end_date: e.target.value })} /></div>
             <div className="field"><label>时长（自动）</label><input value={computedDuration} disabled placeholder="自动计算" /></div>
           </div>
+          <div className="field" style={{ marginBottom: 12 }}><label className="required">URL（多行，一行一个）</label>
+            <textarea rows={3} value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} placeholder="https://..." /></div>
           <div className="foot">
             <button className="btn" onClick={() => setModal(null)}>取消</button>
             <button className="btn primary" onClick={save}>保存</button>
