@@ -12,7 +12,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session, aliased
 
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import get_current_user, require_admin
 from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator
 from ..schemas import OrderBody, StopBody, BatchStopBody, OrderDistConfigBody, GenerateBody, BatchGroupBody
 from ..pagination import paginate, ok_page
@@ -533,6 +533,28 @@ def batch_stop(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(get
         db.query(Alert).filter(Alert.type == "停单提醒", Alert.task_name.in_(task_names), Alert.status == "未处理").delete()
     db.commit()
     return {"code": 0, "data": {"stopped": len(rows)}, "msg": f"已提交停单 {len(rows)} 单（状态：待停）"}
+
+
+@router.post("/batch-reopen")
+def batch_reopen(body: BatchStopBody, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """批量复提：已停订单改回未提，并可更新更新日期（仅管理员）"""
+    if body.order_date:
+        if body.order_date > date.today():
+            raise HTTPException(status_code=400, detail="更新日期不能是未来日期，请修改更新日期")
+    rows = db.query(Order).filter(Order.id.in_(body.ids)).all()
+    order_nos = []
+    for o in rows:
+        if o.status == "已停":
+            if body.order_date:
+                o.order_date = body.order_date
+            o.status = "未提"
+            o.stop_date = None
+            o.updated_at = datetime.now()
+            order_nos.append(o.order_no)
+    if order_nos:
+        _op_log(db, user, "batch_reopen_orders", f"批量复提 {len(order_nos)} 单", None, {"order_nos": order_nos})
+    db.commit()
+    return {"code": 0, "data": {"reopened": len(order_nos)}, "msg": f"已复提 {len(order_nos)} 单（状态：未提）"}
 
 
 @router.post("/batch-delete")

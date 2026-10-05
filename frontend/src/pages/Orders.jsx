@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { api, downloadFile, getToken, uploadFile } from '../api'
+import { api, downloadFile, getToken, getUser, uploadFile } from '../api'
 import { Modal, Badge, useToast, useConfirm, Loading } from '../components/ui'
 import { useColumnConfig } from '../components/columns'
 import FilterBar, { buildQuery } from '../components/FilterBar'
@@ -74,6 +74,8 @@ export default function Orders({ variant = 'orders' }) {
   const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
   const isStop = variant === 'stop'
+  const user = getUser() || {}
+  const isAdmin = user.role_code === 'admin' || (user.permissions || []).includes('*')
   const BASE_COLS = isStop ? [{ k: 'batch_no', l: '提单批次' }, ...COLS] : COLS
   const { visible: cols, picker, openPicker } = useColumnConfig(BASE_COLS, isStop ? 'cols_stop_manage' : 'cols_order')
   const [rows, setRows] = useState([])
@@ -92,6 +94,8 @@ export default function Orders({ variant = 'orders' }) {
   const [stopTarget, setStopTarget] = useState(null)
   const [stopDate, setStopDate] = useState('')
   const [stopReason, setStopReason] = useState('业务调整')
+  const [reopenTarget, setReopenTarget] = useState(null)
+  const [reopenDate, setReopenDate] = useState('')
   const [urlDetail, setUrlDetail] = useState(null)
   const [regionDetail, setRegionDetail] = useState(null)
   const [geo, setGeo] = useState({ provinces: [], citiesMap: {} })
@@ -201,6 +205,23 @@ export default function Orders({ variant = 'orders' }) {
     try {
       await api.post('/api/orders/batch-delete', { ids: selected })
       toast('已批量删除'); setSelected([]); load()
+    } catch (e) { showError(e.message) }
+  }
+
+  async function batchReopen() {
+    if (!selected.length) { showError('请先勾选要复提的订单'); return }
+    const d = new Date()
+    setReopenDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
+    setReopenTarget({ ids: selected })
+  }
+
+  async function doReopen() {
+    if (!reopenDate) { showError('请选择更新日期'); return }
+    if (!reopenTarget) return
+    if (!(await confirm(`确认将选中的 ${reopenTarget.ids.length} 个订单从「已停」改为「未提」，并将更新日期更新为 ${reopenDate}？`))) return
+    try {
+      const r = await api.post('/api/orders/batch-reopen', { ids: reopenTarget.ids, order_date: reopenDate })
+      toast(r.msg); setReopenTarget(null); setReopenDate(''); setSelected([]); load()
     } catch (e) { showError(e.message) }
   }
 
@@ -423,6 +444,7 @@ export default function Orders({ variant = 'orders' }) {
           {!isStop && <button className="btn" onClick={() => downloadFile('/api/orders/export-template').catch(e => showError(e.message))}>导出模版</button>}
           {!isStop && selected.length > 0 && <button className="btn danger" onClick={batchStop}>批量停单({selected.length})</button>}
           {!isStop && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
+          {!isStop && isAdmin && selected.length > 0 && <button className="btn" onClick={batchReopen}>批量复提({selected.length})</button>}
           {!isStop && selected.length > 0 && <button className="btn" onClick={() => { setGroupVal(''); setGroupModal(true) }}>批量修改小组({selected.length})</button>}
           {!isStop && <button className="btn primary" onClick={openCreate}>+ 新建提单</button>}
           <button className="btn icon" title="自定义表头" onClick={openPicker}>{IconColumns}</button>
@@ -585,6 +607,18 @@ export default function Orders({ variant = 'orders' }) {
           <div className="foot">
             <button className="btn" onClick={() => setStopTarget(null)}>取消</button>
             <button className="btn danger" onClick={stop}>确认停单</button>
+          </div>
+        </Modal>
+      )}
+
+      {reopenTarget && (
+        <Modal title="批量复提确认" onClose={() => setReopenTarget(null)}>
+          <div className="note">将选中的 {reopenTarget.ids.length} 个订单从「已停」改为「未提」，并将更新日期更新为所选日期。</div>
+          <div className="field" style={{ marginBottom: 12 }}><label className="required">更新日期</label>
+            <input type="date" value={reopenDate} onChange={e => setReopenDate(e.target.value)} /></div>
+          <div className="foot">
+            <button className="btn" onClick={() => setReopenTarget(null)}>取消</button>
+            <button className="btn primary" onClick={doReopen}>确认复提</button>
           </div>
         </Modal>
       )}
