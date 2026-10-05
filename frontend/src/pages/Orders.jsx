@@ -39,7 +39,7 @@ const COLS = [
   { k: 'order_no', l: '订单号' }, { k: 'task_id', l: '工单号' }, { k: 'dup_order_nos', l: '重复订单' },
   { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' }, { k: 'price', l: '定价' },
   { k: 'platform', l: '平台' }, { k: 'group_name', l: '小组' }, { k: 'tpl_code', l: '出数模版' },
-  { k: 'add_name', l: '是否加名' }, { k: 'channel', l: '渠道' }, { k: 'operator', l: '运营商' },
+  { k: 'add_name', l: '是否加名' }, { k: 'check_collision', l: '是否撞库' }, { k: 'channel', l: '渠道' }, { k: 'operator', l: '运营商' },
   { k: 'url', l: 'url' }, { k: 'qty', l: '数量' },
   { k: 'age_min', l: '年龄下限' }, { k: 'age_max', l: '年龄上限' }, { k: 'pv', l: 'pv' },
   { k: 'province', l: '省份' }, { k: 'excl_province', l: '排除省份' }, { k: 'city', l: '地市' },
@@ -53,14 +53,14 @@ const FILTER_COLS = [
   { k: 'upstream', l: '甲方' }, { k: 'order_no', l: '订单号' }, { k: 'task_id', l: '工单号' }, { k: 'dup', l: '重复订单' },
   { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' }, { k: 'price', l: '定价' },
   { k: 'platform', l: '平台' }, { k: 'group_name', l: '小组' }, { k: 'tpl_code', l: '出数模版' },
-  { k: 'add_name', l: '是否加名' }, { k: 'channel', l: '渠道' }, { k: 'operator', l: '运营商' },
+  { k: 'add_name', l: '是否加名' }, { k: 'check_collision', l: '是否撞库' }, { k: 'channel', l: '渠道' }, { k: 'operator', l: '运营商' },
   { k: 'task_name', l: '任务名' }, { k: 'url', l: 'url' }, { k: 'qty', l: '数量' }, { k: 'duration', l: '时长' },
   { k: 'age_min', l: '年龄下限' }, { k: 'age_max', l: '年龄上限' }, { k: 'pv', l: 'pv' },
   { k: 'province', l: '省份' }, { k: 'excl_province', l: '排除省份' }, { k: 'city', l: '地市' },
   { k: 'excl_city', l: '排除地市' }, { k: 'start_date', l: '开始日期' }, { k: 'end_date', l: '截止日期' },
 ]
 
-const emptyForm = { order_no: '', customer_id: '', upstream_id: '', channel_id: '', operator_id: '', task_name: '', task_id: '', qty: '', duration: '', province: '', city: '', excl_province: '', excl_city: '', age_min: '', age_max: '', pv: '', start_date: '', end_date: '', order_date: '', price: '', secondary_agent: '', platform: '', tpl_id: '', group_name: '', add_name: false, template_id: '', filename_rule: '', status: '未提', url: '' }
+const emptyForm = { order_no: '', customer_id: '', upstream_id: '', channel_id: '', operator_id: '', task_name: '', task_id: '', qty: '', duration: '', province: '', city: '', excl_province: '', excl_city: '', age_min: '', age_max: '', pv: '', start_date: '', end_date: '', order_date: '', price: '', secondary_agent: '', platform: '', tpl_id: '', group_name: '', add_name: false, check_collision: false, template_id: '', filename_rule: '', status: '未提', url: '' }
 
 const REGION_SEP = /[|｜,，;；]/
 function fmtRegion(val) {
@@ -155,6 +155,7 @@ export default function Orders({ variant = 'orders' }) {
     channel: channels.map(c => c.name),
     platform: platforms.map(p => p.name),
     add_name: ['是', '否'],
+    check_collision: ['是', '否'],
     operator: operators.map(o => o.name),
     dup: ['有', '无'],
     province: geo.provinces,
@@ -221,7 +222,7 @@ export default function Orders({ variant = 'orders' }) {
       start_date: o.start_date || '', end_date: o.end_date || '',
       order_date: o.order_date || '', price: o.price ?? '', secondary_agent: o.secondary_agent || '',
       platform: o.platform || '', tpl_id: o.tpl_id ?? '', group_name: o.group_name || '',
-      export_filename: o.export_filename || '', add_name: !!o.add_name,
+      export_filename: o.export_filename || '', add_name: !!o.add_name, check_collision: !!o.check_collision,
       template_id: o.template_id ?? '', filename_rule: o.filename_rule || '', dist_config: o.dist_config || null,
       status: o.status || '未提',
       url: (o.urls || []).join('\n'),
@@ -359,6 +360,7 @@ export default function Orders({ variant = 'orders' }) {
     if (c.k === 'url') return <td><a className="link" onClick={e => { e.stopPropagation(); setUrlDetail(o) }}>{o.url}</a></td>
     if (c.k === 'tpl_code') return <td>{o.tpl_code ? <a className="link" onClick={e => { e.stopPropagation(); showTpl(o) }}>{o.tpl_code}</a> : '—'}</td>
     if (c.k === 'add_name') return <td><Badge value={o.add_name ? '是' : '否'} /></td>
+    if (c.k === 'check_collision') return <td><Badge value={o.check_collision ? '是' : '否'} /></td>
     if (c.k === 'region') return <td><a className="link" onClick={e => { e.stopPropagation(); setRegionDetail(o) }}>{o.region || '—'}</a></td>
     if (c.k === 'dup_order_nos') {
       const nos = (o.dup_order_nos || '').split('\n').filter(Boolean)
@@ -508,6 +510,10 @@ export default function Orders({ variant = 'orders' }) {
               <select value={form.add_name ? '是' : '否'} onChange={e => setForm({ ...form, add_name: e.target.value === '是' })}>
                 <option>否</option><option>是</option>
               </select></div>
+            <div className="field"><label>是否撞库</label>
+              <select value={form.check_collision ? '是' : '否'} onChange={e => setForm({ ...form, check_collision: e.target.value === '是' })}>
+                <option>否</option><option>是</option>
+              </select></div>
             <div className="field"><label>定价</label><input type="number" step="0.0001" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} placeholder="元/条" /></div>
           </div>
           <div className="row">
@@ -548,7 +554,8 @@ export default function Orders({ variant = 'orders' }) {
             <div className="row" key={ri}>
               {BASE_COLS.slice(ri * 4, ri * 4 + 4).map(c => {
                 const isRegion = ['province', 'city', 'excl_province', 'excl_city'].includes(c.k)
-                const val = isRegion ? fmtRegion(detail[c.k]) : (detail[c.k] ?? '—')
+                const isBool = ['add_name', 'check_collision'].includes(c.k)
+                const val = isRegion ? fmtRegion(detail[c.k]) : isBool ? (detail[c.k] ? '是' : '否') : (detail[c.k] ?? '—')
                 return (
                   <div className="field" key={c.k}>
                     <label>{c.l}</label>

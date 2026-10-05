@@ -31,6 +31,7 @@ ORDER_HEADER_MAP = {
     "模版编号": "tpl_code", "出数模版": "tpl_code",
     "导出文件名": "export_filename", "出数excel命名": "export_filename",
     "是否加名": "add_name",
+    "是否撞库": "check_collision",
     "状态": "status",
     "平台": "platform",
     "渠道": "channel", "类型": "channel",
@@ -47,7 +48,7 @@ ORDER_HEADER_MAP = {
 }
 
 MB019_HEADERS = ["开始日期", "截止日期", "更新日期", "状态", "甲方", "订单号", "甲方订单号",
-                 "一级代理", "二级代理", "定价", "平台", "小组", "出数模版", "是否加名",
+                 "一级代理", "二级代理", "定价", "平台", "小组", "出数模版", "是否加名", "是否撞库",
                  "渠道", "运营商", "任务名", "url", "数量", "时长",
                  "年龄\n下限", "年龄\n上限", "pv", "省份", "排除省份", "地市", "排除地市"]
 
@@ -148,6 +149,7 @@ def _order_dict(db, o: Order, alert_tasks=None) -> dict:
         "group_name": o.group_name or "",
         "export_filename": o.export_filename or "",
         "add_name": bool(o.add_name),
+        "check_collision": bool(o.check_collision),
         "first_output_date": str(o.start_date + timedelta(days=2)) if o.start_date else None,
         "last_output_date": str(o.end_date + timedelta(days=1)) if o.end_date else None,
         "dist_config": json.loads(o.dist_config_json) if o.dist_config_json else None,
@@ -190,6 +192,7 @@ def _snapshot(db, o: Order, urls=None) -> dict:
         "price": float(o.price) if o.price is not None else None,
         "secondary_agent": o.secondary_agent, "platform": o.platform,
         "group_name": o.group_name, "add_name": bool(o.add_name),
+        "check_collision": bool(o.check_collision),
         "urls": urls if urls is not None else [u.url for u in o.urls],
     }
 
@@ -219,6 +222,7 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
                 task_id: str = "", duration: str = "", group_name: str = "", tpl_code: str = "",
                 add_name: str = "", url: str = "", operator: str = "", price: str = "",
                 dup: str = "", dup_order_no: str = "",
+                check_collision: str = "",
                 page: int = 1, per_page: int = 10):
     Upstream = aliased(Customer)
     qy = (db.query(Order)
@@ -254,6 +258,8 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(Template.code.like(f"%{tpl_code}%"))
     if add_name:
         qy = qy.filter(Order.add_name == (add_name in ("是", "true", "1", "True", "yes", "YES")))
+    if check_collision:
+        qy = qy.filter(Order.check_collision == (check_collision in ("是", "true", "1", "True", "yes", "YES")))
     if url:
         url_sub = db.query(OrderUrl.order_id).filter(OrderUrl.url.like(f"%{url}%")).subquery()
         qy = qy.filter(Order.id.in_(url_sub))
@@ -393,8 +399,9 @@ def create_order(body: OrderBody, db: Session = Depends(get_db), user=Depends(ge
               filename_rule=body.filename_rule,
               order_date=body.order_date, price=body.price,
               secondary_agent=body.secondary_agent, platform=body.platform, tpl_id=body.tpl_id,
-              group_name=body.group_name, export_filename=body.export_filename, add_name=body.add_name,
-              dist_config_json=json.dumps(body.dist_config, ensure_ascii=False) if body.dist_config else None)
+               group_name=body.group_name, export_filename=body.export_filename, add_name=body.add_name,
+               check_collision=body.check_collision,
+               dist_config_json=json.dumps(body.dist_config, ensure_ascii=False) if body.dist_config else None)
     o.template_id = body.template_id if body.template_id is not None else match_template(db, o)
     db.add(o)
     db.flush()
@@ -442,7 +449,7 @@ def update_order(oid: int, body: OrderBody, db: Session = Depends(get_db), user=
               "province", "city", "excl_province", "excl_city", "age_min", "age_max", "pv",
               "start_date", "end_date", "filename_rule",
               "order_date", "price", "secondary_agent", "platform", "tpl_id",
-              "group_name", "export_filename", "add_name"]:
+              "group_name", "export_filename", "add_name", "check_collision"]:
         setattr(o, k, getattr(body, k))
     o.dist_config_json = json.dumps(body.dist_config, ensure_ascii=False) if body.dist_config else None
     o.template_id = body.template_id if body.template_id is not None else match_template(db, o)
@@ -634,6 +641,7 @@ def _export_row(db, o):
         o.group_name or "",
         tpl.code if tpl else "",
         "是" if o.add_name else "否",
+        "是" if o.check_collision else "否",
         ch_name,
         operator,
         o.task_name or "",
@@ -697,6 +705,7 @@ def export_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
                   task_id: str = "", duration: str = "", group_name: str = "", tpl_code: str = "",
                   add_name: str = "", url: str = "", operator: str = "", price: str = "",
                   dup: str = "", dup_order_no: str = "",
+                  check_collision: str = "",
                   qty: str = "", age_min: str = "", age_max: str = "", pv: str = ""):
     """按 MB-019 模版结构导出订单，文件名固定 订单表.xlsx"""
     import openpyxl
@@ -735,6 +744,8 @@ def export_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(Template.code.like(f"%{tpl_code}%"))
     if add_name:
         qy = qy.filter(Order.add_name == (add_name in ("是", "true", "1", "True", "yes", "YES")))
+    if check_collision:
+        qy = qy.filter(Order.check_collision == (check_collision in ("是", "true", "1", "True", "yes", "YES")))
     if url:
         url_sub = db.query(OrderUrl.order_id).filter(OrderUrl.url.like(f"%{url}%")).subquery()
         qy = qy.filter(Order.id.in_(url_sub))
@@ -904,6 +915,7 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
             duration = _duration_days(start_date, end_date) or r.get("duration")
             url_str = str(r.get("url") or "")
             add_name = str(r.get("add_name") or "").strip() in ("是", "true", "1", "True", "yes", "YES")
+            check_collision = str(r.get("check_collision") or "").strip() in ("是", "true", "1", "True", "yes", "YES")
 
             # 按订单号匹配：订单号相同才更新，无订单号则插入
             order_no = (r.get("order_no") or "").strip()
@@ -940,6 +952,7 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                 existing.group_name = r.get("group_name")
                 existing.export_filename = r.get("export_filename")
                 existing.add_name = add_name
+                existing.check_collision = check_collision
                 if existing.status != "已停":
                     existing.status = import_status
                     if import_status == "已停":
@@ -978,8 +991,8 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                           order_date=order_date, price=_float(r.get("price")),
                           secondary_agent=r.get("secondary_agent"), platform=r.get("platform"),
                           tpl_id=tpl.id if tpl else None,
-                          group_name=r.get("group_name"), export_filename=r.get("export_filename"),
-                          add_name=add_name)
+                           group_name=r.get("group_name"), export_filename=r.get("export_filename"),
+                           add_name=add_name, check_collision=check_collision)
                 db.add(o)
                 db.flush()
                 o.template_id = match_template(db, o)
@@ -1139,6 +1152,7 @@ def _history_from_order(db, o: Order, batch_no: str):
         group_name=o.group_name or "",
         tpl_code=tpl.code if tpl else "",
         add_name="是" if o.add_name else "否",
+        check_collision="是" if o.check_collision else "否",
     )
 
 

@@ -115,6 +115,7 @@ class OrderBody(BaseModel):
     group_name: Optional[str] = ""
     export_filename: Optional[str] = ""
     add_name: bool = False
+    check_collision: bool = False
 
 
 class BatchGroupBody(BaseModel):

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import func, insert, or_, update, bindparam
 from sqlalchemy.orm import Session
 
-from ..database import get_db
+from ..database import get_db, SessionLocal
 from ..deps import get_current_user, require_admin
 from ..models import (DailyData, Fund, Bill, Alert, Customer, Channel, Category,
                       Order, SysConfig, Operator, SourceFile, Template, WashName, Platform,
@@ -675,6 +675,32 @@ def delete_daily_by_date(body: GenerateBody, db: Session = Depends(get_db), _=De
     return {"code": 0, "data": {"deleted": n}, "msg": f"已删除 {body.date} 的 {n} 条日活数据"}
 
 
+@router.post("/daily-data/backfill-category")
+def backfill_daily_category(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """按平台重新补充缺失的一级/二级品类（品类管理补全平台映射后使用）"""
+    missing_cond = or_(DailyData.cat1.is_(None), DailyData.cat1 == "",
+                       DailyData.cat2.is_(None), DailyData.cat2 == "")
+    platforms = sorted({p for p, in db.query(DailyData.platform).filter(
+        DailyData.platform.isnot(None), DailyData.platform != "", missing_cond).distinct().all()})
+    updated = 0
+    for p in platforms:
+        cat1, cat2 = _cat_by_platform(db, p)
+        if not cat1 and not cat2:
+            continue
+        n1 = n2 = 0
+        if cat1:
+            n1 = db.query(DailyData).filter(DailyData.platform == p,
+                                            or_(DailyData.cat1.is_(None), DailyData.cat1 == "")).update(
+                {"cat1": cat1}, synchronize_session=False)
+        if cat2:
+            n2 = db.query(DailyData).filter(DailyData.platform == p,
+                                            or_(DailyData.cat2.is_(None), DailyData.cat2 == "")).update(
+                {"cat2": cat2}, synchronize_session=False)
+        updated += max(n1, n2)
+    db.commit()
+    return {"code": 0, "data": {"updated": updated}, "msg": f"已补充 {updated} 条品类信息"}
+
+
 @router.delete("/daily-data")
 def clear_daily(db: Session = Depends(get_db), _=Depends(get_current_user)):
     n = db.query(DailyData).count()
@@ -1043,10 +1069,14 @@ def _pinyin_key(s):
 
 
 def _fill_distribute_file(tpl_bytes, records):
-    """用模版字节 + 日活数据记录（含手机号/省市/运营商/渠道/平台/任务名）生成单个文件"""
+    """用模版字节 + 日活数据记录（含手机号/省市/运营商/渠道/平台/任务名）生成单个文件；
+    若存在「是否撞库」的记录，则在末尾追加「近期申请记录」列（该类记录填历史，无历史填「无」，其余为空）。"""
     from openpyxl import load_workbook, Workbook
-    from openpyxl.styles import Alignment, Border, Side
+    from openpyxl.styles import Alignment, Border, Side, Font, PatternFill
+    from openpyxl.utils import get_column_letter
     from ..tidabiao import _header_field, _cell_value_split
+    has_collision = any(rec.get("check_collision") for rec in records)
+    green = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     if tpl_bytes:
         wb = load_workbook(io.BytesIO(tpl_bytes))
         ws = wb.active
@@ -1059,8 +1089,20 @@ def _fill_distribute_file(tpl_bytes, records):
             header_row = 2
             headers = [c.value for c in ws[header_row]]
         colmap = [(j, _header_field(h) if h else None) for j, h in enumerate(headers, 1)]
+        hist_col = len(headers) + 1
         if ws.max_row > header_row:
             ws.delete_rows(header_row + 1, ws.max_row - header_row)
+        if has_collision:
+            max_w = sum(2 if ord(ch) > 127 else 1 for ch in "近期申请记录")
+            for rec in records:
+                for line in (rec.get("history") or []):
+                    max_w = max(max_w, sum(2 if ord(ch) > 127 else 1 for ch in str(line)))
+            hc = ws.cell(row=header_row, column=hist_col, value="近期申请记录")
+            hc.alignment = center
+            hc.border = border
+            hc.font = Font(bold=True)
+            hc.fill = green
+            ws.column_dimensions[get_column_letter(hist_col)].width = min(max_w + 2, 60)
         row = header_row + 1
         for rec in records:
             for j, m in colmap:
@@ -1071,13 +1113,18 @@ def _fill_distribute_file(tpl_bytes, records):
                 cell = ws.cell(row=row, column=j, value=value)
                 cell.alignment = center
                 cell.border = border
+            if has_collision:
+                hist = "\n".join(rec.get("history") or [])
+                hcell = ws.cell(row=row, column=hist_col, value=hist)
+                hcell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                hcell.border = border
             row += 1
     else:
         wb = Workbook()
         ws = wb.active
-        ws.append(["手机号"])
+        ws.append(["手机号"] + (["近期申请记录"] if has_collision else []))
         for rec in records:
-            ws.append([rec.get("url", "")])
+            ws.append([rec.get("url", "")] + (["\n".join(rec.get("history") or [])] if has_collision else []))
     bio = io.BytesIO()
     wb.save(bio)
     bio.seek(0)
@@ -1306,6 +1353,35 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
     return bio
 
 
+def _attach_history(db, jobs, date_obj):
+    """给「是否撞库=是」的记录补充「近期申请记录」：手机号在日活历史中（早于本次数据日期）最近三次出现的日期+平台"""
+    phones = set()
+    for job in jobs:
+        for rec in job["records"]:
+            if rec.get("check_collision") and rec.get("url"):
+                phones.add(rec["url"])
+    phones = sorted(phones)
+    history_map = {}
+    CHUNK = 500
+    for i in range(0, len(phones), CHUNK):
+        chunk = phones[i:i + CHUNK]
+        rows = db.query(DailyData.phone, DailyData.biz_date, DailyData.platform).filter(
+            DailyData.phone.in_(chunk), DailyData.biz_date < date_obj
+        ).order_by(DailyData.phone, DailyData.biz_date.desc()).all()
+        for phone, bd, pf in rows:
+            lst = history_map.setdefault(phone, [])
+            if any(x[0] == bd for x in lst):
+                continue
+            if len(lst) < 3:
+                lst.append((bd, pf or ""))
+    for job in jobs:
+        for rec in job["records"]:
+            if not rec.get("check_collision"):
+                continue
+            lst = history_map.get(rec.get("url"), [])
+            rec["history"] = [f"{bd.strftime('%Y%m%d')} {pf or '未知'}" for bd, pf in lst] or ["无"]
+
+
 def _build_distribute_zip(jobs, bills, date_str, progress_cb, bill_tpls=None):
     import zipfile
     buf = io.BytesIO()
@@ -1394,6 +1470,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             "price": float(order.price) if order.price is not None else 0,
             "customer_id": order.customer_id,
             "add_name": bool(order.add_name),
+            "check_collision": bool(order.check_collision),
         }
 
     if not orders_info:
@@ -1467,6 +1544,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             "channel": d.channel or "",
             "platform": d.platform or "",
             "task_name": d.task_name or "",
+            "check_collision": info["check_collision"],
         })
 
     jobs = list(jobs.values())
@@ -1538,13 +1616,19 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
                                   "error": "", "buffer": None, "date_str": date_obj.strftime("%m%d")}
 
     def run():
+        db2 = SessionLocal()
         try:
-            buf = _build_distribute_zip(jobs, bills, date_obj.strftime("%m%d"), lambda done: _DISTRIBUTE_TASKS[task_id].update(done=done), bill_tpls)
+            _attach_history(db2, jobs, date_obj)
+            buf = _build_distribute_zip(jobs, bills, date_obj.strftime("%m%d"),
+                                        lambda done: _DISTRIBUTE_TASKS[task_id].update(done=done),
+                                        bill_tpls)
             _DISTRIBUTE_TASKS[task_id]["buffer"] = buf
             _DISTRIBUTE_TASKS[task_id]["status"] = "done"
         except Exception as e:  # noqa
             _DISTRIBUTE_TASKS[task_id]["status"] = "error"
             _DISTRIBUTE_TASKS[task_id]["error"] = str(e)
+        finally:
+            db2.close()
 
     threading.Thread(target=run, daemon=True).start()
     return {"code": 0, "data": {"task_id": task_id, "total": len(jobs)}, "msg": "分数据任务已启动"}

@@ -290,6 +290,13 @@ export default function SimpleList({ kind }) {
       toast(r.msg); setDelByDateModal(false); load()
     } catch (e) { showError(e.message) }
   }
+  async function backfillCategory() {
+    if (!(await confirm('按平台重新补充缺失的一级/二级品类信息？（需先在品类管理中维护好平台与品类映射）'))) return
+    try {
+      const r = await api.post('/api/daily-data/backfill-category')
+      toast(r.msg); load()
+    } catch (e) { showError(e.message) }
+  }
   function openAddUrl() {
     setUrlModal({ mode: 'add', name: '', level: '高', owner_id: '', channel_id: '', platform_id: '', urls: [''] })
   }
@@ -612,6 +619,7 @@ export default function SimpleList({ kind }) {
         {cfg.check && <button className="btn" onClick={() => { setCheckResult(null); setCheckModal(true) }}>工单检查</button>}
         {showBatchDel && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
         {kind === 'daily' && isAdmin && <button className="btn danger" onClick={() => setDelByDateModal(true)}>按日期删除</button>}
+        {kind === 'daily' && <button className="btn" onClick={() => backfillCategory().catch(e => showError(e.message))}>补充品类</button>}
         {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
         {cfg.export && <button className="btn green" onClick={exportExcel}>导出 Excel</button>}
         {cfg.billExp && <button className="btn green" onClick={() => setBillExpModal(true)}>导出账单</button>}

@@ -187,6 +187,7 @@ class Order(Base, TimestampMixin):
     group_name = Column(String(100))              # 分组（文本）
     export_filename = Column(String(200))         # 导出文件名（文本）
     add_name = Column(Boolean, default=False)     # 是否加名 是/否
+    check_collision = Column(Boolean, default=False)  # 是否撞库 是/否
     urls = relationship("OrderUrl", cascade="all, delete-orphan", backref="order")
 
 

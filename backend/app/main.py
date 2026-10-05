@@ -77,6 +77,7 @@ def _migrate_schema():
                 ("group_name", "VARCHAR(100)"),
                 ("export_filename", "VARCHAR(200)"),
                 ("add_name", "BOOLEAN"),
+                ("check_collision", "BOOLEAN"),
                 ("batch_no", "VARCHAR(50)"),
                 ("operator_id", "INTEGER"),
                 ("dup_order_nos", "TEXT"),
@@ -167,9 +168,67 @@ def _backfill_tpl_types():
         print(f"[backfill tpl_type] 跳过: {e}")
 
 
+def _migrate_mb019_collision():
+    """给 MB-019 模版在「是否加名」后插入「是否撞库」列并重建下拉框（幂等）"""
+    try:
+        import io as _io
+        import openpyxl
+        from openpyxl.utils import get_column_letter
+        from openpyxl.worksheet.datavalidation import DataValidation
+        from .models import Template
+        db = SessionLocal()
+        try:
+            t = db.query(Template).filter(Template.code == "MB-019").first()
+            if not t or not t.file_data:
+                return
+            wb = openpyxl.load_workbook(_io.BytesIO(bytes(t.file_data)))
+            ws = wb.active
+            headers = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+            if any(h is not None and "是否撞库" in str(h) for h in headers):
+                return
+            add_name_col = next((c for c, h in enumerate(headers, 1) if h is not None and "是否加名" in str(h)), None)
+            if add_name_col is None:
+                return
+            ws.insert_cols(add_name_col + 1)
+            ws.cell(row=1, column=add_name_col + 1, value="是否撞库")
+            from openpyxl.styles import Alignment
+            ws.cell(row=1, column=add_name_col + 1).alignment = Alignment(horizontal="center", vertical="center")
+            ws.column_dimensions[get_column_letter(add_name_col + 1)].width = 13
+            # 重建下拉框（insert_cols 不会自动平移数据验证范围）
+            ws.data_validations.dataValidation.clear()
+            dropdowns = {
+                "状态": "未提,在执,改单,待停,已停",
+                "甲方": "新,牛",
+                "是否加名": "是,否",
+                "是否撞库": "是,否",
+                "渠道": "106,小程序,直播间,dpi-白,dpi-灰",
+                "运营商": "移动,电信,联通",
+            }
+            new_headers = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+            for c, h in enumerate(new_headers, 1):
+                if not h:
+                    continue
+                hs = str(h).replace("\n", "").strip()
+                for label, formula in dropdowns.items():
+                    if hs == label:
+                        dv = DataValidation(type="list", formula1=f'"{formula}"', allow_blank=True)
+                        ws.add_data_validation(dv)
+                        dv.add(f"{get_column_letter(c)}2:{get_column_letter(c)}1001")
+                        break
+            bio = _io.BytesIO()
+            wb.save(bio)
+            t.file_data = bio.getvalue()
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:  # noqa
+        print(f"[migrate mb019 collision] 跳过: {e}")
+
+
 _migrate_schema()
 _ensure_indexes()
 _backfill_tpl_types()
+_migrate_mb019_collision()
 
 app = FastAPI(title="LM订单管理系统")
 
