@@ -335,6 +335,43 @@ def _next_order_no(db, order_date=None):
     return f"{prefix}{max_seq + 1:04d}"
 
 
+def _gen_new_task_id(db, order_date, channel_name, operator_name, province, city, excl_city):
+    """甲方=新 时自动生成工单号：147-{前缀}-{mmdd}-LM{mmdd}{四位顺序号}
+    前缀规则：106→kz，小程序→xcx，dpi(省份/全国)→yd/ltd/dxdpi，dpi(地市/排除地市)→移动/联通/电信dpi
+    """
+    d = order_date or date.today()
+    if isinstance(d, datetime):
+        d = d.date()
+    if isinstance(d, str):
+        try:
+            d = datetime.strptime(d.strip(), "%Y-%m-%d").date()
+        except ValueError:
+            d = date.today()
+    mmdd = d.strftime("%m%d")
+    max_seq = 0
+    for (tid,) in db.query(Order.task_id).filter(Order.task_id.like(f"%LM{mmdd}%")).all():
+        m = re.match(rf".*LM{mmdd}(\d{{4}})$", tid or "")
+        if m:
+            max_seq = max(max_seq, int(m.group(1)))
+    seq = f"{max_seq + 1:04d}"
+    ch = (channel_name or "").strip()
+    op = (operator_name or "").strip()
+    if ch == "106":
+        mid = "kz"
+    elif ch == "小程序":
+        mid = "xcx"
+    elif "dpi" in ch:
+        city_mode = bool((city or "").strip()) or bool((excl_city or "").strip())
+        if city_mode:
+            op_map = {"移动": "移动dpi", "联通": "联通dpi", "电信": "电信dpi"}
+        else:
+            op_map = {"移动": "yddpi", "联通": "ltdpi", "电信": "dxdpi"}
+        mid = op_map.get(op) or (op + "dpi" if op else "dpi")
+    else:
+        return None
+    return f"147-{mid}-{mmdd}-LM{mmdd}{seq}"
+
+
 ACTIVE_STATUSES = ("未提", "在执", "改单")
 
 
@@ -385,13 +422,24 @@ def create_order(body: OrderBody, db: Session = Depends(get_db), user=Depends(ge
         missing.append("一级代理")
     if missing:
         raise HTTPException(status_code=422, detail=f"缺少必填字段：{'、'.join(missing)}")
+    # 甲方=新 时自动生成工单号（牛则保持原样）
+    up = db.query(Customer).filter(Customer.id == body.upstream_id).first()
+    task_id = body.task_id or ""
+    if up and up.name == "新":
+        ch = db.query(Channel).filter(Channel.id == body.channel_id).first()
+        op = db.query(Operator).filter(Operator.id == body.operator_id).first()
+        gen = _gen_new_task_id(db, body.order_date, ch.name if ch else "", op.name if op else "",
+                               body.province, body.city, body.excl_city)
+        if gen:
+            task_id = gen
+    warning = None
     dup = _find_dup_task(db, body.upstream_id, body.order_date, body.task_name, status="未提", operator_id=body.operator_id)
     if dup:
-        raise HTTPException(status_code=409, detail=f"工单号「{body.task_id or '—'}」与 工单号「{dup.task_id or '—'}」重复，请勿重复提交")
+        warning = f"提示：工单号「{task_id or '—'}」与 工单号「{dup.task_id or '—'}」重复"
     province = body.province or ("全国" if not body.city else "")
     order_no = _next_order_no(db, body.order_date)
     o = Order(order_no=order_no, customer_id=body.customer_id, upstream_id=body.upstream_id,
-              channel_id=body.channel_id, operator_id=body.operator_id, task_name=body.task_name, task_id=body.task_id,
+              channel_id=body.channel_id, operator_id=body.operator_id, task_name=body.task_name, task_id=task_id,
               qty=body.qty, duration=body.duration,
               province=province, city=body.city, excl_province=body.excl_province,
               excl_city=body.excl_city, age_min=body.age_min, age_max=body.age_max, pv=body.pv,
@@ -412,7 +460,7 @@ def create_order(body: OrderBody, db: Session = Depends(get_db), user=Depends(ge
         db.add(OrderUrl(order_id=o.id, url=url, level=u.get("level", "中"), sort_no=i))
     _op_log(db, user, "create_order", order_no, None, _snapshot(db, o, urls=url_list))
     db.commit()
-    return {"code": 0, "data": {"id": o.id, "order_no": order_no}, "msg": "已保存（状态：未提）"}
+    return {"code": 0, "data": {"id": o.id, "order_no": order_no}, "msg": "已保存（状态：未提）", "warning": warning}
 
 
 @router.put("/{oid}")
@@ -441,9 +489,20 @@ def update_order(oid: int, body: OrderBody, db: Session = Depends(get_db), user=
                 changed_fields.append(f)
         new_status = "改单" if changed_fields else o.status
 
+    # 甲方=新 且 工单号为空 时自动生成工单号
+    up = db.query(Customer).filter(Customer.id == body.upstream_id).first()
+    if up and up.name == "新" and not (body.task_id or "").strip():
+        ch = db.query(Channel).filter(Channel.id == body.channel_id).first()
+        op = db.query(Operator).filter(Operator.id == body.operator_id).first()
+        gen = _gen_new_task_id(db, body.order_date, ch.name if ch else "", op.name if op else "",
+                               body.province, body.city, body.excl_city)
+        if gen:
+            body.task_id = gen
+
+    warning = None
     dup = _find_dup_task(db, body.upstream_id, body.order_date, body.task_name, status=new_status, exclude_id=oid, operator_id=body.operator_id)
     if dup:
-        raise HTTPException(status_code=409, detail=f"工单号「{body.task_id or '—'}」与 工单号「{dup.task_id or '—'}」重复")
+        warning = f"提示：工单号「{body.task_id or '—'}」与 工单号「{dup.task_id or '—'}」重复"
     body.province = body.province or ("全国" if not body.city else "")
     for k in ["customer_id", "upstream_id", "channel_id", "operator_id", "task_name", "task_id", "qty", "duration",
               "province", "city", "excl_province", "excl_city", "age_min", "age_max", "pv",
@@ -471,7 +530,7 @@ def update_order(oid: int, body: OrderBody, db: Session = Depends(get_db), user=
         msg = "改单已保存（状态：改单）"
     else:
         msg = "已保存（状态不变）"
-    return {"code": 0, "data": None, "msg": msg}
+    return {"code": 0, "data": None, "msg": msg, "warning": warning}
 
 
 @router.put("/{oid}/dist-config")
@@ -954,6 +1013,9 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                 raw_task_id = (r.get("task_id") or "").strip()
                 if raw_task_id:
                     existing.task_id = raw_task_id
+                elif up.name == "新":
+                    existing.task_id = _gen_new_task_id(db, order_date, ch.name if ch else "", op.name if op else "",
+                                                        province, r.get("city"), r.get("excl_city")) or existing.order_no
                 else:
                     existing.task_id = "" if (up.name == "牛") else existing.order_no
                 existing.duration = duration
@@ -1001,7 +1063,13 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
             else:
                 order_no = r.get("order_no") or _next_order_no(db, order_date)
                 raw_task_id = (r.get("task_id") or "").strip()
-                task_id = raw_task_id if raw_task_id else ("" if (up.name == "牛") else order_no)
+                if raw_task_id:
+                    task_id = raw_task_id
+                elif up.name == "新":
+                    task_id = _gen_new_task_id(db, order_date, ch.name if ch else "", op.name if op else "",
+                                               province, r.get("city"), r.get("excl_city")) or order_no
+                else:
+                    task_id = "" if (up.name == "牛") else order_no
                 o = Order(order_no=order_no, customer_id=cust.id, upstream_id=up.id,
                           channel_id=ch.id if ch else None, operator_id=op.id if op else None, task_name=task_name,
                           task_id=task_id, duration=duration,

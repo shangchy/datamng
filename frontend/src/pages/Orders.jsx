@@ -264,9 +264,9 @@ export default function Orders({ variant = 'orders' }) {
     if (!(await confirm('确认保存该订单？'))) return
     try {
       const body = { ...form, qty: form.qty === '' ? null : Number(form.qty), age_min: form.age_min === '' ? null : Number(form.age_min), age_max: form.age_max === '' ? null : Number(form.age_max), pv: form.pv === '' ? null : Number(form.pv), customer_id: Number(form.customer_id), upstream_id: form.upstream_id ? Number(form.upstream_id) : null, channel_id: form.channel_id ? Number(form.channel_id) : null, operator_id: form.operator_id ? Number(form.operator_id) : null, template_id: form.template_id === '' || form.template_id == null ? null : Number(form.template_id), tpl_id: form.tpl_id === '' || form.tpl_id == null ? null : Number(form.tpl_id), price: form.price === '' || form.price == null ? null : Number(form.price), order_date: form.order_date || null, duration: computedDuration, urls: (form.url || '').split('\n').map(s => s.trim()).filter(Boolean).map(u => ({ url: u, level: '高' })) }
-      if (modal === 'create') await api.post('/api/orders', body)
-      else await api.put(`/api/orders/${form.id}`, body)
+      const r = modal === 'create' ? await api.post('/api/orders', body) : await api.put(`/api/orders/${form.id}`, body)
       toast(modal === 'modify' ? '改单已保存（状态：改单）' : '已保存（状态：未提）'); setModal(null); load()
+      if (r.warning) showError(r.warning)
     } catch (e) { showError(e.message) }
   }
 
