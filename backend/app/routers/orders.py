@@ -973,9 +973,6 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                 continue
             gname = (r.get("group_name") or "").strip()
             cust_code = cust.code if cust else ""
-            if tpl_code and tpl_code not in VALID_TPL_CODES:
-                errors.append({"row": idx + 2, "reason": f"出数模版「{tpl_code}」不合法，只能是 MB-002~MB-007"})
-                continue
             if gname:
                 known = group_consistency.get(gname)
                 if known:
