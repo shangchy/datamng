@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 @router.get("/summary")
 def summary(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    order_count = db.query(func.count(Order.id)).filter(Order.status != "已停").scalar() or 0
+    order_count = db.query(func.count(Order.id)).filter(Order.status == "在执").scalar() or 0
     daily_total = db.query(func.count(DailyData.id)).scalar() or 0
     fund_total = db.query(func.count(Fund.id)).scalar() or 0
     delivery_total = db.query(func.coalesce(func.sum(Order.qty), 0)).scalar() or 0
@@ -83,10 +83,10 @@ def category_pie(db: Session = Depends(get_db), _=Depends(get_current_user),
                  start: str = "", end: str = ""):
     end_d = datetime.strptime(end, "%Y-%m-%d").date() if end else date.today()
     start_d = datetime.strptime(start, "%Y-%m-%d").date() if start else (end_d - timedelta(days=6))
-    rows = (db.query(Category.name, func.count(DailyData.id))
-            .join(DailyData, DailyData.cat1_id == Category.id)
-            .filter(DailyData.biz_date >= start_d, DailyData.biz_date <= end_d)
-            .group_by(Category.id, Category.name).all())
+    rows = (db.query(DailyData.cat1, func.count(DailyData.id))
+            .filter(DailyData.biz_date >= start_d, DailyData.biz_date <= end_d,
+                    DailyData.cat1.isnot(None), DailyData.cat1 != "")
+            .group_by(DailyData.cat1).all())
     return {"code": 0, "data": [{"name": r[0], "value": int(r[1])} for r in rows], "msg": "ok"}
 
 
@@ -95,10 +95,10 @@ def category2_pie(db: Session = Depends(get_db), _=Depends(get_current_user),
                   start: str = "", end: str = ""):
     end_d = datetime.strptime(end, "%Y-%m-%d").date() if end else date.today()
     start_d = datetime.strptime(start, "%Y-%m-%d").date() if start else (end_d - timedelta(days=6))
-    rows = (db.query(Category.name, func.count(DailyData.id))
-            .join(DailyData, DailyData.cat2_id == Category.id)
-            .filter(DailyData.biz_date >= start_d, DailyData.biz_date <= end_d)
-            .group_by(Category.id, Category.name).all())
+    rows = (db.query(DailyData.cat2, func.count(DailyData.id))
+            .filter(DailyData.biz_date >= start_d, DailyData.biz_date <= end_d,
+                    DailyData.cat2.isnot(None), DailyData.cat2 != "")
+            .group_by(DailyData.cat2).all())
     return {"code": 0, "data": [{"name": r[0], "value": int(r[1])} for r in rows], "msg": "ok"}
 
 
@@ -107,8 +107,8 @@ def channel_pie(db: Session = Depends(get_db), _=Depends(get_current_user),
                 start: str = "", end: str = ""):
     end_d = datetime.strptime(end, "%Y-%m-%d").date() if end else date.today()
     start_d = datetime.strptime(start, "%Y-%m-%d").date() if start else (end_d - timedelta(days=6))
-    rows = (db.query(Channel.name, func.count(DailyData.id))
-            .join(DailyData, DailyData.channel_id == Channel.id)
-            .filter(DailyData.biz_date >= start_d, DailyData.biz_date <= end_d)
-            .group_by(Channel.id, Channel.name).all())
+    rows = (db.query(DailyData.channel, func.count(DailyData.id))
+            .filter(DailyData.biz_date >= start_d, DailyData.biz_date <= end_d,
+                    DailyData.channel.isnot(None), DailyData.channel != "")
+            .group_by(DailyData.channel).all())
     return {"code": 0, "data": [{"name": r[0], "value": int(r[1])} for r in rows], "msg": "ok"}

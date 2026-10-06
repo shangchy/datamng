@@ -276,7 +276,18 @@ function TabContent({ tab, customerId }) {
   useEffect(() => {
     if (tab === 'orders') api.get(`/api/customers/${customerId}/orders`).then(r => setData(r.data)).catch(() => {})
     if (tab === 'recharges') api.get(`/api/customers/${customerId}/recharges`).then(r => setData(r.data)).catch(() => {})
-    if (tab === 'prices') api.get(`/api/customers/${customerId}/prices`).then(r => { setData(r.data); setPrices(r.data.map(x => ({ channel_id: x.channel_id, price: x.price ?? '' }))) }).catch(() => {})
+    if (tab === 'prices') api.get(`/api/customers/${customerId}/prices`).then(r => {
+      const seen = new Set()
+      const unique = []
+      for (const x of (r.data || [])) {
+        const k = (x.channel || '').trim()
+        if (k && seen.has(k)) continue
+        if (k) seen.add(k)
+        unique.push(x)
+      }
+      setData(unique)
+      setPrices(unique.map(x => ({ channel_id: x.channel_id, price: x.price ?? '' })))
+    }).catch(() => {})
   }, [tab, customerId])
 
   async function savePrices() {

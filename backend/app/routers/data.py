@@ -15,7 +15,7 @@ from ..database import get_db, SessionLocal
 from ..deps import get_current_user, require_admin
 from ..models import (DailyData, Fund, Bill, Alert, Customer, Channel, Category,
                       Order, SysConfig, Operator, SourceFile, Template, WashName, Platform,
-                      CustomerRecharge)
+                      CustomerRecharge, CustomerPrice)
 from ..pagination import paginate, ok_page
 from ..excel import xlsx_response
 from ..utils import fmt_dt
@@ -892,17 +892,18 @@ async def import_wash(file: UploadFile = File(...), db: Session = Depends(get_db
         db.execute(stmt, [{"ph": p, "nm": rec_map[p]["name"]} for p in phones])
     for phone in phones:
         rec = rec_map[phone]
-        # 更新洗名库（手机号存在则更新，不存在则插入；省/市/运营商仅在文件提供时覆盖，避免清空已有数据）
+        # 更新洗名库（手机号存在则更新，不存在且有名则插入；无姓名不插入，避免清空已有姓名）
         w = db.query(WashName).filter(WashName.phone == phone).first()
         if w:
-            w.name = rec["name"]
+            if rec["name"]:
+                w.name = rec["name"]
             if rec["province"]:
                 w.province = rec["province"]
             if rec["city"]:
                 w.city = rec["city"]
             if rec["operator"]:
                 w.operator = rec["operator"]
-        else:
+        elif rec["name"]:
             db.add(WashName(phone=phone, name=rec["name"], province=rec["province"],
                             city=rec["city"], operator=rec["operator"]))
     db.commit()
@@ -1020,6 +1021,8 @@ async def import_wash_names(file: UploadFile = File(...), db: Session = Depends(
                 w.operator = r["operator"]
             updated += 1
         else:
+            if not r.get("name"):
+                continue
             db.add(WashName(phone=phone, name=r.get("name"), province=r.get("province"),
                             city=r.get("city"), operator=r.get("operator")))
             imported += 1
@@ -1461,6 +1464,13 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
         tpl = db.query(Template).filter(Template.id == order.tpl_id).first() if order.tpl_id else None
         ch = db.query(Channel).filter(Channel.id == order.channel_id).first()
         op = db.query(Operator).filter(Operator.id == order.operator_id).first()
+        # 上游单价（成本）：客户管理里「上游」客户按渠道设定的单价
+        up_price = 0.0
+        if order.upstream_id and order.channel_id:
+            up_cp = db.query(CustomerPrice).filter(CustomerPrice.customer_id == order.upstream_id,
+                                                    CustomerPrice.channel_id == order.channel_id).first()
+            if up_cp:
+                up_price = float(up_cp.price)
         orders_info[d.task_id] = {
             "tpl_code": tpl.code if tpl else "",
             "group_name": order.group_name or "",
@@ -1479,6 +1489,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             "customer_id": order.customer_id,
             "add_name": bool(order.add_name),
             "check_collision": bool(order.check_collision),
+            "upstream_price": up_price,
         }
 
     if not orders_info:
@@ -1570,12 +1581,13 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             label = (f"{cc} {info['cust_name']}".strip() if info["cust_name"] else cc)
             cust = db.query(Customer).filter(Customer.id == info["customer_id"]).first()
             bills[cc] = {"customer_id": info["customer_id"], "cust_label": label,
-                         "qty": 0, "sales": 0.0,
+                         "qty": 0, "sales": 0.0, "cost": 0.0,
                          "balance": float(cust.balance) if cust and cust.balance is not None else 0,
                          "groups": {}}
         bills[cc]["qty"] += 1
         eff_price = info["price"] + (0.01 if info["add_name"] else 0)
         bills[cc]["sales"] += eff_price
+        bills[cc]["cost"] += info["upstream_price"]
         gg = bills[cc]["groups"].setdefault(d.task_id,
                                             {"task_name": info["task_name"] or info["group_name"],
                                              "order_no": info["order_no"],
@@ -1597,13 +1609,15 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             balance = round(balance + float(existing.sales), 2)
         bill_balance = round(balance - float(b["sales"]), 2)
         b["balance"] = bill_balance
+        profit = round(float(b["sales"]) - float(b["cost"]), 2)
         if existing:
             existing.purchase_qty = b["qty"]
             existing.sales = b["sales"]
             existing.balance = bill_balance
+            existing.profit = profit
         else:
             db.add(Bill(customer_id=cid, biz_date=date_obj, purchase_qty=b["qty"],
-                        sales=b["sales"], balance=bill_balance, profit=0))
+                        sales=b["sales"], balance=bill_balance, profit=profit))
         if cust is not None:
             cust.balance = bill_balance
     db.commit()

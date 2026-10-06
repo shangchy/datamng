@@ -231,10 +231,56 @@ def _migrate_mb019_collision():
         print(f"[migrate mb019 collision] 跳过: {e}")
 
 
+def _dedup_channels():
+    """合并重复渠道名（含首尾空格差异；保留最小 id，重定向订单/URL/客户单价引用，删除重复渠道）"""
+    try:
+        from .models import Channel, Order, Url, CustomerPrice
+        db = SessionLocal()
+        try:
+            groups = {}
+            for ch in db.query(Channel).order_by(Channel.id).all():
+                key = (ch.name or "").strip()
+                groups.setdefault(key, []).append(ch)
+            for key, rows in groups.items():
+                if len(rows) <= 1:
+                    continue
+                keep = rows[0]
+                for dup in rows[1:]:
+                    db.query(Order).filter(Order.channel_id == dup.id).update(
+                        {"channel_id": keep.id}, synchronize_session=False)
+                    db.query(Url).filter(Url.channel_id == dup.id).update(
+                        {"channel_id": keep.id}, synchronize_session=False)
+                    for cp in db.query(CustomerPrice).filter(CustomerPrice.channel_id == dup.id).all():
+                        existing = db.query(CustomerPrice).filter(
+                            CustomerPrice.customer_id == cp.customer_id,
+                            CustomerPrice.channel_id == keep.id).first()
+                        if existing:
+                            existing.price = cp.price
+                            db.delete(cp)
+                        else:
+                            cp.channel_id = keep.id
+                    db.delete(dup)
+            # 清理客户单价重复（同客户+同渠道）
+            cgroups = {}
+            for cp in db.query(CustomerPrice).order_by(CustomerPrice.id).all():
+                cgroups.setdefault((cp.customer_id, cp.channel_id), []).append(cp)
+            for k, rows in cgroups.items():
+                if len(rows) <= 1:
+                    continue
+                for dup in rows[:-1]:
+                    db.delete(dup)
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:  # noqa
+        print(f"[dedup channels] 跳过: {e}")
+
+
 _migrate_schema()
 _ensure_indexes()
 _backfill_tpl_types()
 _migrate_mb019_collision()
+_dedup_channels()
 
 app = FastAPI(title="LM订单管理系统")
 

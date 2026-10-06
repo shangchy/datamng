@@ -163,7 +163,14 @@ def create_recharge(cid: int, body: RechargeBody, db: Session = Depends(get_db),
 def list_prices(cid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     channels = db.query(Channel).filter(Channel.status == 1).all()
     prices = {p.channel_id: float(p.price) for p in db.query(CustomerPrice).filter(CustomerPrice.customer_id == cid).all()}
-    data = [{"channel_id": ch.id, "channel": ch.name, "price": prices.get(ch.id)} for ch in channels]
+    seen = set()
+    data = []
+    for ch in channels:
+        key = (ch.name or "").strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        data.append({"channel_id": ch.id, "channel": key, "price": prices.get(ch.id)})
     return {"code": 0, "data": data, "msg": "ok"}
 
 
