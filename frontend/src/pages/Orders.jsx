@@ -172,6 +172,9 @@ export default function Orders({ variant = 'orders' }) {
   const provinceOptions = ['全国', ...geo.provinces]
   const selectedProvinces = (form.province || '').split(',').filter(Boolean)
   const isNational = selectedProvinces.includes('全国')
+  const cityOptions = isNational
+    ? []
+    : [...new Set(selectedProvinces.filter(p => p !== '全国').flatMap(p => geo.citiesMap[p] || []))]
   const exclCityOptions = isNational
     ? [...new Set(Object.values(geo.citiesMap).flat())]
     : [...new Set(selectedProvinces.filter(p => p !== '全国').flatMap(p => geo.citiesMap[p] || []))]
@@ -571,7 +574,7 @@ export default function Orders({ variant = 'orders' }) {
               const national = provs.includes('全国')
               setForm({ ...form, province: v, city: '', excl_city: '', excl_province: national ? form.excl_province : '' })
             }} placeholder="选择省份" /></div>
-            <div className="field"><label>地市（全量，可搜索）</label><MultiSelect full searchable options={allCities} value={form.city} onChange={v => setForm({ ...form, city: v })} placeholder="选择地市" /></div>
+            <div className="field"><label>地市（随省份联动）</label><MultiSelect full searchable disabled={isNational} options={cityOptions} value={form.city} onChange={v => setForm({ ...form, city: v })} placeholder={isNational ? '省份为全国不可选' : (cityOptions.length ? '选择地市' : '请先选择省份')} /></div>
           </div>
           <div className="row">
             <div className="field"><label>排除省（仅全国）</label><MultiSelect full searchable disabled={!isNational} options={geo.provinces} value={form.excl_province} onChange={v => setForm({ ...form, excl_province: v })} placeholder={isNational ? '选择排除省' : '省份非全国不可选'} /></div>

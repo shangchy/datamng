@@ -1,5 +1,4 @@
-import React, { useState } from 'react'
-import MultiSelect from './MultiSelect'
+import React from 'react'
 
 const ENUM_COLS = {
   status: ['未提', '在执', '待停', '已停', '改单', '启用', '停用', '已停止', '未处理', '已处理'],
@@ -14,7 +13,7 @@ const ENUM_COLS = {
 }
 
 const DATE_KEYS = ['start_date', 'end_date', 'order_date', 'biz_date', 'stop_date']
-const MULTI_COLS = ['province', 'city']
+const TEXT_COLS = ['province', 'city', 'platform']
 const NON_FILTER = ['region', 'url', 'updated_at', 'created_at', 'last_login_at', 'time', 'id']
 
 export default function FilterBar({ cols, filters, setFilters, onSearch, fieldOptions = {}, actions = true }) {
@@ -23,8 +22,8 @@ export default function FilterBar({ cols, filters, setFilters, onSearch, fieldOp
   return (
     <>
       {list.map(c => {
-        if (MULTI_COLS.includes(c.k)) {
-          return <MultiSelect key={c.k} label={c.l} options={fieldOptions[c.k] || []} value={filters[c.k]} onChange={v => setFilters({ ...filters, [c.k]: v })} />
+        if (TEXT_COLS.includes(c.k)) {
+          return <input key={c.k} autoComplete="off" placeholder={c.l} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
         }
         const opts = fieldOptions[c.k] || ENUM_COLS[c.k]
         if (opts) {
@@ -40,9 +39,9 @@ export default function FilterBar({ cols, filters, setFilters, onSearch, fieldOp
           )
         }
         if (DATE_KEYS.includes(c.k)) {
-          return <input key={c.k} type="date" value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
+          return <input key={c.k} type="date" autoComplete="off" value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
         }
-        return <input key={c.k} placeholder={c.l} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
+        return <input key={c.k} autoComplete="off" placeholder={c.l} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
       })}
       {actions && <button className="btn primary" onClick={() => onSearch()}>查询</button>}
       {actions && <button className="btn" onClick={() => { setFilters({}); onSearch({}) }}>重置</button>}

@@ -337,4 +337,4 @@ if FRONTEND_DIR is not None:
         target = (FRONTEND_DIR / filename).resolve()
         if target.is_file() and str(target).startswith(str(root)):
             return FileResponse(str(target))
-        return FileResponse(str(FRONTEND_DIR / "index.html"))
+        return FileResponse(str(FRONTEND_DIR / "index.html"), headers={"Cache-Control": "no-store"})

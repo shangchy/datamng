@@ -41,7 +41,7 @@ def list_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
                task_name: str = "", province: str = "", city: str = "",
                operator: str = "", cat1: str = "", cat2: str = "", platform: str = "",
                source_file: str = "", customer: str = "", secondary_agent: str = "",
-               channel: str = "", biz_date: str = "", page: int = 1, per_page: int = 10):
+               channel: str = "", biz_date: str = "", name: str = "", page: int = 1, per_page: int = 10):
     qy = db.query(DailyData)
     if q:
         like = f"%{q}%"
@@ -79,6 +79,8 @@ def list_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(DailyData.secondary_agent.like(f"%{secondary_agent}%"))
     if channel:
         qy = qy.filter(DailyData.channel.like(f"%{channel}%"))
+    if name:
+        qy = qy.filter(DailyData.name.like(f"%{name}%"))
     if biz_date:
         qy = qy.filter(DailyData.biz_date == biz_date)
     total, rows = paginate(qy.order_by(DailyData.id.desc()), page, per_page)
@@ -106,9 +108,9 @@ def _daily_dict(d: DailyData):
 def export_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
                  q: str = "", phone: str = "", upstream: str = "", task_id: str = "",
                  task_name: str = "", province: str = "", city: str = "",
-                 operator: str = "", platform: str = "", source_file: str = "",
-                 customer: str = "", secondary_agent: str = "", channel: str = "",
-                 biz_date: str = ""):
+                 operator: str = "", cat1: str = "", cat2: str = "", platform: str = "",
+                 source_file: str = "", customer: str = "", secondary_agent: str = "",
+                 channel: str = "", biz_date: str = "", name: str = ""):
     qy = db.query(DailyData)
     if q:
         like = f"%{q}%"
@@ -132,6 +134,10 @@ def export_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
             qy = qy.filter(or_(*[DailyData.city.like(f"%{c}%") for c in cities]))
     if operator:
         qy = qy.filter(DailyData.operator.like(f"%{operator}%"))
+    if cat1:
+        qy = qy.filter(DailyData.cat1.like(f"%{cat1}%"))
+    if cat2:
+        qy = qy.filter(DailyData.cat2.like(f"%{cat2}%"))
     if platform:
         qy = qy.filter(DailyData.platform.like(f"%{platform}%"))
     if source_file:
@@ -142,6 +148,8 @@ def export_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(DailyData.secondary_agent.like(f"%{secondary_agent}%"))
     if channel:
         qy = qy.filter(DailyData.channel.like(f"%{channel}%"))
+    if name:
+        qy = qy.filter(DailyData.name.like(f"%{name}%"))
     if biz_date:
         qy = qy.filter(DailyData.biz_date == biz_date)
     rows = qy.order_by(DailyData.id.desc()).limit(50000).all()
