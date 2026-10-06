@@ -19,7 +19,7 @@ export default function Customers() {
   const [searchParams] = useSearchParams()
   const [rows, setRows] = useState([])
   const [detail, setDetail] = useState(null)
-  const [tab, setTab] = useState('orders')
+  const [tab, setTab] = useState('recharges')
   const [recharge, setRecharge] = useState(null)
   const [modal, setModal] = useState(null)
   const [form, setForm] = useState(emptyForm)
@@ -71,7 +71,7 @@ export default function Customers() {
 
   async function openDetail(c) {
     const r = await api.get(`/api/customers/${c.id}`)
-    setDetail(r.data); setTab('orders')
+    setDetail(r.data); setTab('recharges')
   }
 
   async function saveRecharge() {
@@ -109,7 +109,7 @@ export default function Customers() {
 
   function openEdit(c) {
     setForm({ ...emptyForm, ...c, tg_id: c.tg_id || '', note: c.note || '', start_date: c.start_date || '', end_date: c.end_date || '', bill_tpl_id: c.bill_tpl_id ?? null, is_accounted: c.is_accounted ?? true })
-    setFormTab('orders')
+    setFormTab('recharges')
     setModal('edit')
   }
 
@@ -173,9 +173,9 @@ export default function Customers() {
             </tbody></table>
           </div>
           <div className="toolbar" style={{ marginTop: 14, marginBottom: 8 }}>
-            {['orders', 'recharges', 'prices'].map(t => (
+            {['recharges', 'prices'].map(t => (
               <button key={t} className={`btn small ${tab === t ? 'primary' : ''}`} onClick={() => setTab(t)}>
-                {t === 'orders' ? '订单记录' : t === 'recharges' ? '充值记录' : '设定单价'}
+                {t === 'recharges' ? '充值记录' : '设定单价'}
               </button>
             ))}
           </div>
@@ -247,9 +247,9 @@ export default function Customers() {
             </div>
           </div>
           <div className="toolbar" style={{ marginTop: 14, marginBottom: 8 }}>
-            {(modal === 'create' ? ['prices'] : ['orders', 'recharges', 'prices']).map(t => (
+            {(modal === 'create' ? ['prices'] : ['recharges', 'prices']).map(t => (
               <button key={t} className={`btn small ${formTab === t ? 'primary' : ''}`} onClick={() => setFormTab(t)}>
-                {t === 'orders' ? '订单记录' : t === 'recharges' ? '充值记录' : '设定单价'}
+                {t === 'recharges' ? '充值记录' : '设定单价'}
               </button>
             ))}
           </div>
@@ -274,6 +274,8 @@ function TabContent({ tab, customerId }) {
   const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
   useEffect(() => {
+    setData([])
+    setPrices([])
     if (tab === 'orders') api.get(`/api/customers/${customerId}/orders`).then(r => setData(r.data)).catch(() => {})
     if (tab === 'recharges') api.get(`/api/customers/${customerId}/recharges`).then(r => setData(r.data)).catch(() => {})
     if (tab === 'prices') api.get(`/api/customers/${customerId}/prices`).then(r => {
@@ -286,13 +288,13 @@ function TabContent({ tab, customerId }) {
         unique.push(x)
       }
       setData(unique)
-      setPrices(unique.map(x => ({ channel_id: x.channel_id, price: x.price ?? '' })))
+      setPrices(unique.map(x => ({ channel_id: x.channel_id, operator_id: x.operator_id ?? null, price: x.price ?? '' })))
     }).catch(() => {})
   }, [tab, customerId])
 
   async function savePrices() {
     if (!(await confirm('确认保存客户渠道单价？'))) return
-    const body = { prices: prices.filter(p => p.price !== '').map(p => ({ channel_id: p.channel_id, price: Number(p.price) })) }
+    const body = { prices: prices.filter(p => p.price !== '').map(p => ({ channel_id: p.channel_id, operator_id: p.operator_id ?? null, price: Number(p.price) })) }
     await api.put(`/api/customers/${customerId}/prices`, body)
     toast('单价已保存')
   }

@@ -92,6 +92,7 @@ class CustomerPrice(Base, TimestampMixin):
     id = Column(Integer, primary_key=True)
     customer_id = Column(Integer, ForeignKey("customer.id"), nullable=False)
     channel_id = Column(Integer, ForeignKey("channel.id"), nullable=False)
+    operator_id = Column(Integer, ForeignKey("operator.id"))   # 仅 dpi 渠道按运营商细分，其余为空
     price = Column(Numeric(8, 4), nullable=False)
 
 
@@ -364,6 +365,8 @@ class Alert(Base):
     type = Column(String(20), nullable=False)   # 停单提醒/账单预警
     customer_id = Column(Integer, ForeignKey("customer.id"))
     task_name = Column(String(200))
+    order_no = Column(String(50))
+    order_id = Column(Integer)
     content = Column(Text)
     trigger_time = Column(DateTime)
     status = Column(String(20), default="未处理")

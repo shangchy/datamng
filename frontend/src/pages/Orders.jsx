@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, downloadFile, getToken, getUser, uploadFile } from '../api'
 import { Modal, Badge, useToast, useConfirm, Loading } from '../components/ui'
 import { useColumnConfig } from '../components/columns'
@@ -76,6 +77,7 @@ function toComma(val) {
 export default function Orders({ variant = 'orders' }) {
   const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
+  const [searchParams] = useSearchParams()
   const isStop = variant === 'stop'
   const user = getUser() || {}
   const isAdmin = user.role_code === 'admin' || (user.permissions || []).includes('*')
@@ -139,7 +141,15 @@ export default function Orders({ variant = 'orders' }) {
   function search(f) { setPage(1); load(1, perPage, f) }
   function goPage(p) { setPage(p); load(p, perPage) }
   function changePerPage(pp) { setPerPage(pp); setPage(1); load(1, pp) }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    const on = searchParams.get('order_no')
+    if (on) {
+      setFilters({ order_no: on })
+      load(1, perPage, { order_no: on })
+    } else {
+      load()
+    }
+  }, [])
   useEffect(() => {
     api.get('/api/customers?per_page=1000').then(r => {
       setCustomers(r.data.rows.filter(c => c.ctype === 'downstream'))

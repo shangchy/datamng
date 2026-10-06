@@ -79,7 +79,7 @@ const KINDS = {
     title: '预警中心', endpoint: '/api/alerts',
     cols: [
       { k: 'type', l: '类型' }, { k: 'customer_name', l: '客户名' },
-      { k: 'task_name', l: '任务名' }, { k: 'content', l: '内容' }, { k: 'time', l: '触发时间' }, { k: 'status', l: '状态' },
+      { k: 'order_no', l: '订单编号' }, { k: 'task_name', l: '任务名' }, { k: 'content', l: '内容' }, { k: 'time', l: '触发时间' },
     ], handle: true,
   },
   users: {
@@ -159,9 +159,15 @@ export default function SimpleList({ kind }) {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
+  const [rechargeAlert, setRechargeAlert] = useState(null)
+  const [rechargeRate, setRechargeRate] = useState(6.7)
+  const [stopAlert, setStopAlert] = useState(null)
 
   useEffect(() => {
-    if (kind === 'alerts') api.get('/api/alert-config').then(r => { setAlertTrigger(r.data.trigger_time); setAlertDays(r.data.alert_days ?? 0) }).catch(() => {})
+    if (kind === 'alerts') {
+      api.get('/api/alert-config').then(r => { setAlertTrigger(r.data.trigger_time); setAlertDays(r.data.alert_days ?? 0) }).catch(() => {})
+      api.get('/api/customers/recharge-rate').then(r => setRechargeRate(r.data.rate)).catch(() => {})
+    }
   }, [kind])
   async function saveAlertConfig() {
     await api.put('/api/alert-config', { trigger_time: alertTrigger, alert_days: Number(alertDays) || 0 })
@@ -323,17 +329,40 @@ export default function SimpleList({ kind }) {
     else await api.post(cfg.endpoint, payload)
     toast(m.mode === 'edit' ? '已保存' : '已新增'); setUrlModal(null); load()
   }
-  async function handleAlert(r) {
+  function openRecharge(r) {
+    const d = new Date()
+    setRechargeAlert({
+      alert_id: r.id, customer_id: r.customer_id, customer_name: r.customer_name,
+      amount_u: '', amount_rmb: '', recharge_date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+      note: '',
+    })
+  }
+  async function saveRecharge() {
+    const a = rechargeAlert
+    const hasU = a.amount_u && Number(a.amount_u) > 0
+    const hasRmb = a.amount_rmb && Number(a.amount_rmb) > 0
+    if ((!hasU && !hasRmb) || !a.recharge_date) { showError('请填写充值金额和日期'); return }
     try {
-      await api.put(`/api/alerts/${r.id}`)
-      load()
+      await api.post(`/api/customers/${a.customer_id}/recharges`, {
+        amount_u: hasU ? Number(a.amount_u) : null,
+        amount_rmb: hasRmb ? Number(a.amount_rmb) : null,
+        recharge_date: a.recharge_date, note: a.note || '',
+      })
+      toast('充值成功'); setRechargeAlert(null); load()
       window.dispatchEvent(new Event('alert-count-refresh'))
     } catch (e) { showError(e.message) }
-    if (r.type === '账单预警') {
-      nav(`/customers?recharge=${r.customer_id}`)
-      return
-    }
-    nav('/orders')
+  }
+  function openStop(r) {
+    setStopAlert({ alert_id: r.id, order_id: r.order_id, order_no: r.order_no, task_name: r.task_name })
+  }
+  async function doStop() {
+    if (!stopAlert || !stopAlert.order_id) { showError('订单不存在'); return }
+    if (!(await confirm(`确认停单「${stopAlert.task_name || stopAlert.order_no}」？`))) return
+    try {
+      await api.post(`/api/orders/${stopAlert.order_id}/stop`, { reason: '业务调整', note: '', order_date: null })
+      toast('已停单'); setStopAlert(null); load()
+      window.dispatchEvent(new Event('alert-count-refresh'))
+    } catch (e) { showError(e.message) }
   }
   async function resetPwd(id) {
     if (await confirm('确认重置该账户密码？')) { await api.post(`/api/users/${id}/reset-password`); toast('密码已重置') }
@@ -643,22 +672,23 @@ export default function SimpleList({ kind }) {
       <div className="panel">
         <div className="table-scroll">
           <table>
-            <thead><tr>{showBatchDel && <th style={{ width: 32 }}><input type="checkbox" checked={rows.length > 0 && selected.length === sortedRows().length} onChange={toggleAll} /></th>}{cols.map(c => <th key={c.k} className={c.num ? 'num' : ''} onClick={() => toggleSort(c.k)}>{c.l}{sort?.k === c.k ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>)}{hasRowOps && <th className="ops">操作</th>}</tr></thead>
+            <thead><tr>{showBatchDel && <th style={{ width: 32 }}><input type="checkbox" checked={rows.length > 0 && selected.length === sortedRows().length} onChange={toggleAll} /></th>}{hasRowOps && <th className="ops">操作</th>}{cols.map(c => <th key={c.k} className={c.num ? 'num' : ''} onClick={() => toggleSort(c.k)}>{c.l}{sort?.k === c.k ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>)}</tr></thead>
             <tbody>
               {sortedRows().map(r => (
                 <tr key={r.id}>
                   {showBatchDel && <td><input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} /></td>}
-                  {cols.map(c => <td key={c.k} className={c.num ? 'num' : ''}>{cell(c, r)}</td>)}
                   {hasRowOps && <td className="ops">
                     {cfg.detail && <button className="btn small" onClick={() => viewBillDetail(r.id)}>详情</button>}
                     {cfg.simple && <button className="btn small" onClick={() => toast('编辑')}>编辑</button>}
                     {cfg.editUrl && <button className="btn small" onClick={() => openEditUrl(r)}>编辑</button>}
                     {cfg.del && <button className="btn small danger" onClick={() => del(r.id)}>删除</button>}
                     {cfg.dl && <button className="btn small" onClick={() => downloadSourceFile(r)}>下载</button>}
-                    {cfg.handle && <button className="btn small primary" onClick={() => handleAlert(r)}>处理</button>}
+                    {cfg.handle && r.type === '账单预警' && <button className="btn small primary" onClick={() => openRecharge(r)}>充值</button>}
+                    {cfg.handle && r.type === '停单提醒' && <button className="btn small primary" onClick={() => openStop(r)}>停单</button>}
                     {cfg.reset && <button className="btn small" onClick={() => resetPwd(r.id)}>重置密码</button>}
                     {cfg.pwd && <button className="btn small primary" onClick={() => setPwdModal({ id: r.id, username: r.username, password: '', confirm: '' })}>修改密码</button>}
                   </td>}
+                  {cols.map(c => <td key={c.k} className={c.num ? 'num' : ''}>{cell(c, r)}</td>)}
                 </tr>
               ))}
             </tbody>
@@ -724,6 +754,37 @@ export default function SimpleList({ kind }) {
           <div className="foot">
             <button className="btn" onClick={() => setDelByDateModal(false)}>取消</button>
             <button className="btn danger" onClick={() => doDeleteByDate().catch(e => showError(e.message))}>删除</button>
+          </div>
+        </Modal>
+      )}
+
+      {rechargeAlert && (
+        <Modal title={`账户充值 · ${rechargeAlert.customer_name}`} onClose={() => setRechargeAlert(null)}>
+          <div className="row">
+            <div className="field"><label>充值金额 (U)</label>
+              <input type="number" value={rechargeAlert.amount_u} onChange={e => { const u = e.target.value; setRechargeAlert({ ...rechargeAlert, amount_u: u, amount_rmb: u ? (u * rechargeRate).toFixed(2) : '' }) }} />
+            </div>
+            <div className="field"><label>折算人民币 (元)</label>
+              <input type="number" value={rechargeAlert.amount_rmb} onChange={e => { const r = e.target.value; setRechargeAlert({ ...rechargeAlert, amount_rmb: r, amount_u: r ? (r / rechargeRate).toFixed(2) : '' }) }} />
+            </div>
+          </div>
+          <div className="row">
+            <div className="field"><label>充值日期</label><input type="date" value={rechargeAlert.recharge_date} onChange={e => setRechargeAlert({ ...rechargeAlert, recharge_date: e.target.value })} /></div>
+            <div className="field"><label>备注</label><input value={rechargeAlert.note} onChange={e => setRechargeAlert({ ...rechargeAlert, note: e.target.value })} /></div>
+          </div>
+          <div className="foot">
+            <button className="btn" onClick={() => setRechargeAlert(null)}>取消</button>
+            <button className="btn primary" onClick={() => saveRecharge().catch(e => showError(e.message))}>确认充值</button>
+          </div>
+        </Modal>
+      )}
+
+      {stopAlert && (
+        <Modal title="停单确认" onClose={() => setStopAlert(null)}>
+          <div className="note">确认停单「{stopAlert.task_name || stopAlert.order_no}」？停单后该订单将停止采集。</div>
+          <div className="foot">
+            <button className="btn" onClick={() => setStopAlert(null)}>取消</button>
+            <button className="btn danger" onClick={() => doStop().catch(e => showError(e.message))}>确认停单</button>
           </div>
         </Modal>
       )}

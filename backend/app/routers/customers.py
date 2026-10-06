@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import (Customer, CustomerRecharge, CustomerPrice, Channel,
-                      Bill, Order, Url, Category, Alert, SysConfig)
+                      Bill, Order, Url, Category, Alert, SysConfig, Operator)
 from ..schemas import CustomerBody, RechargeBody, PriceBody
 from ..pagination import paginate, ok_page
 from ..utils import fmt_dt
@@ -159,18 +159,39 @@ def create_recharge(cid: int, body: RechargeBody, db: Session = Depends(get_db),
     return {"code": 0, "data": None, "msg": "充值成功"}
 
 
+DPI_OPERATORS = ["移动", "联通", "电信"]
+
+
 @router.get("/{cid}/prices")
 def list_prices(cid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     channels = db.query(Channel).filter(Channel.status == 1).all()
-    prices = {p.channel_id: float(p.price) for p in db.query(CustomerPrice).filter(CustomerPrice.customer_id == cid).all()}
+    operator_ids = {op.name: op.id for op in db.query(Operator).filter(Operator.status == 1).all()}
+    prices = {}
+    for p in db.query(CustomerPrice).filter(CustomerPrice.customer_id == cid).all():
+        prices[(p.channel_id, p.operator_id)] = float(p.price)
     seen = set()
     data = []
     for ch in channels:
-        key = (ch.name or "").strip()
-        if key in seen:
+        name = (ch.name or "").strip()
+        if not name:
             continue
-        seen.add(key)
-        data.append({"channel_id": ch.id, "channel": key, "price": prices.get(ch.id)})
+        if "dpi" in name:
+            for op_name in DPI_OPERATORS:
+                op_id = operator_ids.get(op_name)
+                if op_id is None:
+                    continue
+                label = f"{name}-{op_name}"
+                if label in seen:
+                    continue
+                seen.add(label)
+                data.append({"channel_id": ch.id, "operator_id": op_id,
+                             "channel": label, "price": prices.get((ch.id, op_id))})
+        else:
+            if name in seen:
+                continue
+            seen.add(name)
+            data.append({"channel_id": ch.id, "operator_id": None,
+                         "channel": name, "price": prices.get((ch.id, None))})
     return {"code": 0, "data": data, "msg": "ok"}
 
 
@@ -179,14 +200,16 @@ def save_prices(cid: int, body: PriceBody, db: Session = Depends(get_db), _=Depe
     for item in body.prices:
         ch_id = item.get("channel_id")
         price = item.get("price")
+        op_id = item.get("operator_id")
         if ch_id is None or price is None:
             continue
         row = db.query(CustomerPrice).filter(CustomerPrice.customer_id == cid,
-                                             CustomerPrice.channel_id == ch_id).first()
+                                             CustomerPrice.channel_id == ch_id,
+                                             CustomerPrice.operator_id == op_id).first()
         if row:
             row.price = price
         else:
-            db.add(CustomerPrice(customer_id=cid, channel_id=ch_id, price=price))
+            db.add(CustomerPrice(customer_id=cid, channel_id=ch_id, operator_id=op_id, price=price))
     db.commit()
     return {"code": 0, "data": None, "msg": "单价已保存"}
 

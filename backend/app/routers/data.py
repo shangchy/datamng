@@ -1464,11 +1464,14 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
         tpl = db.query(Template).filter(Template.id == order.tpl_id).first() if order.tpl_id else None
         ch = db.query(Channel).filter(Channel.id == order.channel_id).first()
         op = db.query(Operator).filter(Operator.id == order.operator_id).first()
-        # 上游单价（成本）：客户管理里「上游」客户按渠道设定的单价
+        # 上游单价（成本）：客户管理里「上游」客户按渠道（dpi 渠道再按运营商）设定的单价
         up_price = 0.0
         if order.upstream_id and order.channel_id:
-            up_cp = db.query(CustomerPrice).filter(CustomerPrice.customer_id == order.upstream_id,
-                                                    CustomerPrice.channel_id == order.channel_id).first()
+            up_q = db.query(CustomerPrice).filter(CustomerPrice.customer_id == order.upstream_id,
+                                                  CustomerPrice.channel_id == order.channel_id)
+            up_cp = up_q.filter(CustomerPrice.operator_id == order.operator_id).first()
+            if not up_cp:
+                up_cp = up_q.filter(CustomerPrice.operator_id.is_(None)).first()
             if up_cp:
                 up_price = float(up_cp.price)
         orders_info[d.task_id] = {
@@ -2043,32 +2046,94 @@ def export_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
     recharges = rqy.all()
 
     wb = openpyxl.Workbook()
+    from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+    from openpyxl.utils import get_column_letter
 
+    title_font = Font(bold=True, size=14)
+    header_font = Font(bold=True, size=11, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="4472C4")
+    zebra_fill = PatternFill("solid", fgColor="F2F6FC")
+    thin = Side(style="thin", color="D9D9D9")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center")
+    right = Alignment(horizontal="right", vertical="center")
+    money_fmt = '#,##0.00'
+
+    # ---- 账单明细 ----
     ws1 = wb.active
     ws1.title = "账单明细"
-    ws1.append(["客户编号", "客户名称", "业务日期", "进货量", "销售金额(元)", "余额(元)", "利润(元)"])
+    headers = ["客户编号", "客户名称", "业务日期", "进货量", "销售金额(元)", "余额(元)"]
+    widths = [12, 16, 12, 10, 14, 14]
+    period = f"{start_date or '...'} ~ {end_date or '...'}"
+    ws1.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+    tc = ws1.cell(row=1, column=1, value=f"账单明细（{period}）")
+    tc.font = title_font
+    tc.alignment = center
+    ws1.row_dimensions[1].height = 26
+    for j, h in enumerate(headers, 1):
+        c = ws1.cell(row=2, column=j, value=h)
+        c.font = header_font
+        c.fill = header_fill
+        c.border = border
+        c.alignment = center
+        ws1.column_dimensions[get_column_letter(j)].width = widths[j - 1]
+    ws1.row_dimensions[2].height = 20
+    r = 3
     for b in bills:
         c = cust_map.get(b.customer_id)
-        ws1.append([
+        row = [
             c.code if c else "", c.name if c else "",
             str(b.biz_date) if b.biz_date else "",
             b.purchase_qty if b.purchase_qty is not None else 0,
             float(b.sales) if b.sales is not None else 0,
-            float(c.balance) if c and c.balance is not None else 0,
-            float(b.profit) if b.profit is not None else 0,
-        ])
+            float(b.balance) if b.balance is not None else 0,
+        ]
+        for j, v in enumerate(row, 1):
+            cell = ws1.cell(row=r, column=j, value=v)
+            cell.border = border
+            cell.alignment = right if j in (4, 5, 6) else center
+            if j in (5, 6):
+                cell.number_format = money_fmt
+            if r % 2 == 0:
+                cell.fill = zebra_fill
+        r += 1
 
+    # ---- 充值记录 ----
     ws2 = wb.create_sheet("充值记录")
-    ws2.append(["客户编号", "客户名称", "充值日期", "充值金额(U)", "折算人民币(元)", "备注"])
-    for r in recharges:
-        c = cust_map.get(r.customer_id)
-        ws2.append([
+    headers2 = ["客户编号", "客户名称", "充值日期", "充值金额(U)", "折算人民币(元)", "备注"]
+    widths2 = [12, 16, 12, 14, 16, 24]
+    ws2.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers2))
+    tc2 = ws2.cell(row=1, column=1, value=f"充值记录（{period}）")
+    tc2.font = title_font
+    tc2.alignment = center
+    ws2.row_dimensions[1].height = 26
+    for j, h in enumerate(headers2, 1):
+        c = ws2.cell(row=2, column=j, value=h)
+        c.font = header_font
+        c.fill = header_fill
+        c.border = border
+        c.alignment = center
+        ws2.column_dimensions[get_column_letter(j)].width = widths2[j - 1]
+    ws2.row_dimensions[2].height = 20
+    r = 3
+    for rec in recharges:
+        c = cust_map.get(rec.customer_id)
+        row = [
             c.code if c else "", c.name if c else "",
-            str(r.recharge_date) if r.recharge_date else "",
-            float(r.amount_u) if r.amount_u is not None else 0,
-            float(r.amount_rmb) if r.amount_rmb is not None else 0,
-            r.note or "",
-        ])
+            str(rec.recharge_date) if rec.recharge_date else "",
+            float(rec.amount_u) if rec.amount_u is not None else 0,
+            float(rec.amount_rmb) if rec.amount_rmb is not None else 0,
+            rec.note or "",
+        ]
+        for j, v in enumerate(row, 1):
+            cell = ws2.cell(row=r, column=j, value=v)
+            cell.border = border
+            cell.alignment = right if j in (4, 5) else center
+            if j in (4, 5):
+                cell.number_format = money_fmt
+            if r % 2 == 0:
+                cell.fill = zebra_fill
+        r += 1
 
     bio = io.BytesIO()
     wb.save(bio)
@@ -2145,6 +2210,7 @@ def list_alerts(db: Session = Depends(get_db), _=Depends(get_current_user),
         data.append({
             "id": a.id, "type": a.type, "customer_id": a.customer_id,
             "customer_name": f"{c.code} {c.name}" if c else "", "task_name": a.task_name,
+            "order_no": a.order_no or "", "order_id": a.order_id,
             "content": a.content, "time": fmt_dt(a.trigger_time),
             "status": a.status,
         })
@@ -2233,15 +2299,43 @@ def run_alert_scan(db: Session):
         if not db.query(Alert).filter(Alert.type == "停单提醒", Alert.task_name == o.task_name,
                                       Alert.trigger_time >= datetime(today.year, today.month, today.day)).first():
             db.add(Alert(level="提醒", type="停单提醒", customer_id=o.customer_id,
-                         task_name=o.task_name,
+                         task_name=o.task_name, order_no=o.order_no, order_id=o.id,
                          content=f"停单日 {o.stop_date} 已到达，请确认是否停单",
+                         trigger_time=datetime.now()))
+    # 在执/待停订单截止时间过期提醒（类型：停单提醒）
+    for o in db.query(Order).filter(Order.status.in_(["在执", "待停"]),
+                                    Order.end_date.isnot(None),
+                                    Order.end_date <= today).all():
+        if not db.query(Alert).filter(Alert.type == "停单提醒", Alert.task_name == o.task_name,
+                                      Alert.trigger_time >= datetime(today.year, today.month, today.day)).first():
+            db.add(Alert(level="提醒", type="停单提醒", customer_id=o.customer_id,
+                         task_name=o.task_name, order_no=o.order_no, order_id=o.id,
+                         content=f"截止时间 {o.end_date} 已过期（{o.task_name or o.order_no}），请确认是否处理",
                          trigger_time=datetime.now()))
     # 账单预警
     for c in db.query(Customer).filter(Customer.ctype == "downstream", Customer.status == 1).all():
-        if c.warn_amount and c.warn_amount > 0 and (c.balance or 0) < c.warn_amount:
+        if c.warn_amount and (c.balance or 0) < c.warn_amount:
             if not db.query(Alert).filter(Alert.type == "账单预警", Alert.customer_id == c.id,
                                           Alert.status == "未处理").first():
                 db.add(Alert(level="预警", type="账单预警", customer_id=c.id,
                              content=f"余额 {c.balance} 已低于预警额度 {c.warn_amount}",
                              trigger_time=datetime.now()))
+    # 自动标记已解决的预警（订单已处理/余额已补足）
+    for a in db.query(Alert).filter(Alert.status == "未处理").all():
+        if a.type == "停单提醒":
+            o = None
+            if a.order_no:
+                o = db.query(Order).filter(Order.order_no == a.order_no).first()
+            if not o and a.task_name:
+                o = db.query(Order).filter(Order.task_name == a.task_name).first()
+            if not o:
+                a.status = "已处理"
+            elif o.status not in ("在执", "待停"):
+                a.status = "已处理"
+            elif (a.content or "").startswith("截止时间") and o.end_date and o.end_date > today:
+                a.status = "已处理"
+        elif a.type == "账单预警":
+            c = db.query(Customer).filter(Customer.id == a.customer_id).first()
+            if not c or not c.warn_amount or (c.balance or 0) >= c.warn_amount:
+                a.status = "已处理"
     db.commit()

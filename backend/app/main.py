@@ -63,6 +63,8 @@ def _migrate_schema():
         wash_cols = {c["name"] for c in insp.get_columns("wash_name")} if "wash_name" in insp.get_table_names() else set()
         cust_cols = {c["name"] for c in insp.get_columns("customer")} if "customer" in insp.get_table_names() else set()
         th_cols = {c["name"] for c in insp.get_columns("tidabiao_history")} if "tidabiao_history" in insp.get_table_names() else set()
+        cp_cols = {c["name"] for c in insp.get_columns("customer_price")} if "customer_price" in insp.get_table_names() else set()
+        alert_cols = {c["name"] for c in insp.get_columns("alert")} if "alert" in insp.get_table_names() else set()
         with engine.begin() as conn:
             for col, ddl in [
                 ("task_id", "VARCHAR(100)"),
@@ -129,6 +131,17 @@ def _migrate_schema():
             ]:
                 if col not in th_cols:
                     conn.execute(text(f"ALTER TABLE tidabiao_history ADD COLUMN {col} {ddl}"))
+            for col, ddl in [
+                ("operator_id", "INTEGER"),
+            ]:
+                if col not in cp_cols:
+                    conn.execute(text(f"ALTER TABLE customer_price ADD COLUMN {col} {ddl}"))
+            for col, ddl in [
+                ("order_no", "VARCHAR(50)"),
+                ("order_id", "INTEGER"),
+            ]:
+                if col not in alert_cols:
+                    conn.execute(text(f"ALTER TABLE alert ADD COLUMN {col} {ddl}"))
             # 去掉过严的唯一索引：同一任务可有多条不同 URL 的订单，重复判定交给「验重」逻辑（url+地区+运营商）
             conn.execute(text("DROP INDEX IF EXISTS uq_order_up_date_task"))
             conn.execute(text("DROP INDEX IF EXISTS uq_order_active_task"))
@@ -260,10 +273,10 @@ def _dedup_channels():
                         else:
                             cp.channel_id = keep.id
                     db.delete(dup)
-            # 清理客户单价重复（同客户+同渠道）
+            # 清理客户单价重复（同客户+同渠道+同运营商）
             cgroups = {}
             for cp in db.query(CustomerPrice).order_by(CustomerPrice.id).all():
-                cgroups.setdefault((cp.customer_id, cp.channel_id), []).append(cp)
+                cgroups.setdefault((cp.customer_id, cp.channel_id, cp.operator_id), []).append(cp)
             for k, rows in cgroups.items():
                 if len(rows) <= 1:
                     continue

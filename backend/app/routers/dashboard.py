@@ -70,7 +70,7 @@ def trend(db: Session = Depends(get_db), _=Depends(get_current_user),
     data = []
     for dd in dates:
         in_qty = db.query(func.count(DailyData.id)).filter(DailyData.biz_date == dd).scalar() or 0
-        out_qty = db.query(func.coalesce(func.sum(Order.qty), 0)).filter(Order.start_date == dd).scalar() or 0
+        out_qty = db.query(func.coalesce(func.sum(Bill.purchase_qty), 0)).filter(Bill.biz_date == dd).scalar() or 0
         sales = db.query(func.coalesce(func.sum(Bill.sales), 0)).filter(Bill.biz_date == dd).scalar() or 0
         profit = db.query(func.coalesce(func.sum(Bill.profit), 0)).filter(Bill.biz_date == dd).scalar() or 0
         data.append({"date": dd.strftime("%m-%d"), "in_qty": int(in_qty), "out_qty": int(out_qty),
