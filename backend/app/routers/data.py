@@ -19,7 +19,7 @@ from ..models import (DailyData, Fund, Bill, Alert, Customer, Channel, Category,
 from ..pagination import paginate, ok_page
 from ..excel import xlsx_response
 from ..utils import fmt_dt
-from ..schemas import BatchStopBody, GenerateBody
+from ..schemas import BatchStopBody, GenerateBody, ExtractBody
 
 router = APIRouter(prefix="/api", tags=["data"])
 
@@ -40,8 +40,10 @@ def list_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
                q: str = "", phone: str = "", upstream: str = "", task_id: str = "",
                task_name: str = "", province: str = "", city: str = "",
                operator: str = "", cat1: str = "", cat2: str = "", platform: str = "",
-               source_file: str = "", customer: str = "", secondary_agent: str = "",
-               channel: str = "", biz_date: str = "", name: str = "", page: int = 1, per_page: int = 10):
+                source_file: str = "", customer: str = "", secondary_agent: str = "",
+                channel: str = "", biz_date: str = "", name: str = "",
+                start_date: str = "", end_date: str = "",
+                page: int = 1, per_page: int = 10):
     qy = db.query(DailyData)
     if q:
         like = f"%{q}%"
@@ -83,6 +85,14 @@ def list_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(DailyData.name.like(f"%{name}%"))
     if biz_date:
         qy = qy.filter(DailyData.biz_date == biz_date)
+    if start_date:
+        sd = _parse_biz_date(start_date)
+        if sd:
+            qy = qy.filter(DailyData.biz_date >= sd)
+    if end_date:
+        ed = _parse_biz_date(end_date)
+        if ed:
+            qy = qy.filter(DailyData.biz_date <= ed)
     total, rows = paginate(qy.order_by(DailyData.id.desc()), page, per_page)
     return ok_page([_daily_dict(d) for d in rows], total)
 
@@ -104,13 +114,35 @@ def _daily_dict(d: DailyData):
     }
 
 
+DAILY_EXPORT_COLS = [
+    ("biz_date", "数据日期", lambda d: str(d.biz_date) if d.biz_date else ""),
+    ("upstream", "甲方", lambda d: d.upstream or ""),
+    ("task_id", "任务id", lambda d: d.task_id or ""),
+    ("task_name", "任务名", lambda d: d.task_name or ""),
+    ("phone", "手机号", lambda d: d.phone or ""),
+    ("name", "姓名", lambda d: d.name or ""),
+    ("province", "省", lambda d: d.province or ""),
+    ("city", "市", lambda d: d.city or ""),
+    ("operator", "运营商", lambda d: d.operator or ""),
+    ("cat1", "一级品类", lambda d: d.cat1 or ""),
+    ("cat2", "二级品类", lambda d: d.cat2 or ""),
+    ("platform", "平台", lambda d: d.platform or ""),
+    ("customer", "一级代理", lambda d: d.customer or ""),
+    ("secondary_agent", "二级代理", lambda d: d.secondary_agent or ""),
+    ("channel", "渠道", lambda d: d.channel or ""),
+    ("source_file", "来源文件名", lambda d: d.source_file or ""),
+    ("created_at", "创建时间", lambda d: fmt_dt(d.created_at)),
+    ("updated_at", "更新时间", lambda d: fmt_dt(d.updated_at)),
+]
+
+
 @router.get("/daily-data/export")
 def export_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
                  q: str = "", phone: str = "", upstream: str = "", task_id: str = "",
                  task_name: str = "", province: str = "", city: str = "",
                  operator: str = "", cat1: str = "", cat2: str = "", platform: str = "",
                  source_file: str = "", customer: str = "", secondary_agent: str = "",
-                 channel: str = "", biz_date: str = "", name: str = ""):
+                 channel: str = "", biz_date: str = "", name: str = "", cols: str = ""):
     qy = db.query(DailyData)
     if q:
         like = f"%{q}%"
@@ -153,15 +185,10 @@ def export_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
     if biz_date:
         qy = qy.filter(DailyData.biz_date == biz_date)
     rows = qy.order_by(DailyData.id.desc()).all()
-    headers = ["数据日期", "甲方", "任务id", "任务名", "手机号", "姓名", "省", "市", "运营商",
-               "一级品类", "二级品类", "平台",
-               "一级代理", "二级代理", "渠道", "来源文件名", "创建时间", "更新时间"]
-    data = [[str(d.biz_date) if d.biz_date else "", d.upstream or "", d.task_id or "",
-             d.task_name or "", d.phone or "", d.name or "", d.province or "", d.city or "",
-             d.operator or "", d.cat1 or "", d.cat2 or "", d.platform or "",
-             d.customer or "", d.secondary_agent or "",
-             d.channel or "", d.source_file or "",
-             fmt_dt(d.created_at), fmt_dt(d.updated_at)] for d in rows]
+    selected = [c for c in (cols or "").split(",") if c.strip()]
+    spec = [(k, l, fn) for (k, l, fn) in DAILY_EXPORT_COLS if not selected or k in selected]
+    headers = [l for _, l, _ in spec]
+    data = [[fn(d) for _, _, fn in spec] for d in rows]
     return xlsx_response(headers, data, "日活数据.xlsx", "日活数据")
 
 
@@ -2332,6 +2359,127 @@ def distinct_values(db: Session = Depends(get_db), _=Depends(get_current_user),
     col = getattr(table, field)
     rows = db.query(col).filter(col.isnot(None), col != "").distinct().order_by(col).all()
     return {"code": 0, "data": [r[0] for r in rows], "msg": "ok"}
+
+
+def _apply_daily_filters(qy, f):
+    f = f or {}
+    if f.get("q"):
+        like = f"%{f['q']}%"
+        qy = qy.filter(or_(DailyData.phone.like(like), DailyData.task_name.like(like),
+                           DailyData.upstream.like(like), DailyData.task_id.like(like)))
+    if f.get("phone"):
+        qy = qy.filter(DailyData.phone.like(f"%{f['phone']}%"))
+    if f.get("upstream"):
+        qy = qy.filter(DailyData.upstream.like(f"%{f['upstream']}%"))
+    if f.get("task_id"):
+        qy = qy.filter(DailyData.task_id.like(f"%{f['task_id']}%"))
+    if f.get("task_name"):
+        qy = qy.filter(DailyData.task_name.like(f"%{f['task_name']}%"))
+    if f.get("province"):
+        provs = [p for p in f["province"].split(",") if p.strip()]
+        if provs:
+            qy = qy.filter(or_(*[DailyData.province.like(f"%{p}%") for p in provs]))
+    if f.get("city"):
+        cities = [c for c in f["city"].split(",") if c.strip()]
+        if cities:
+            qy = qy.filter(or_(*[DailyData.city.like(f"%{c}%") for c in cities]))
+    if f.get("operator"):
+        qy = qy.filter(DailyData.operator.like(f"%{f['operator']}%"))
+    if f.get("cat1"):
+        qy = qy.filter(DailyData.cat1.like(f"%{f['cat1']}%"))
+    if f.get("cat2"):
+        qy = qy.filter(DailyData.cat2.like(f"%{f['cat2']}%"))
+    if f.get("platform"):
+        qy = qy.filter(DailyData.platform.like(f"%{f['platform']}%"))
+    if f.get("customer"):
+        qy = qy.filter(DailyData.customer.like(f"%{f['customer']}%"))
+    if f.get("secondary_agent"):
+        qy = qy.filter(DailyData.secondary_agent.like(f"%{f['secondary_agent']}%"))
+    if f.get("channel"):
+        qy = qy.filter(DailyData.channel.like(f"%{f['channel']}%"))
+    if f.get("source_file"):
+        qy = qy.filter(DailyData.source_file.like(f"%{f['source_file']}%"))
+    if f.get("name"):
+        qy = qy.filter(DailyData.name.like(f"%{f['name']}%"))
+    if f.get("biz_date"):
+        qy = qy.filter(DailyData.biz_date == f["biz_date"])
+    return qy
+
+
+@router.post("/daily-data/extract")
+def extract_daily(body: ExtractBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """单独抽取：按条件/时间段抽取日活数据，生成数据文件与账单文件，并单独记一笔账单"""
+    from urllib.parse import quote
+    from fastapi.responses import Response
+    import zipfile
+    import openpyxl
+
+    qy = _apply_daily_filters(db.query(DailyData), body.filters)
+    if body.start_date:
+        sd = _parse_biz_date(body.start_date)
+        if sd:
+            qy = qy.filter(DailyData.biz_date >= sd)
+    if body.end_date:
+        ed = _parse_biz_date(body.end_date)
+        if ed:
+            qy = qy.filter(DailyData.biz_date <= ed)
+    rows = qy.order_by(DailyData.id.desc()).all()
+    if body.limit and body.limit > 0:
+        rows = rows[:body.limit]
+    if not rows:
+        raise HTTPException(status_code=404, detail="没有符合条件的数据")
+
+    qty = len(rows)
+    price = float(body.price or 0)
+    sales = round(price * qty, 2)
+
+    cust = db.query(Customer).filter(Customer.id == body.customer_id).first() if body.customer_id else None
+    target_label = (f"{cust.code} {cust.name}" if cust else (body.target_name or "其他人"))
+
+    balance = 0
+    if cust is not None:
+        balance = round((float(cust.balance) if cust.balance is not None else 0) - sales, 2)
+        cust.balance = balance
+    db.add(Bill(customer_id=body.customer_id, biz_date=date.today(),
+                purchase_qty=qty, sales=sales, balance=balance,
+                profit=sales, bill_type="单独抽取",
+                target_name=(body.target_name or None) if not cust else None))
+    db.commit()
+
+    bio = io.BytesIO()
+    with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zf:
+        dwb = openpyxl.Workbook()
+        dws = dwb.active
+        dws.title = "抽取数据"
+        dheaders = ["数据日期", "甲方", "任务id", "任务名", "手机号", "姓名", "省", "市", "运营商", "渠道", "平台"]
+        dws.append(dheaders)
+        for d in rows:
+            dws.append([str(d.biz_date) if d.biz_date else "", d.upstream or "", d.task_id or "",
+                        d.task_name or "", d.phone or "", d.name or "", d.province or "", d.city or "",
+                        d.operator or "", d.channel or "", d.platform or ""])
+        dbio = io.BytesIO()
+        dwb.save(dbio)
+        zf.writestr("抽取数据.xlsx", dbio.getvalue())
+
+        bwb = openpyxl.Workbook()
+        bws = bwb.active
+        bws.title = "账单"
+        bws.append(["收款对象", target_label])
+        bws.append(["日期", date.today().strftime("%Y-%m-%d")])
+        bws.append(["进货量", qty])
+        bws.append(["单价(元/条)", price])
+        bws.append(["销售金额(元)", sales])
+        bws.append(["利润(元)", sales])
+        if body.note:
+            bws.append(["备注", body.note])
+        bbio = io.BytesIO()
+        bwb.save(bbio)
+        zf.writestr("账单.xlsx", bbio.getvalue())
+
+    bio.seek(0)
+    filename = f"单独抽取-{date.today().strftime('%Y%m%d')}.zip"
+    return Response(content=bio.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
 
 
 def run_alert_scan(db: Session):

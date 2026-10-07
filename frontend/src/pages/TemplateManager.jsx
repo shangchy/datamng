@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { api, getToken, downloadFile } from '../api'
-import { Modal, Badge, useToast, useConfirm, Loading } from '../components/ui'
+import { Modal, Badge, useToast, useConfirm, Loading, ClearableInput } from '../components/ui'
 
 function RichTextEditor({ value, onChange }) {
   const ref = useRef(null)
@@ -115,7 +115,7 @@ export default function TemplateManager() {
       <input type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} ref={fileRef}
         onChange={e => { if (e.target.files[0]) upload(e.target.files[0]).catch(err => showError(err.message)); e.target.value = '' }} />
       <div className="toolbar">
-        <input placeholder="名称 / 编号 / 文件名" style={{ width: 220 }} value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') search() }} />
+        <ClearableInput placeholder="名称 / 编号 / 文件名" style={{ width: 220 }} value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') search() }} />
         <button className="btn" onClick={search}>查询</button>
         <span className="spacer" />
         <button className="btn primary" onClick={openCreate}>+ 新增模版</button>
@@ -153,7 +153,7 @@ export default function TemplateManager() {
               <option value="订单">订单</option><option value="出数">出数</option><option value="账单">账单</option><option value="其他">其他</option>
             </select></div>
           <div className="field" style={{ marginBottom: 10 }}><label>模版名称</label>
-            <input value={modal.form.ttype} onChange={e => setF('ttype', e.target.value)} placeholder="如 提单表 / 出数模版A" /></div>
+            <ClearableInput value={modal.form.ttype} onChange={e => setF('ttype', e.target.value)} placeholder="如 提单表 / 出数模版A" /></div>
           <div className="field" style={{ marginBottom: 14 }}><label>模版编号</label>
             <input value={modal.form.code} disabled placeholder={modal.isNew ? '保存后自动生成' : ''} /></div>
           <div className="field" style={{ marginBottom: 14 }}><label>说明（模版用途、填写注意事项等）</label>

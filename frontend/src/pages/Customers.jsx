@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
-import { Modal, Badge, useToast, useConfirm } from '../components/ui'
+import { Modal, Badge, useToast, useConfirm, ClearableInput } from '../components/ui'
 import FilterBar, { buildQuery } from '../components/FilterBar'
 import Pagination from '../components/Pagination'
 
@@ -75,8 +75,8 @@ export default function Customers() {
   }
 
   async function saveRecharge() {
-    const hasU = recharge.amount_u && Number(recharge.amount_u) > 0
-    const hasRmb = recharge.amount_rmb && Number(recharge.amount_rmb) > 0
+    const hasU = recharge.amount_u !== '' && recharge.amount_u != null && Number(recharge.amount_u) !== 0
+    const hasRmb = recharge.amount_rmb !== '' && recharge.amount_rmb != null && Number(recharge.amount_rmb) !== 0
     if ((!hasU && !hasRmb) || !recharge.recharge_date) { showError('请填写充值金额和日期'); return }
     try {
       await api.post(`/api/customers/${recharge.customer_id}/recharges`, {
@@ -204,7 +204,7 @@ export default function Customers() {
             <div className="field"><label>充值日期</label><input type="date" value={recharge.recharge_date} onChange={e => setRecharge({ ...recharge, recharge_date: e.target.value })} /></div>
           </div>
           <div className="row">
-            <div className="field"><label>备注</label><input value={recharge.note} onChange={e => setRecharge({ ...recharge, note: e.target.value })} /></div>
+            <div className="field"><label>备注</label><ClearableInput value={recharge.note} onChange={e => setRecharge({ ...recharge, note: e.target.value })} /></div>
             <div className="field" style={{ display: 'flex', alignItems: 'flex-end' }}><button className="btn" onClick={saveRate}>保存汇率</button></div>
           </div>
           <div className="foot">
@@ -218,12 +218,12 @@ export default function Customers() {
         <Modal title={modal === 'create' ? '新增客户' : '编辑客户'} onClose={() => setModal(null)}>
           <div className="sticky-head">
             <div className="row">
-              <div className="field"><label>客户编号</label><input value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} /></div>
-              <div className="field"><label>客户名称</label><input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
+              <div className="field"><label>客户编号</label><ClearableInput value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} /></div>
+              <div className="field"><label>客户名称</label><ClearableInput value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
             </div>
             <div className="row">
               <div className="field"><label>类型</label><select value={form.ctype} onChange={e => setForm({ ...form, ctype: e.target.value })}><option value="downstream">下游</option><option value="upstream">上游</option></select></div>
-              <div className="field"><label>飞机账号ID</label><input value={form.tg_id} onChange={e => setForm({ ...form, tg_id: e.target.value })} /></div>
+              <div className="field"><label>飞机账号ID</label><ClearableInput value={form.tg_id} onChange={e => setForm({ ...form, tg_id: e.target.value })} /></div>
             </div>
             <div className="row">
               <div className="field"><label>预警额度</label><input type="number" value={form.warn_amount} onChange={e => setForm({ ...form, warn_amount: e.target.value })} /></div>

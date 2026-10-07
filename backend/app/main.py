@@ -65,6 +65,7 @@ def _migrate_schema():
         th_cols = {c["name"] for c in insp.get_columns("tidabiao_history")} if "tidabiao_history" in insp.get_table_names() else set()
         cp_cols = {c["name"] for c in insp.get_columns("customer_price")} if "customer_price" in insp.get_table_names() else set()
         alert_cols = {c["name"] for c in insp.get_columns("alert")} if "alert" in insp.get_table_names() else set()
+        bill_cols = {c["name"] for c in insp.get_columns("bill")} if "bill" in insp.get_table_names() else set()
         with engine.begin() as conn:
             for col, ddl in [
                 ("task_id", "VARCHAR(100)"),
@@ -142,6 +143,40 @@ def _migrate_schema():
             ]:
                 if col not in alert_cols:
                     conn.execute(text(f"ALTER TABLE alert ADD COLUMN {col} {ddl}"))
+            for col, ddl in [
+                ("bill_type", "VARCHAR(20)"),
+                ("target_name", "VARCHAR(200)"),
+            ]:
+                if col not in bill_cols:
+                    conn.execute(text(f"ALTER TABLE bill ADD COLUMN {col} {ddl}"))
+            # bill.customer_id 改为可空（给「其他人」单独抽取）
+            bill_customer_col = next((c for c in insp.get_columns("bill") if c["name"] == "customer_id"), None) if "bill" in insp.get_table_names() else None
+            if bill_customer_col is not None and not bill_customer_col.get("nullable"):
+                if engine.dialect.name == "postgresql":
+                    conn.execute(text("ALTER TABLE bill ALTER COLUMN customer_id DROP NOT NULL"))
+                else:
+                    # SQLite：重建 bill 表使 customer_id 可空
+                    conn.execute(text("""
+                        CREATE TABLE IF NOT EXISTS bill_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            customer_id INTEGER,
+                            biz_date DATE NOT NULL,
+                            purchase_qty INTEGER DEFAULT 0,
+                            sales NUMERIC(14,2) DEFAULT 0,
+                            balance NUMERIC(14,2) DEFAULT 0,
+                            profit NUMERIC(14,2) DEFAULT 0,
+                            bill_type VARCHAR(20) DEFAULT '分数据',
+                            target_name VARCHAR(200),
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
+                    conn.execute(text("""
+                        INSERT INTO bill_new (id, customer_id, biz_date, purchase_qty, sales, balance, profit, bill_type, target_name, created_at)
+                        SELECT id, customer_id, biz_date, purchase_qty, sales, balance, profit,
+                               COALESCE(bill_type, '分数据'), target_name, created_at FROM bill
+                    """))
+                    conn.execute(text("DROP TABLE bill"))
+                    conn.execute(text("ALTER TABLE bill_new RENAME TO bill"))
             # 去掉过严的唯一索引：同一任务可有多条不同 URL 的订单，重复判定交给「验重」逻辑（url+地区+运营商）
             conn.execute(text("DROP INDEX IF EXISTS uq_order_up_date_task"))
             conn.execute(text("DROP INDEX IF EXISTS uq_order_active_task"))

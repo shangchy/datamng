@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, setAuth } from '../api'
+import { ClearableInput } from '../components/ui'
 
 const FLOAT_ITEMS = [
   { text: '订单管理', left: 5, top: 16, size: 16, delay: 0 },
@@ -58,7 +59,7 @@ export default function Login() {
         <h1><img src="/logo.jpeg" alt="logo" />LM订单管理系统</h1>
         <div className="sub">订单 · 客户 · 数据 全流程管理</div>
         <label>用户名</label>
-        <input value={username} onChange={e => setUsername(e.target.value)} placeholder="用户名" />
+        <ClearableInput value={username} onChange={e => setUsername(e.target.value)} placeholder="用户名" />
         <label>密码</label>
         <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="密码" />
         {err && <div style={{ color: 'var(--red)', fontSize: 12, marginTop: 8 }}>{err}</div>}

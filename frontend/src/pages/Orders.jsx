@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, downloadFile, getToken, getUser, uploadFile } from '../api'
-import { Modal, Badge, useToast, useConfirm, Loading } from '../components/ui'
+import { Modal, Badge, useToast, useConfirm, Loading, ClearableInput } from '../components/ui'
 import { useColumnConfig } from '../components/columns'
 import FilterBar, { buildQuery } from '../components/FilterBar'
 import Pagination from '../components/Pagination'
@@ -528,7 +528,7 @@ export default function Orders({ variant = 'orders' }) {
               <select value={form.upstream_id} onChange={e => setForm({ ...form, upstream_id: e.target.value })}>
                 <option value="">请选择</option>{upstreams.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select></div>
-            <div className="field"><label className="required">任务名</label><input value={form.task_name} onChange={e => setForm({ ...form, task_name: e.target.value })} /></div>
+            <div className="field"><label className="required">任务名</label><ClearableInput value={form.task_name} onChange={e => setForm({ ...form, task_name: e.target.value })} /></div>
           </div>
           <div className="row">
             <div className="field"><label className="required">更新日期</label><input type="date" value={form.order_date} onChange={e => setForm({ ...form, order_date: e.target.value })} /></div>
@@ -539,7 +539,7 @@ export default function Orders({ variant = 'orders' }) {
               <select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}>
                 <option value="">请选择</option>{customers.map(c => <option key={c.id} value={c.id}>{c.code} {c.name}</option>)}
               </select></div>
-            <div className="field"><label>二级代理</label><input value={form.secondary_agent} onChange={e => setForm({ ...form, secondary_agent: e.target.value })} placeholder="如 罗/无" /></div>
+            <div className="field"><label>二级代理</label><ClearableInput value={form.secondary_agent} onChange={e => setForm({ ...form, secondary_agent: e.target.value })} placeholder="如 罗/无" /></div>
           </div>
           <div className="row">
             <div className="field"><label>渠道</label>
@@ -551,12 +551,12 @@ export default function Orders({ variant = 'orders' }) {
                 <option value="">请选择</option>{operators.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select></div>
             <div className="field"><label>平台</label>
-              <input list="platform-list" value={form.platform} onChange={e => setForm({ ...form, platform: e.target.value })} placeholder="输入搜索或选择平台" />
+              <ClearableInput list="platform-list" value={form.platform} onChange={e => setForm({ ...form, platform: e.target.value })} placeholder="输入搜索或选择平台" />
               <datalist id="platform-list">{platforms.map(p => <option key={p.id} value={p.name} />)}</datalist>
             </div>
           </div>
           <div className="row">
-            <div className="field"><label>分组</label><input value={form.group_name} onChange={e => setForm({ ...form, group_name: e.target.value })} placeholder="分组文本" /></div>
+            <div className="field"><label>分组</label><ClearableInput value={form.group_name} onChange={e => setForm({ ...form, group_name: e.target.value })} placeholder="分组文本" /></div>
             <div className="field"><label>模版编号</label>
               <select value={form.tpl_id} onChange={e => setForm({ ...form, tpl_id: e.target.value })}>
                 <option value="">请选择模版</option>
@@ -771,7 +771,7 @@ export default function Orders({ variant = 'orders' }) {
       {groupModal && (
         <Modal title={`批量修改小组（${selected.length} 单）`} onClose={() => setGroupModal(false)}>
           <div className="field" style={{ marginBottom: 14 }}><label>小组</label>
-            <input value={groupVal} onChange={e => setGroupVal(e.target.value)} placeholder="留空则清空小组" /></div>
+            <ClearableInput value={groupVal} onChange={e => setGroupVal(e.target.value)} placeholder="留空则清空小组" /></div>
           <div className="foot">
             <button className="btn" onClick={() => setGroupModal(false)}>取消</button>
             <button className="btn primary" onClick={batchGroup}>保存</button>

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, getToken, getUser, downloadFile, uploadFile } from '../api'
-import { Modal, Badge, useToast, useConfirm, Loading } from '../components/ui'
+import { Modal, Badge, useToast, useConfirm, Loading, ClearableInput } from '../components/ui'
 import { useColumnConfig, downloadCsv } from '../components/columns'
 import FilterBar, { buildQuery } from '../components/FilterBar'
 import Pagination from '../components/Pagination'
@@ -165,6 +165,8 @@ export default function SimpleList({ kind }) {
   const [stopAlert, setStopAlert] = useState(null)
   const [importWarn, setImportWarn] = useState(null) // {title, items:[{task_id,task_name,channel}], confirm:boolean}
   const [pendingImportFiles, setPendingImportFiles] = useState(null)
+  const [extractModal, setExtractModal] = useState(false)
+  const [extractForm, setExtractForm] = useState({ start_date: '', end_date: '', limit: 100, target_type: '代理', customer_id: '', target_name: '', price: '', note: '' })
 
   useEffect(() => {
     if (kind === 'alerts') {
@@ -373,8 +375,8 @@ export default function SimpleList({ kind }) {
   }
   async function saveRecharge() {
     const a = rechargeAlert
-    const hasU = a.amount_u && Number(a.amount_u) > 0
-    const hasRmb = a.amount_rmb && Number(a.amount_rmb) > 0
+    const hasU = a.amount_u !== '' && a.amount_u != null && Number(a.amount_u) !== 0
+    const hasRmb = a.amount_rmb !== '' && a.amount_rmb != null && Number(a.amount_rmb) !== 0
     if ((!hasU && !hasRmb) || !a.recharge_date) { showError('请填写充值金额和日期'); return }
     try {
       await api.post(`/api/customers/${a.customer_id}/recharges`, {
@@ -466,9 +468,51 @@ export default function SimpleList({ kind }) {
   function exportExcel() {
     const qs = buildQuery(filters)
     if (kind === 'fund') { downloadFile('/api/fund/export?' + qs).catch(e => showError(e.message)); toast('正在导出...'); return }
-    if (kind === 'daily') { downloadFile('/api/daily-data/export?' + qs).catch(e => showError(e.message)); toast('正在导出...'); return }
+    if (kind === 'daily') {
+      const colKeys = cols.map(c => c.k).join(',')
+      const sep = qs ? '&' : ''
+      downloadFile(`/api/daily-data/export?${qs}${sep}cols=${encodeURIComponent(colKeys)}`).catch(e => showError(e.message)); toast('正在导出...'); return
+    }
     downloadCsv(`${cfg.title}.csv`, cfg.cols, rows)
     toast('已导出')
+  }
+
+  async function doExtract() {
+    if (!extractForm.price && Number(extractForm.price) !== 0) { showError('请填写单价'); return }
+    if (!extractForm.limit || Number(extractForm.limit) <= 0) { showError('请填写抽取条数'); return }
+    if (extractForm.target_type === '代理' && !extractForm.customer_id) { showError('请选择代理'); return }
+    if (extractForm.target_type === '其他人' && !(extractForm.target_name || '').trim()) { showError('请填写收款对象名称'); return }
+    const body = {
+      filters,
+      start_date: extractForm.start_date,
+      end_date: extractForm.end_date,
+      limit: Number(extractForm.limit) || 0,
+      customer_id: extractForm.target_type === '代理' ? (Number(extractForm.customer_id) || null) : null,
+      target_name: extractForm.target_type === '其他人' ? extractForm.target_name : '',
+      price: Number(extractForm.price) || 0,
+      note: extractForm.note || '',
+    }
+    try {
+      const res = await fetch('/api/daily-data/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getToken() },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.msg || d.detail || '抽取失败')
+      }
+      const blob = await res.blob()
+      const cd = res.headers.get('Content-Disposition') || ''
+      const m = cd.match(/filename\*=UTF-8''(.+)/)
+      const filename = m ? decodeURIComponent(m[1]) : '单独抽取.zip'
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(a.href)
+      toast('抽取完成，已下载数据与账单'); setExtractModal(false)
+    } catch (e) { showError(e.message) }
   }
 
   async function importFile(file) {
@@ -660,7 +704,14 @@ export default function SimpleList({ kind }) {
       <input type="file" accept=".csv,.xlsx,.xls" style={{ display: 'none' }} ref={washFileRef} onChange={e => { if (e.target.files[0]) importWash().catch(err => showError(err.message)); e.target.value = '' }} />
       <div className="toolbar">
         <div className={`filter-wrap ${filterCollapsed ? 'collapsed' : ''}`}>
-          <FilterBar cols={cfg.cols} filters={filters} setFilters={handleSetFilters} onSearch={search} fieldOptions={cascadeFieldOptions()} actions={false} />
+          {kind === 'daily' && (
+            <>
+              <input type="date" placeholder="数据日期 开始" value={filters.start_date || ''} onChange={e => setFilters({ ...filters, start_date: e.target.value })} />
+              <span className="range-sep">—</span>
+              <input type="date" placeholder="数据日期 结束" value={filters.end_date || ''} onChange={e => setFilters({ ...filters, end_date: e.target.value })} />
+            </>
+          )}
+          <FilterBar cols={kind === 'daily' ? cfg.cols.filter(c => c.k !== 'biz_date') : cfg.cols} filters={filters} setFilters={handleSetFilters} onSearch={search} fieldOptions={cascadeFieldOptions()} actions={false} />
         </div>
         <div className="toolbar-actions">
         <button className="btn primary" onClick={() => search()}>查询</button>
@@ -709,7 +760,7 @@ export default function SimpleList({ kind }) {
             <tbody>
               {sortedRows().map((r, i) => (
                 <tr key={r.id}>
-                  {cfg.showSeq && <td className="num">{i + 1}</td>}
+                  {cfg.showSeq && <td className="num">{(page - 1) * perPage + i + 1}</td>}
                   {showBatchDel && <td><input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} /></td>}
                   {hasRowOps && <td className="ops">
                     {cfg.detail && <button className="btn small" onClick={() => viewBillDetail(r.id)}>详情</button>}
@@ -735,7 +786,7 @@ export default function SimpleList({ kind }) {
       {simpleModal && (
         <Modal title="新增" onClose={() => setSimpleModal(null)}>
           <div className="row">
-            <div className="field"><label>名称</label><input value={simpleModal.name} onChange={e => setSimpleModal({ ...simpleModal, name: e.target.value })} /></div>
+            <div className="field"><label>名称</label><ClearableInput value={simpleModal.name} onChange={e => setSimpleModal({ ...simpleModal, name: e.target.value })} /></div>
             <div className="field"><label>状态</label><select value={simpleModal.status} onChange={e => setSimpleModal({ ...simpleModal, status: Number(e.target.value) })}><option value={1}>启用</option><option value={0}>停用</option></select></div>
           </div>
           <div className="foot"><button className="btn" onClick={() => setSimpleModal(null)}>取消</button><button className="btn primary" onClick={addSimple}>保存</button></div>
@@ -780,6 +831,39 @@ export default function SimpleList({ kind }) {
         </Modal>
       )}
 
+      {extractModal && (
+        <Modal title="单独抽取" onClose={() => setExtractModal(false)}>
+          <div className="note">按当前查询条件抽取日活数据，生成「抽取数据」与「账单」文件；给代理时扣减余额，给其他人只出账单。</div>
+          <div className="row">
+            <div className="field"><label>时间段 开始</label><input type="date" value={extractForm.start_date} onChange={e => setExtractForm({ ...extractForm, start_date: e.target.value })} /></div>
+            <div className="field"><label>时间段 结束</label><input type="date" value={extractForm.end_date} onChange={e => setExtractForm({ ...extractForm, end_date: e.target.value })} /></div>
+          </div>
+          <div className="row">
+            <div className="field"><label className="required">抽取条数</label><input type="number" value={extractForm.limit} onChange={e => setExtractForm({ ...extractForm, limit: e.target.value })} /></div>
+            <div className="field"><label className="required">单价(元/条)</label><input type="number" step="0.01" value={extractForm.price} onChange={e => setExtractForm({ ...extractForm, price: e.target.value })} /></div>
+          </div>
+          <div className="row">
+            <div className="field"><label>收款对象</label>
+              <select value={extractForm.target_type} onChange={e => setExtractForm({ ...extractForm, target_type: e.target.value })}>
+                <option value="代理">代理</option><option value="其他人">其他人</option>
+              </select></div>
+            {extractForm.target_type === '代理' ? (
+              <div className="field"><label className="required">选择代理</label>
+                <select value={extractForm.customer_id} onChange={e => setExtractForm({ ...extractForm, customer_id: e.target.value })}>
+                  <option value="">请选择</option>{customers.map(c => <option key={c.id} value={c.id}>{c.code} {c.name}</option>)}
+                </select></div>
+            ) : (
+              <div className="field"><label className="required">收款对象名称</label><ClearableInput value={extractForm.target_name} onChange={e => setExtractForm({ ...extractForm, target_name: e.target.value })} placeholder="如 张某某" /></div>
+            )}
+          </div>
+          <div className="field" style={{ marginBottom: 12 }}><label>备注</label><ClearableInput value={extractForm.note} onChange={e => setExtractForm({ ...extractForm, note: e.target.value })} /></div>
+          <div className="foot">
+            <button className="btn" onClick={() => setExtractModal(false)}>取消</button>
+            <button className="btn primary" onClick={() => doExtract().catch(e => showError(e.message))}>抽取并记账</button>
+          </div>
+        </Modal>
+      )}
+
       {delByDateModal && (
         <Modal title="按日期删除日活数据" onClose={() => setDelByDateModal(false)}>
           <div className="note">删除所选数据日期下的全部日活数据（仅管理员可用，不可恢复）。</div>
@@ -804,7 +888,7 @@ export default function SimpleList({ kind }) {
           </div>
           <div className="row">
             <div className="field"><label>充值日期</label><input type="date" value={rechargeAlert.recharge_date} onChange={e => setRechargeAlert({ ...rechargeAlert, recharge_date: e.target.value })} /></div>
-            <div className="field"><label>备注</label><input value={rechargeAlert.note} onChange={e => setRechargeAlert({ ...rechargeAlert, note: e.target.value })} /></div>
+            <div className="field"><label>备注</label><ClearableInput value={rechargeAlert.note} onChange={e => setRechargeAlert({ ...rechargeAlert, note: e.target.value })} /></div>
           </div>
           <div className="foot">
             <button className="btn" onClick={() => setRechargeAlert(null)}>取消</button>
@@ -999,7 +1083,7 @@ export default function SimpleList({ kind }) {
       {urlModal && (
         <Modal title={urlModal.mode === 'edit' ? '编辑配件' : '新增配件'} onClose={() => setUrlModal(null)} wide>
           <div className="row">
-            <div className="field"><label>名称</label><input value={urlModal.name} onChange={e => setUrlField('name', e.target.value)} /></div>
+            <div className="field"><label>名称</label><ClearableInput value={urlModal.name} onChange={e => setUrlField('name', e.target.value)} /></div>
             <div className="field"><label>等级</label><select value={urlModal.level} onChange={e => setUrlField('level', e.target.value)}><option>高</option><option>中</option><option>低</option></select></div>
           </div>
           <div className="row">
@@ -1019,7 +1103,7 @@ export default function SimpleList({ kind }) {
           <div className="field" style={{ marginBottom: 8 }}><label>URL（每行一个）</label></div>
           {urlModal.urls.map((u, i) => (
             <div className="row" key={i}>
-              <div className="field" style={{ flex: 1 }}><input placeholder="https://..." value={u} onChange={e => setUrlRow(i, e.target.value)} /></div>
+              <div className="field" style={{ flex: 1 }}><ClearableInput placeholder="https://..." value={u} onChange={e => setUrlRow(i, e.target.value)} /></div>
               <button className="btn small danger" style={{ alignSelf: 'center' }} onClick={() => delUrlRow(i)}>删除</button>
             </div>
           ))}

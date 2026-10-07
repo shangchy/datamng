@@ -3,7 +3,7 @@
 
 def paginate(query, page: int = 1, per_page: int = 10):
     page = max(1, page)
-    per_page = min(max(1, per_page), 500)
+    per_page = min(max(1, per_page), 10000)
     total = query.count()
     rows = query.offset((page - 1) * per_page).limit(per_page).all()
     return total, rows

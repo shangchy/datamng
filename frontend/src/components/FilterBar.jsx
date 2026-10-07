@@ -1,4 +1,5 @@
 import React from 'react'
+import { ClearableInput } from './ui'
 
 const ENUM_COLS = {
   status: ['未提', '在执', '待停', '已停', '改单', '启用', '停用', '已停止', '未处理', '已处理'],
@@ -23,7 +24,7 @@ export default function FilterBar({ cols, filters, setFilters, onSearch, fieldOp
     <>
       {list.map(c => {
         if (TEXT_COLS.includes(c.k)) {
-          return <input key={c.k} autoComplete="off" placeholder={c.l} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
+          return <ClearableInput key={c.k} autoComplete="off" placeholder={c.l} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
         }
         const enumOpts = ENUM_COLS[c.k]
         if (enumOpts) {
@@ -43,7 +44,7 @@ export default function FilterBar({ cols, filters, setFilters, onSearch, fieldOp
           const id = `dl-${c.k}`
           return (
             <React.Fragment key={c.k}>
-              <input list={id} autoComplete="off" placeholder={c.l} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
+              <ClearableInput list={id} autoComplete="off" placeholder={c.l} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
               <datalist id={id}>
                 {opts.map(o => {
                   const val = typeof o === 'object' ? o.value : o
@@ -57,7 +58,7 @@ export default function FilterBar({ cols, filters, setFilters, onSearch, fieldOp
         if (DATE_KEYS.includes(c.k)) {
           return <input key={c.k} type="date" autoComplete="off" value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
         }
-        return <input key={c.k} autoComplete="off" placeholder={c.l} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
+        return <ClearableInput key={c.k} autoComplete="off" placeholder={c.l} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
       })}
       {actions && <button className="btn primary" onClick={() => onSearch()}>查询</button>}
       {actions && <button className="btn" onClick={() => { setFilters({}); onSearch({}) }}>重置</button>}

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { api, getToken } from '../api'
-import { Modal, useToast, useConfirm, Loading } from '../components/ui'
+import { Modal, useToast, useConfirm, Loading, ClearableInput } from '../components/ui'
 
 export default function Categories() {
   const { toast, showError } = useToast()
@@ -78,11 +78,11 @@ export default function Categories() {
       {busy && <Loading text="正在导入品类，请稍候…" />}
       <input type="file" accept=".xlsx,.xls" style={{ display: 'none' }} ref={fileRef} onChange={e => { if (e.target.files[0]) importCategories(e.target.files[0]).catch(err => showError(err.message)); e.target.value = '' }} />
       <div className="toolbar">
-        <input list="cat1-list" placeholder="一级品类" style={{ width: 130 }} value={q.cat1} onChange={e => setQ({ ...q, cat1: e.target.value })} />
+        <ClearableInput list="cat1-list" placeholder="一级品类" style={{ width: 130 }} value={q.cat1} onChange={e => setQ({ ...q, cat1: e.target.value })} />
         <datalist id="cat1-list">{rows.map(c => <option key={c.id} value={c.name} />)}</datalist>
-        <input list="cat2-list" placeholder="二级品类" style={{ width: 130 }} value={q.cat2} onChange={e => setQ({ ...q, cat2: e.target.value })} />
+        <ClearableInput list="cat2-list" placeholder="二级品类" style={{ width: 130 }} value={q.cat2} onChange={e => setQ({ ...q, cat2: e.target.value })} />
         <datalist id="cat2-list">{rows.flatMap(c => (c.children || []).map(x => <option key={x.id} value={x.name} />))}</datalist>
-        <input placeholder="平台" style={{ width: 120 }} value={q.platform} onChange={e => setQ({ ...q, platform: e.target.value })} />
+        <ClearableInput placeholder="平台" style={{ width: 120 }} value={q.platform} onChange={e => setQ({ ...q, platform: e.target.value })} />
         <button className="btn" onClick={() => setQ({ cat1: '', cat2: '', platform: '' })}>重置</button>
         <span className="spacer" />
         <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>
@@ -130,7 +130,7 @@ export default function Categories() {
 
       {modal && (
         <Modal title={(modal.id ? '编辑' : '新增') + (modal.type === 'cat1' ? '一级品类' : modal.type === 'cat2' ? '二级品类' : '平台')} onClose={() => setModal(null)}>
-          <div className="field"><label>名称</label><input value={modal.name} onChange={e => setModal({ ...modal, name: e.target.value })} style={{ width: '100%' }} /></div>
+          <div className="field"><label>名称</label><ClearableInput value={modal.name} onChange={e => setModal({ ...modal, name: e.target.value })} style={{ width: '100%' }} /></div>
           <div className="foot"><button className="btn" onClick={() => setModal(null)}>取消</button><button className="btn primary" onClick={save}>保存</button></div>
         </Modal>
       )}

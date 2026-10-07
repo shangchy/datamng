@@ -347,12 +347,14 @@ class Fund(Base):
 class Bill(Base):
     __tablename__ = "bill"
     id = Column(Integer, primary_key=True)
-    customer_id = Column(Integer, ForeignKey("customer.id"), nullable=False)
+    customer_id = Column(Integer, ForeignKey("customer.id"), nullable=True)
     biz_date = Column(Date, nullable=False)
     purchase_qty = Column(Integer, default=0)
     sales = Column(Numeric(14, 2), default=0)
     balance = Column(Numeric(14, 2), default=0)
     profit = Column(Numeric(14, 2), default=0)
+    bill_type = Column(String(20), default="分数据")   # 分数据 / 单独抽取
+    target_name = Column(String(200))                  # 收款对象（给其他人时用）
     created_at = Column(DateTime, default=datetime.now)
 
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
-import { Badge, Modal, useToast } from '../components/ui'
+import { Badge, Modal, useToast, ClearableInput } from '../components/ui'
 import Pagination from '../components/Pagination'
 
 const ACTION_LABEL = {
@@ -77,7 +77,7 @@ export default function Logs() {
         <button className={`btn small ${tab === 'login' ? 'primary' : ''}`} onClick={() => setTab('login')}>登录日志</button>
         <button className={`btn small ${tab === 'operation' ? 'primary' : ''}`} onClick={() => setTab('operation')}>操作日志</button>
         <span className="spacer" />
-        <input placeholder="用户名" style={{ width: 120 }} value={filters.username} onChange={e => setFilters({ ...filters, username: e.target.value })} />
+        <ClearableInput placeholder="用户名" style={{ width: 120 }} value={filters.username} onChange={e => setFilters({ ...filters, username: e.target.value })} />
         {tab === 'operation' && (
           <select value={filters.action} onChange={e => setFilters({ ...filters, action: e.target.value })}>
             <option value="">全部动作</option>

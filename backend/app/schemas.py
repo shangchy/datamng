@@ -177,3 +177,14 @@ class GenerateBody(BaseModel):
 
 class AlertHandleBody(BaseModel):
     status: str = "已处理"
+
+
+class ExtractBody(BaseModel):
+    filters: dict = {}             # 日活筛选条件
+    start_date: str = ""           # 时间段开始
+    end_date: str = ""             # 时间段结束
+    limit: int = 0                 # 抽取条数
+    customer_id: Optional[int] = None  # 给代理
+    target_name: str = ""          # 给其他人（自由文本）
+    price: float = 0               # 单价（元/条）
+    note: str = ""                 # 备注

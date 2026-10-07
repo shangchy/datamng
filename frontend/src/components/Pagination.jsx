@@ -25,6 +25,8 @@ export default function Pagination({ total, page, perPage, setPage, setPerPage, 
         <option value={50}>50 条/页</option>
         <option value={100}>100 条/页</option>
         <option value={500}>500 条/页</option>
+        <option value={1000}>1000 条/页</option>
+        <option value={10000}>10000 条/页</option>
       </select>
       <button className="btn small" disabled={page <= 1} onClick={() => goPage(1)}>«</button>
       <button className="btn small" disabled={page <= 10} onClick={() => goPage(page - 10)}>‹‹</button>

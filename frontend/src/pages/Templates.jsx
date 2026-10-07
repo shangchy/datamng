@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
-import { Modal, useToast, useConfirm } from '../components/ui'
+import { Modal, useToast, useConfirm, ClearableInput } from '../components/ui'
 
 const SOURCE_LABELS = {
   party: '甲方', task_id: '工单号', task_name: '任务名', type: '类型', operator: '运营商',
@@ -85,13 +85,13 @@ export default function Templates() {
       {modal && (
         <Modal title={modal.isNew ? '新增自定义模版' : '编辑自定义模版'} onClose={() => setModal(null)} wide>
           <div className="row">
-            <div className="field"><label>模版名称</label><input value={modal.form.name} onChange={e => setF('name', e.target.value)} /></div>
-            <div className="field"><label>编码</label><input value={modal.form.code} onChange={e => setF('code', e.target.value)} /></div>
+            <div className="field"><label>模版名称</label><ClearableInput value={modal.form.name} onChange={e => setF('name', e.target.value)} /></div>
+            <div className="field"><label>编码</label><ClearableInput value={modal.form.code} onChange={e => setF('code', e.target.value)} /></div>
           </div>
           <div className="row">
             <div className="field"><label>甲方</label>
               <select value={modal.form.party} onChange={e => setF('party', e.target.value)}><option>牛</option><option>新</option><option>通用</option></select></div>
-            <div className="field"><label>文件名规则</label><input value={modal.form.filename_rule} onChange={e => setF('filename_rule', e.target.value)} placeholder="{MMdd}-LM牛-提单表.xlsx" /></div>
+            <div className="field"><label>文件名规则</label><ClearableInput value={modal.form.filename_rule} onChange={e => setF('filename_rule', e.target.value)} placeholder="{MMdd}-LM牛-提单表.xlsx" /></div>
           </div>
           <div className="note" style={{ marginTop: 4 }}>占位符：<code>{'{MMdd}'}</code>日期 <code>{'{party}'}</code>牛/新 <code>{'{type}'}</code>类型 <code>{'{region}'}</code>国省直辖市/地级市 <code>{'{gray}'}</code>灰</div>
 
@@ -106,14 +106,14 @@ export default function Templates() {
                       <button className="btn small" onClick={() => moveCol(i, -1)}>↑</button>{' '}
                       <button className="btn small" onClick={() => moveCol(i, 1)}>↓</button>
                     </td>
-                    <td><input value={c.name} onChange={e => setCol(i, 'name', e.target.value)} placeholder="列名" /></td>
+                    <td><ClearableInput value={c.name} onChange={e => setCol(i, 'name', e.target.value)} placeholder="列名" /></td>
                     <td>
                       <select value={c.source} onChange={e => setCol(i, 'source', e.target.value)}>
                         <option value="">(固定值)</option>
                         {Object.keys(SOURCE_LABELS).map(k => <option key={k} value={k}>{SOURCE_LABELS[k]}</option>)}
                       </select>
                     </td>
-                    <td><input value={c.fixed || ''} onChange={e => setCol(i, 'fixed', e.target.value)} placeholder="固定值" disabled={!!c.source} /></td>
+                    <td><ClearableInput value={c.fixed || ''} onChange={e => setCol(i, 'fixed', e.target.value)} placeholder="固定值" disabled={!!c.source} /></td>
                     <td><input type="number" style={{ width: 60 }} value={c.width || ''} onChange={e => setCol(i, 'width', e.target.value === '' ? '' : Number(e.target.value))} placeholder="自动" /></td>
                     <td className="ops"><input type="checkbox" checked={!!c.split_url} onChange={e => setCol(i, 'split_url', e.target.checked)} /></td>
                     <td className="ops"><input type="checkbox" checked={!!c.merge} onChange={e => setCol(i, 'merge', e.target.checked)} /></td>
@@ -132,7 +132,7 @@ export default function Templates() {
                 value={modal.form.style.zebra?.startsWith('#') ? modal.form.style.zebra : '#' + (modal.form.style.zebra || 'FFFFFF')}
                 onChange={e => setStyle('zebra', e.target.value)} />
             </div>
-            <div className="field"><label>字体</label><input value={modal.form.style.font} onChange={e => setStyle('font', e.target.value)} /></div>
+            <div className="field"><label>字体</label><ClearableInput value={modal.form.style.font} onChange={e => setStyle('font', e.target.value)} /></div>
             <div className="field"><label>字号</label><input type="number" value={modal.form.style.font_size} onChange={e => setStyle('font_size', Number(e.target.value))} /></div>
             <div className="field"><label>行高</label><input type="number" value={modal.form.style.row_height} onChange={e => setStyle('row_height', Number(e.target.value))} /></div>
           </div>
