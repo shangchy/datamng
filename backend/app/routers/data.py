@@ -152,7 +152,7 @@ def export_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(DailyData.name.like(f"%{name}%"))
     if biz_date:
         qy = qy.filter(DailyData.biz_date == biz_date)
-    rows = qy.order_by(DailyData.id.desc()).limit(50000).all()
+    rows = qy.order_by(DailyData.id.desc()).all()
     headers = ["数据日期", "甲方", "任务id", "任务名", "手机号", "姓名", "省", "市", "运营商",
                "一级品类", "二级品类", "平台",
                "一级代理", "二级代理", "渠道", "来源文件名", "创建时间", "更新时间"]
@@ -441,7 +441,7 @@ def _extract_task_ids(fn, content):
 
 
 def _count_unmatched(db, file_list):
-    """统计未匹配到订单的日活数据条数，返回 (条数, 去重后的未匹配工单号列表)"""
+    """统计未匹配到订单的日活数据条数，返回 (条数, 未匹配工单明细列表)"""
     order_tids = {r[0] for r in db.query(Order.task_id).all() if r[0]}
     total = 0
     unmatched_tids = set()
@@ -451,31 +451,41 @@ def _count_unmatched(db, file_list):
                 total += 1
                 if tid:
                     unmatched_tids.add(tid)
-    return total, sorted(unmatched_tids)
+    items = [{"task_id": tid, "task_name": "", "channel": ""} for tid in sorted(unmatched_tids)]
+    return total, items
 
 
 def _count_stopped_abnormal(db, file_list, date_obj):
-    """统计关联到已停订单、且数据日期 >= 订单更新日期+2 的异常数据，返回 (条数, 去重工单号列表)"""
-    stopped = {o.task_id: o.order_date for o in db.query(Order).filter(Order.status == "已停").all() if o.task_id}
+    """统计关联到已停订单、且数据日期 >= 订单更新日期+2 的异常数据，返回 (条数, 工单明细列表)"""
+    stopped = {o.task_id: o for o in db.query(Order).filter(Order.status == "已停").all() if o.task_id}
+    chans = {c.id: c.name for c in db.query(Channel).all()}
     total = 0
     tids = set()
     for fn, content in file_list:
         for tid in _extract_task_ids(fn, content):
-            od = stopped.get(tid)
-            if od and date_obj >= od + timedelta(days=2):
+            o = stopped.get(tid)
+            if o and o.order_date and date_obj >= o.order_date + timedelta(days=2):
                 total += 1
                 tids.add(tid)
-    return total, sorted(tids)
+    items = []
+    for tid in sorted(tids):
+        o = stopped.get(tid)
+        items.append({"task_id": tid, "task_name": (o.task_name or "") if o else "",
+                      "channel": chans.get(o.channel_id, "") if o else ""})
+    return total, items
 
 
 def _count_inactive_orders(db, date_obj):
-    """统计在执订单中，数据日期 >= 订单更新日期+2 但当天无数据的工单号"""
+    """统计在执订单中，数据日期 >= 订单更新日期+2 但当天无数据的工单（明细列表）"""
     has_data = {r[0] for r in db.query(DailyData.task_id).filter(DailyData.biz_date == date_obj).all() if r[0]}
-    tids = []
+    chans = {c.id: c.name for c in db.query(Channel).all()}
+    items = []
     for o in db.query(Order).filter(Order.status == "在执").all():
         if o.task_id and o.order_date and date_obj >= o.order_date + timedelta(days=2) and o.task_id not in has_data:
-            tids.append(o.task_id)
-    return sorted(tids)
+            items.append({"task_id": o.task_id, "task_name": o.task_name or "",
+                          "channel": chans.get(o.channel_id, "")})
+    items.sort(key=lambda x: x["task_id"])
+    return items
 
 
 @router.post("/daily-data/import")
@@ -495,11 +505,11 @@ async def import_daily(files: List[UploadFile] = File(...), biz_date: str = Form
 
     # 未匹配订单 或 已停订单异常数据时，弹出提示确认
     if not confirm:
-        unmatched, unmatched_tids = _count_unmatched(db, file_list)
-        stopped_abnormal, stopped_tids = _count_stopped_abnormal(db, file_list, date_obj)
+        unmatched, unmatched_items = _count_unmatched(db, file_list)
+        stopped_abnormal, stopped_items = _count_stopped_abnormal(db, file_list, date_obj)
         if unmatched > 0 or stopped_abnormal > 0:
-            return {"code": 0, "data": {"needs_confirm": True, "unmatched": unmatched, "unmatched_tids": unmatched_tids,
-                                        "stopped_abnormal": stopped_abnormal, "stopped_tids": stopped_tids},
+            return {"code": 0, "data": {"needs_confirm": True, "unmatched": unmatched, "unmatched_items": unmatched_items,
+                                        "stopped_abnormal": stopped_abnormal, "stopped_items": stopped_items},
                     "msg": f"有 {unmatched} 条数据未匹配到订单，{stopped_abnormal} 条关联到已停订单"}
 
     # 当天已有 (任务id, 手机号)，用于同任务内去重
@@ -522,8 +532,8 @@ async def import_daily(files: List[UploadFile] = File(...), biz_date: str = Form
         imported += n
         deduped += dd
     db.commit()
-    inactive_tids = _count_inactive_orders(db, date_obj)
-    return {"code": 0, "data": {"imported": imported, "deduped": deduped, "errors": errors, "inactive_tids": inactive_tids},
+    inactive_items = _count_inactive_orders(db, date_obj)
+    return {"code": 0, "data": {"imported": imported, "deduped": deduped, "errors": errors, "inactive_items": inactive_items},
             "msg": f"导入 {imported} 条，去重 {deduped} 条，失败 {len(errors)} 条"}
 
 
@@ -1872,7 +1882,7 @@ def export_fund(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(Fund.company.like(f"%{company}%"))
     if deposit_status:
         qy = qy.filter(Fund.deposit_status == deposit_status)
-    rows = qy.order_by(Fund.id.desc()).limit(50000).all()
+    rows = qy.order_by(Fund.id.desc()).all()
     headers = ["手机号", "姓名", "身份证号", "性别", "省份", "地市", "单位名称", "单位性质",
                "缴存基数", "缴存比例", "月缴存额", "账户余额", "缴存状态", "开户日期",
                "缴至年月", "运营商", "来源文件"]
@@ -2269,6 +2279,43 @@ def manual_scan(db: Session = Depends(get_db), _=Depends(get_current_user)):
     run_alert_scan(db)
     count = db.query(func.count(Alert.id)).filter(Alert.status == "未处理").scalar() or 0
     return {"code": 0, "data": {"unhandled": int(count)}, "msg": "预警扫描完成"}
+
+
+@router.get("/daily-data/filter-options")
+def daily_filter_options(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """日活数据筛选级联选项：品类（一级→二级→平台）、一级代理→二级代理/渠道"""
+    # 一级品类 → 二级品类
+    cat1 = []
+    cat2_map = {}
+    for c in db.query(Category).filter(Category.level == 1).order_by(Category.id).all():
+        cat1.append(c.name)
+        children = db.query(Category).filter(Category.level == 2, Category.parent_id == c.id).order_by(Category.id).all()
+        cat2_map[c.name] = [x.name for x in children]
+    # 二级品类 → 平台
+    platform_map = {}
+    for p in db.query(Platform).order_by(Platform.id).all():
+        c2 = db.query(Category).filter(Category.id == p.cat_id).first()
+        if c2:
+            platform_map.setdefault(c2.name, []).append(p.name)
+    # 一级代理 → 二级代理 / 渠道（customer 存储为「编号 名称」，用编号作为级联键）
+    agent_map = {}
+    channel_map = {}
+    for cu, sa in db.query(DailyData.customer, DailyData.secondary_agent).filter(
+            DailyData.customer.isnot(None), DailyData.customer != "",
+            DailyData.secondary_agent.isnot(None), DailyData.secondary_agent != "").distinct().all():
+        agent_map.setdefault(cu.split()[0], []).append(sa)
+    for cu, ch in db.query(DailyData.customer, DailyData.channel).filter(
+            DailyData.customer.isnot(None), DailyData.customer != "",
+            DailyData.channel.isnot(None), DailyData.channel != "").distinct().all():
+        channel_map.setdefault(cu.split()[0], []).append(ch)
+    for k in agent_map:
+        agent_map[k] = sorted(set(agent_map[k]))
+    for k in channel_map:
+        channel_map[k] = sorted(set(channel_map[k]))
+    return {"code": 0, "data": {
+        "cat1": cat1, "cat2_map": cat2_map, "platform_map": platform_map,
+        "agent_map": agent_map, "channel_map": channel_map,
+    }, "msg": "ok"}
 
 
 @router.get("/distinct")

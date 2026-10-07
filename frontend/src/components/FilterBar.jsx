@@ -13,7 +13,7 @@ const ENUM_COLS = {
 }
 
 const DATE_KEYS = ['start_date', 'end_date', 'order_date', 'biz_date', 'stop_date']
-const TEXT_COLS = ['province', 'city', 'platform']
+const TEXT_COLS = ['province', 'city']
 const NON_FILTER = ['region', 'url', 'updated_at', 'created_at', 'last_login_at', 'time', 'id']
 
 export default function FilterBar({ cols, filters, setFilters, onSearch, fieldOptions = {}, actions = true }) {
@@ -25,17 +25,33 @@ export default function FilterBar({ cols, filters, setFilters, onSearch, fieldOp
         if (TEXT_COLS.includes(c.k)) {
           return <input key={c.k} autoComplete="off" placeholder={c.l} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
         }
-        const opts = fieldOptions[c.k] || ENUM_COLS[c.k]
-        if (opts) {
+        const enumOpts = ENUM_COLS[c.k]
+        if (enumOpts) {
           return (
             <select key={c.k} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })}>
               <option value="">{c.l}</option>
-              {opts.map(o => {
+              {enumOpts.map(o => {
                 const val = typeof o === 'object' ? o.value : o
                 const label = typeof o === 'object' ? o.label : o
                 return <option key={val} value={val}>{label}</option>
               })}
             </select>
+          )
+        }
+        const opts = fieldOptions[c.k]
+        if (opts) {
+          const id = `dl-${c.k}`
+          return (
+            <React.Fragment key={c.k}>
+              <input list={id} autoComplete="off" placeholder={c.l} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })} />
+              <datalist id={id}>
+                {opts.map(o => {
+                  const val = typeof o === 'object' ? o.value : o
+                  const label = typeof o === 'object' ? o.label : o
+                  return <option key={val} value={val}>{label}</option>
+                })}
+              </datalist>
+            </React.Fragment>
           )
         }
         if (DATE_KEYS.includes(c.k)) {

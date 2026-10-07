@@ -26,7 +26,7 @@ const KINDS = {
       { k: 'city', l: '市' }, { k: 'operator', l: '运营商' }, { k: 'cat1', l: '一级品类' }, { k: 'cat2', l: '二级品类' }, { k: 'platform', l: '平台' },
       { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' }, { k: 'channel', l: '渠道' },
       { k: 'source_file', l: '来源文件名' }, { k: 'created_at', l: '创建时间' }, { k: 'updated_at', l: '更新时间' },
-    ], export: true, dailyImp: true, csvImp: true, batchDel: true, batchDelAdmin: true, dist: true, check: true,
+    ], export: true, dailyImp: true, csvImp: true, batchDel: true, batchDelAdmin: true, dist: true, check: true, showSeq: true, defaultPerPage: 10000,
   },
   sourcefiles: {
     title: '元文件管理', endpoint: '/api/source-files',
@@ -109,6 +109,7 @@ export default function SimpleList({ kind }) {
   const [filters, setFilters] = useState({})
   const [filterCollapsed, setFilterCollapsed] = useState(false)
   const [fieldOptions, setFieldOptions] = useState({})
+  const [cascadeOpts, setCascadeOpts] = useState(null)
   const [customers, setCustomers] = useState([])
   const [simpleModal, setSimpleModal] = useState(null) // {name, status}
   const [urlModal, setUrlModal] = useState(null) // {mode, id?, name, level, owner_id, channel_id, platform_id, urls:[string]}
@@ -162,6 +163,8 @@ export default function SimpleList({ kind }) {
   const [rechargeAlert, setRechargeAlert] = useState(null)
   const [rechargeRate, setRechargeRate] = useState(6.7)
   const [stopAlert, setStopAlert] = useState(null)
+  const [importWarn, setImportWarn] = useState(null) // {title, items:[{task_id,task_name,channel}], confirm:boolean}
+  const [pendingImportFiles, setPendingImportFiles] = useState(null)
 
   useEffect(() => {
     if (kind === 'alerts') {
@@ -193,6 +196,33 @@ export default function SimpleList({ kind }) {
       return 0
     })
   }
+  function cascadeFieldOptions() {
+    const base = { ...fieldOptions }
+    if (kind !== 'daily' || !cascadeOpts) return base
+    const uniq = arr => [...new Set(arr)]
+    if (cascadeOpts.cat1) base.cat1 = cascadeOpts.cat1
+    if (cascadeOpts.cat2_map) {
+      base.cat2 = filters.cat1 ? (cascadeOpts.cat2_map[filters.cat1] || []) : uniq(Object.values(cascadeOpts.cat2_map).flat())
+    }
+    if (cascadeOpts.platform_map) {
+      base.platform = filters.cat2 ? (cascadeOpts.platform_map[filters.cat2] || []) : uniq(Object.values(cascadeOpts.platform_map).flat())
+    }
+    if (cascadeOpts.agent_map) {
+      base.secondary_agent = filters.customer ? (cascadeOpts.agent_map[filters.customer] || []) : uniq(Object.values(cascadeOpts.agent_map).flat())
+    }
+    if (cascadeOpts.channel_map) {
+      base.channel = filters.customer ? (cascadeOpts.channel_map[filters.customer] || []) : uniq(Object.values(cascadeOpts.channel_map).flat())
+    }
+    return base
+  }
+  function handleSetFilters(next) {
+    if (kind === 'daily') {
+      if (next.cat1 !== filters.cat1) { next.cat2 = ''; next.platform = '' }
+      if (next.cat2 !== filters.cat2) { next.platform = '' }
+      if (next.customer !== filters.customer) { next.secondary_agent = ''; next.channel = '' }
+    }
+    setFilters(next)
+  }
 
   async function load(p = page, pp = perPage, f) {
     const qs = buildQuery(f === undefined ? filters : f)
@@ -203,7 +233,12 @@ export default function SimpleList({ kind }) {
   function search(f) { setPage(1); load(1, perPage, f) }
   function goPage(p) { setPage(p); load(p, perPage) }
   function changePerPage(pp) { setPerPage(pp); setPage(1); load(1, pp) }
-  useEffect(() => { setFilters({}); setPage(1); load(1, perPage, {}) }, [kind])
+  useEffect(() => {
+    setFilters({}); setPage(1)
+    const pp = cfg.defaultPerPage || 10
+    setPerPage(pp)
+    load(1, pp, {})
+  }, [kind])
 
   // 加载下拉选项（渠道/客户/品类/省市等）
   useEffect(() => {
@@ -228,20 +263,19 @@ export default function SimpleList({ kind }) {
         setOpt('cat1', cat1); setOpt('cat2', cat2)
       }).catch(() => {})
     }
-    // 日活数据：甲方/运营商/渠道/一级代理/平台/省市
+    // 日活数据：甲方/运营商/一级代理/省市 + 级联选项（品类/代理→二级代理/渠道）
     if (kind === 'daily') {
       api.get('/api/customers?per_page=1000').then(r => {
         setOpt('upstream', r.data.rows.filter(c => c.ctype === 'upstream').map(c => c.name))
         setOpt('customer', r.data.rows.filter(c => c.ctype === 'downstream').map(c => c.code))
       }).catch(() => {})
       api.get('/api/operators?per_page=1000').then(r => setOpt('operator', r.data.rows.map(o => o.name))).catch(() => {})
-      api.get('/api/channels?per_page=1000').then(r => setOpt('channel', r.data.rows.map(c => c.name))).catch(() => {})
-      api.get('/api/distinct?model=daily_data&field=platform').then(r => setOpt('platform', r.data)).catch(() => {})
       api.get('/api/regions').then(r => {
         const allCities = []
         Object.values(r.data.cities).forEach(list => allCities.push(...list))
         setOpt('province', r.data.provinces); setOpt('city', allCities)
       }).catch(() => {})
+      api.get('/api/daily-data/filter-options').then(r => setCascadeOpts(r.data)).catch(() => {})
     }
     // 省份/地市来自基础数据（多选）
     if (kind === 'fund') {
@@ -455,43 +489,42 @@ export default function SimpleList({ kind }) {
     if (!fs || !fs.length) { showError('请选择文件'); return }
     if (!dailyDate) { showError('请选择数据日期'); return }
     setDailyModal(false)
-    const files = Array.from(fs)
-    const buildFd = (confirmFlag) => {
-      const fd = new FormData()
-      for (const f of files) fd.append('files', f)
-      fd.append('biz_date', dailyDate)
-      if (confirmFlag) fd.append('confirm', 'true')
-      return fd
-    }
+    setPendingImportFiles({ files: Array.from(fs), date: dailyDate })
+    doUploadDaily(false)
+  }
+
+  async function doUploadDaily(confirmFlag) {
+    const p = pendingImportFiles
+    if (!p || !p.files) return
+    const fd = new FormData()
+    for (const f of p.files) fd.append('files', f)
+    fd.append('biz_date', p.date)
+    if (confirmFlag) fd.append('confirm', 'true')
     try {
       setBusy(true); setBusyMsg('正在上传文件…'); setBusyProgress(0)
-      let data = await uploadFile('/api/daily-data/import', buildFd(false), p => setBusyProgress(p))
+      const data = await uploadFile('/api/daily-data/import', fd, x => setBusyProgress(x))
       if (data.data && data.data.needs_confirm) {
         setBusy(false); setBusyProgress(null)
-        const n = data.data.unmatched || 0
-        const tids = data.data.unmatched_tids || []
-        const sn = data.data.stopped_abnormal || 0
-        const stids = data.data.stopped_tids || []
-        let msg = ''
-        if (n > 0) {
-          const tidsStr = tids.length ? `\n未匹配工单号：${tids.join('、')}` : ''
-          msg += `有 ${n} 条数据未匹配到订单${tidsStr}\n`
-        }
-        if (sn > 0) {
-          const stidsStr = stids.length ? `\n已停订单工单号：${stids.join('、')}` : ''
-          msg += `\n有 ${sn} 条数据关联到已停订单（异常）${stidsStr}`
-        }
-        if (!(await confirm(`${msg}\n\n是否继续导入？`))) return
-        setBusy(true); setBusyMsg('正在导入…'); setBusyProgress(0)
-        data = await uploadFile('/api/daily-data/import', buildFd(true), p => setBusyProgress(p))
+        const items = [
+          ...(data.data.unmatched_items || []).map(x => ({ ...x, kind: '多出' })),
+          ...(data.data.stopped_items || []).map(x => ({ ...x, kind: '多出' })),
+        ]
+        setImportWarn({ title: '以下工单数据异常，是否继续导入？', items, confirm: true })
+        return
       }
       setBusyMsg('正在处理数据，请稍候…'); setBusyProgress(100)
-      const inactive = (data.data && data.data.inactive_tids) || []
       toast(data.msg); load()
-      if (inactive.length) {
-        showError(`以下在执任务未匹配到数据：\n${inactive.join('、')}`)
+      const inactiveItems = (data.data && data.data.inactive_items) || []
+      setBusy(false); setBusyProgress(null)
+      if (inactiveItems.length) {
+        setImportWarn({ title: '以下在执任务未匹配到数据（未出）', items: inactiveItems.map(x => ({ ...x, kind: '未出' })), confirm: false })
       }
-    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
+    } catch (e) { setBusy(false); setBusyProgress(null); showError(e.message) }
+  }
+
+  async function doImportConfirm() {
+    setImportWarn(null)
+    doUploadDaily(true)
   }
 
   async function importDailyCsv() {
@@ -627,7 +660,7 @@ export default function SimpleList({ kind }) {
       <input type="file" accept=".csv,.xlsx,.xls" style={{ display: 'none' }} ref={washFileRef} onChange={e => { if (e.target.files[0]) importWash().catch(err => showError(err.message)); e.target.value = '' }} />
       <div className="toolbar">
         <div className={`filter-wrap ${filterCollapsed ? 'collapsed' : ''}`}>
-          <FilterBar cols={cfg.cols} filters={filters} setFilters={setFilters} onSearch={search} fieldOptions={fieldOptions} actions={false} />
+          <FilterBar cols={cfg.cols} filters={filters} setFilters={handleSetFilters} onSearch={search} fieldOptions={cascadeFieldOptions()} actions={false} />
         </div>
         <div className="toolbar-actions">
         <button className="btn primary" onClick={() => search()}>查询</button>
@@ -672,10 +705,11 @@ export default function SimpleList({ kind }) {
       <div className="panel">
         <div className="table-scroll">
           <table>
-            <thead><tr>{showBatchDel && <th style={{ width: 32 }}><input type="checkbox" checked={rows.length > 0 && selected.length === sortedRows().length} onChange={toggleAll} /></th>}{hasRowOps && <th className="ops">操作</th>}{cols.map(c => <th key={c.k} className={c.num ? 'num' : ''} onClick={() => toggleSort(c.k)}>{c.l}{sort?.k === c.k ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>)}</tr></thead>
+            <thead><tr>{cfg.showSeq && <th className="num" style={{ width: 56 }}>序号</th>}{showBatchDel && <th style={{ width: 32 }}><input type="checkbox" checked={rows.length > 0 && selected.length === sortedRows().length} onChange={toggleAll} /></th>}{hasRowOps && <th className="ops">操作</th>}{cols.map(c => <th key={c.k} className={c.num ? 'num' : ''} onClick={() => toggleSort(c.k)}>{c.l}{sort?.k === c.k ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>)}</tr></thead>
             <tbody>
-              {sortedRows().map(r => (
+              {sortedRows().map((r, i) => (
                 <tr key={r.id}>
+                  {cfg.showSeq && <td className="num">{i + 1}</td>}
                   {showBatchDel && <td><input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} /></td>}
                   {hasRowOps && <td className="ops">
                     {cfg.detail && <button className="btn small" onClick={() => viewBillDetail(r.id)}>详情</button>}
@@ -785,6 +819,31 @@ export default function SimpleList({ kind }) {
           <div className="foot">
             <button className="btn" onClick={() => setStopAlert(null)}>取消</button>
             <button className="btn danger" onClick={() => doStop().catch(e => showError(e.message))}>确认停单</button>
+          </div>
+        </Modal>
+      )}
+
+      {importWarn && (
+        <Modal title={importWarn.title} onClose={() => setImportWarn(null)} wide>
+          <div className="table-scroll" style={{ maxHeight: 420 }}>
+            <table>
+              <thead><tr><th style={{ width: 56 }}>序号</th><th>工单号</th><th>任务名</th><th>渠道</th></tr></thead>
+              <tbody>
+                {importWarn.items.map((x, i) => (
+                  <tr key={i}><td className="num">{i + 1}</td><td>{x.task_id || '—'}</td><td>{x.task_name || '—'}</td><td>{x.channel || '—'}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="foot">
+            {importWarn.confirm ? (
+              <>
+                <button className="btn" onClick={() => setImportWarn(null)}>取消</button>
+                <button className="btn primary" onClick={doImportConfirm}>继续导入</button>
+              </>
+            ) : (
+              <button className="btn primary" onClick={() => setImportWarn(null)}>关闭</button>
+            )}
           </div>
         </Modal>
       )}

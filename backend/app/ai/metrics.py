@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import func, or_
 
 from ..models import (Alert, Bill, Channel, Customer, CustomerRecharge,
-                      DailyData, Fund, Order)
+                      DailyData, Fund, Order, WashName)
 
 
 def _mask_phone(p):
@@ -193,6 +193,91 @@ def order_list(db, status=None, limit=50):
                   "orders 列表", "orders")
 
 
+def daily_data_query(db, date=None, customer=None, channel=None, phone=None, limit=50):
+    q = db.query(DailyData.biz_date, DailyData.upstream, DailyData.task_name, DailyData.phone,
+                 DailyData.name, DailyData.province, DailyData.city, DailyData.customer,
+                 DailyData.channel, DailyData.platform)
+    d = _parse_date(date)
+    if d:
+        q = q.filter(DailyData.biz_date == d)
+    if customer:
+        q = q.filter(DailyData.customer.like(f"%{customer}%"))
+    if channel:
+        q = q.filter(DailyData.channel == channel)
+    if phone:
+        q = q.filter(DailyData.phone == phone)
+    total = q.count()
+    rows = q.order_by(DailyData.id.desc()).limit(int(limit or 50)).all()
+    data = [{"日期": str(r[0]), "甲方": r[1] or "", "任务": r[2] or "", "手机号": _mask_phone(r[3]),
+             "姓名": r[4] or "", "省市": f"{r[5] or ''}{r[6] or ''}", "代理": r[7] or "",
+             "渠道": r[8] or "", "平台": r[9] or ""} for r in rows]
+    return _table(f"日活数据明细（共 {total} 条，展示 {len(data)} 条）",
+                  ["日期", "甲方", "任务", "手机号", "姓名", "省市", "代理", "渠道", "平台"], data,
+                  "daily_data 明细，手机号已脱敏", "daily_data")
+
+
+def wash_name_lookup(db, phone=None, name=None):
+    q = db.query(WashName.phone, WashName.name, WashName.province, WashName.city, WashName.operator)
+    if phone:
+        q = q.filter(WashName.phone == phone)
+    if name:
+        q = q.filter(WashName.name.like(f"%{name}%"))
+    rows = q.order_by(WashName.id.desc()).limit(50).all()
+    data = [{"手机号": _mask_phone(r[0]), "姓名": r[1] or "", "省": r[2] or "", "市": r[3] or "",
+             "运营商": r[4] or ""} for r in rows]
+    return _table("洗名库查询", ["手机号", "姓名", "省", "市", "运营商"], data,
+                  "wash_name 洗名库，手机号已脱敏", "wash_name")
+
+
+def bill_detail(db, customer=None, date=None, start_date=None, end_date=None, limit=50):
+    q = (db.query(Customer.code, Customer.name, Bill.biz_date, Bill.purchase_qty, Bill.sales, Bill.balance)
+         .join(Bill, Bill.customer_id == Customer.id))
+    if customer:
+        q = q.filter(or_(Customer.code.like(f"%{customer}%"), Customer.name.like(f"%{customer}%")))
+    d = _parse_date(date)
+    if d:
+        q = q.filter(Bill.biz_date == d)
+    s = _parse_date(start_date)
+    if s:
+        q = q.filter(Bill.biz_date >= s)
+    e = _parse_date(end_date)
+    if e:
+        q = q.filter(Bill.biz_date <= e)
+    rows = q.order_by(Bill.biz_date.desc()).limit(int(limit or 50)).all()
+    data = [{"编号": r[0], "客户": r[1], "日期": str(r[2]), "进货量": r[3] or 0,
+             "销售": _fmt(r[4]), "余额": _fmt(r[5])} for r in rows]
+    return _table("账单明细", ["编号", "客户", "日期", "进货量", "销售", "余额"], data,
+                  "bill 明细，余额为该日滚动余额", "bill/customer")
+
+
+def work_order_check(db, date=None):
+    d = _parse_date(date) or _latest_biz_date(db) or date.today()
+    counts = dict(db.query(DailyData.task_id, func.count(DailyData.id))
+                  .filter(DailyData.biz_date == d, DailyData.task_id.isnot(None))
+                  .group_by(DailyData.task_id).all())
+    rows = (db.query(Order.task_id, Order.task_name, Customer.name, Channel.name)
+            .outerjoin(Customer, Order.customer_id == Customer.id)
+            .outerjoin(Channel, Order.channel_id == Channel.id)
+            .filter(Order.status == "在执").all())
+    data = [{"工单号": r[0] or "", "任务名": r[1] or "", "代理": r[2] or "",
+             "渠道": r[3] or "", "数据量": counts.get(r[0], 0)} for r in rows]
+    data.sort(key=lambda x: x["数据量"])
+    return _table(f"工单检查 · {d}（按数据量升序，找少出/未出）",
+                  ["工单号", "任务名", "代理", "渠道", "数据量"], data,
+                  "在执工单在所选日期的 daily_data 数据量，升序", "orders/daily_data")
+
+
+def category_stats(db, date=None):
+    d = _parse_date(date) or _latest_biz_date(db) or date.today()
+    rows = (db.query(DailyData.cat1, DailyData.cat2, DailyData.platform, func.count(DailyData.id))
+            .filter(DailyData.biz_date == d)
+            .group_by(DailyData.cat1, DailyData.cat2, DailyData.platform)
+            .order_by(func.count(DailyData.id).desc()).all())
+    data = [{"一级品类": r[0] or "", "二级品类": r[1] or "", "平台": r[2] or "", "数量": int(r[3])} for r in rows]
+    return _table(f"品类/平台分布 · {d}", ["一级品类", "二级品类", "平台", "数量"], data,
+                  "按 daily_data 的 cat1/cat2/platform 统计当日数量", "daily_data")
+
+
 # ---------------- 工具注册表（供 LLM function-calling） ----------------
 
 IMPL = {
@@ -208,6 +293,11 @@ IMPL = {
     "recharge_records": recharge_records,
     "phone_lookup": phone_lookup,
     "order_list": order_list,
+    "daily_data_query": daily_data_query,
+    "wash_name_lookup": wash_name_lookup,
+    "bill_detail": bill_detail,
+    "work_order_check": work_order_check,
+    "category_stats": category_stats,
 }
 
 TOOLS = [
@@ -251,6 +341,30 @@ TOOLS = [
     {"type": "function", "function": {
         "name": "order_list", "description": "订单列表，可按状态过滤。",
         "parameters": {"type": "object", "properties": {"status": {"type": "string"}, "limit": {"type": "integer"}}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "daily_data_query", "description": "日活数据明细查询。可按日期、代理、渠道、手机号过滤，返回明细条数及样例。用于「某天某代理出了多少条」类问题。",
+        "parameters": {"type": "object", "properties": {
+            "date": {"type": "string", "description": "日期 YYYY-MM-DD"},
+            "customer": {"type": "string", "description": "一级代理编号或名称"},
+            "channel": {"type": "string", "description": "渠道名"},
+            "phone": {"type": "string", "description": "手机号"},
+            "limit": {"type": "integer"}}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "wash_name_lookup", "description": "洗名库查询。按手机号或姓名查洗名记录。用于「某某手机号洗名了没」类问题。",
+        "parameters": {"type": "object", "properties": {
+            "phone": {"type": "string", "description": "手机号"}, "name": {"type": "string"}}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "bill_detail", "description": "账单明细查询。按客户、日期或日期区间查进货量/销售/余额（余额为每日滚动余额）。",
+        "parameters": {"type": "object", "properties": {
+            "customer": {"type": "string", "description": "客户编号或名称"},
+            "date": {"type": "string"}, "start_date": {"type": "string"}, "end_date": {"type": "string"},
+            "limit": {"type": "integer"}}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "work_order_check", "description": "工单检查：所有在执工单在所选日期的数据量（升序，找少出/未出的工单）。",
+        "parameters": {"type": "object", "properties": {"date": {"type": "string"}}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "category_stats", "description": "品类/平台分布：按一级品类、二级品类、平台统计某日数据量。",
+        "parameters": {"type": "object", "properties": {"date": {"type": "string"}}, "required": []}}},
 ]
 
 
