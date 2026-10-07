@@ -21,6 +21,7 @@ export default function Customers() {
   const [detail, setDetail] = useState(null)
   const [tab, setTab] = useState('recharges')
   const [recharge, setRecharge] = useState(null)
+  const [rechargeRefresh, setRechargeRefresh] = useState(0)
   const [modal, setModal] = useState(null)
   const [form, setForm] = useState(emptyForm)
   const [formTab, setFormTab] = useState('prices')
@@ -79,15 +80,28 @@ export default function Customers() {
     const hasRmb = recharge.amount_rmb !== '' && recharge.amount_rmb != null && Number(recharge.amount_rmb) !== 0
     if ((!hasU && !hasRmb) || !recharge.recharge_date) { showError('请填写充值金额和日期'); return }
     try {
-      await api.post(`/api/customers/${recharge.customer_id}/recharges`, {
+      const body = {
         amount_u: hasU ? Number(recharge.amount_u) : null,
         amount_rmb: hasRmb ? Number(recharge.amount_rmb) : null,
         recharge_date: recharge.recharge_date, note: recharge.note || '',
-      })
+      }
+      const url = `/api/customers/${recharge.customer_id}/recharges`
+      if (recharge.id) await api.put(`${url}/${recharge.id}`, body)
+      else await api.post(url, body)
       const cid = recharge.customer_id, fromDetail = recharge.from_detail
-      toast('充值成功'); setRecharge(null)
-      if (fromDetail) openDetail({ id: cid }); else load()
+      toast(recharge.id ? '充值已更新' : '充值成功'); setRecharge(null)
+      setRechargeRefresh(k => k + 1)
+      if (fromDetail) {
+        const r = await api.get(`/api/customers/${cid}`)
+        setDetail(r.data); setTab('recharges')
+      } else {
+        load()
+      }
     } catch (e) { showError(e.message) }
+  }
+
+  function editRecharge(cid, r, fromDetail) {
+    setRecharge({ id: r.id, customer_id: cid, amount_u: r.amount_u ?? '', amount_rmb: r.amount_rmb ?? '', recharge_date: r.recharge_date, note: r.note || '', from_detail: fromDetail })
   }
 
   async function saveRate() {
@@ -179,7 +193,7 @@ export default function Customers() {
               </button>
             ))}
           </div>
-          <TabContent tab={tab} customerId={detail.id} />
+          <TabContent tab={tab} customerId={detail.id} refreshKey={rechargeRefresh} onEditRecharge={(r) => editRecharge(detail.id, r, true)} />
           <div className="foot">
             <button className="btn primary" onClick={() => { setRecharge({ customer_id: detail.id, amount_u: '', amount_rmb: '', recharge_date: '', note: '', from_detail: true }) }}>+ 充值</button>
             <button className="btn" onClick={() => setDetail(null)}>关闭</button>
@@ -188,7 +202,7 @@ export default function Customers() {
       )}
 
       {recharge && (
-        <Modal title="账户充值" onClose={() => setRecharge(null)}>
+        <Modal title={recharge.id ? '编辑充值' : '账户充值'} onClose={() => setRecharge(null)} z={150}>
           <div className="row">
             <div className="field"><label>充值金额 (U)</label>
               <input type="number" value={recharge.amount_u ?? ''} onChange={e => { const u = e.target.value; setRecharge({ ...recharge, amount_u: u, amount_rmb: u ? (u * rate).toFixed(2) : '' }) }} />
@@ -209,7 +223,7 @@ export default function Customers() {
           </div>
           <div className="foot">
             <button className="btn" onClick={() => setRecharge(null)}>取消</button>
-            <button className="btn primary" onClick={saveRecharge}>确认充值</button>
+            <button className="btn primary" onClick={saveRecharge}>{recharge.id ? '保存修改' : '确认充值'}</button>
           </div>
         </Modal>
       )}
@@ -256,7 +270,7 @@ export default function Customers() {
           {formTab === 'prices' && !form.id ? (
             <div className="note">保存客户后即可设定渠道单价。</div>
           ) : (
-            <TabContent tab={formTab} customerId={form.id} />
+            <TabContent tab={formTab} customerId={form.id} refreshKey={rechargeRefresh} onEditRecharge={(r) => editRecharge(form.id, r, false)} />
           )}
           <div className="foot">
             <button className="btn" onClick={() => setModal(null)}>取消</button>
@@ -268,7 +282,7 @@ export default function Customers() {
   )
 }
 
-function TabContent({ tab, customerId }) {
+function TabContent({ tab, customerId, onEditRecharge, refreshKey }) {
   const [data, setData] = useState([])
   const [prices, setPrices] = useState([])
   const { toast, showError } = useToast()
@@ -290,7 +304,7 @@ function TabContent({ tab, customerId }) {
       setData(unique)
       setPrices(unique.map(x => ({ channel_id: x.channel_id, operator_id: x.operator_id ?? null, price: x.price ?? '' })))
     }).catch(() => {})
-  }, [tab, customerId])
+  }, [tab, customerId, refreshKey])
 
   async function savePrices() {
     if (!(await confirm('确认保存客户渠道单价？'))) return
@@ -304,8 +318,8 @@ function TabContent({ tab, customerId }) {
       <tbody>{data.map((o, i) => <tr key={i}><td>{o.order_no}</td><td><Badge value={o.status} /></td><td>{o.start_date}</td><td>{o.end_date || '—'}</td><td>{o.upstream}</td><td>{o.channel}</td><td>{o.task_name}</td><td>{o.url}</td><td className="num">{o.qty}</td></tr>)}</tbody></table>
   )
   if (tab === 'recharges') return (
-    <table><thead><tr><th>日期</th><th className="num">充值(U)</th><th className="num">折算RMB</th><th>备注</th></tr></thead>
-      <tbody>{data.map((r, i) => <tr key={i}><td>{r.recharge_date}</td><td className="num">{r.amount_u}</td><td className="num">¥{r.amount_rmb}</td><td>{r.note || '—'}</td></tr>)}</tbody></table>
+    <table><thead><tr><th>日期</th><th className="num">充值(U)</th><th className="num">折算RMB</th><th>备注</th><th className="ops">操作</th></tr></thead>
+      <tbody>{data.map((r, i) => <tr key={i}><td>{r.recharge_date}</td><td className="num">{r.amount_u}</td><td className="num">¥{r.amount_rmb}</td><td>{r.note || '—'}</td><td className="ops"><button className="btn small" onClick={() => onEditRecharge(r)}>编辑</button></td></tr>)}</tbody></table>
   )
   return (
     <div>

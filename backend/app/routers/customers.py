@@ -159,6 +159,40 @@ def create_recharge(cid: int, body: RechargeBody, db: Session = Depends(get_db),
     return {"code": 0, "data": None, "msg": "充值成功"}
 
 
+@router.put("/{cid}/recharges/{rid}")
+def update_recharge(cid: int, rid: int, body: RechargeBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    r = db.query(CustomerRecharge).filter(CustomerRecharge.id == rid,
+                                          CustomerRecharge.customer_id == cid).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="充值记录不存在")
+    c = db.query(Customer).filter(Customer.id == cid).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="客户不存在")
+    rate = _recharge_rate(db)
+    if body.amount_rmb is not None:
+        rmb = round(float(body.amount_rmb), 2)
+        u = round(rmb / rate, 2)
+    elif body.amount_u is not None:
+        u = round(float(body.amount_u), 2)
+        rmb = round(u * rate, 2)
+    else:
+        raise HTTPException(status_code=422, detail="请填写充值金额（U 或 人民币）")
+    old_rmb = float(r.amount_rmb) if r.amount_rmb is not None else 0
+    delta = round(rmb - old_rmb, 2)
+    r.amount_u = u
+    r.amount_rmb = rmb
+    r.recharge_date = body.recharge_date
+    r.note = body.note
+    if delta:
+        c.balance = (c.balance if c.balance is not None else Decimal("0")) + Decimal(str(delta))
+        latest_bill = db.query(Bill).filter(Bill.customer_id == cid).order_by(Bill.biz_date.desc()).first()
+        if latest_bill:
+            latest_bill.balance = c.balance
+    db.query(Alert).filter(Alert.type == "账单预警", Alert.customer_id == cid, Alert.status == "未处理").delete()
+    db.commit()
+    return {"code": 0, "data": None, "msg": "充值已更新"}
+
+
 DPI_OPERATORS = ["移动", "联通", "电信"]
 
 
