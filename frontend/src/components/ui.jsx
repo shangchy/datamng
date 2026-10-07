@@ -44,8 +44,8 @@ export function ToastProvider({ children }) {
 export function ClearableInput({ value, onChange, className, style, ...props }) {
   const has = value != null && String(value) !== ''
   return (
-    <div className="clearable" style={style}>
-      <input className={`clearable-input ${className || ''}`} value={value ?? ''} onChange={onChange} {...props} />
+    <div className="clearable">
+      <input className={`clearable-input ${className || ''}`} style={style} value={value ?? ''} onChange={onChange} {...props} />
       {has && <button type="button" className="clear-btn" tabIndex={-1} title="清除" onClick={() => onChange && onChange({ target: { value: '' } })}>×</button>}
     </div>
   )
