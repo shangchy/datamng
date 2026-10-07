@@ -28,7 +28,7 @@ export default function Customers() {
   const [filters, setFilters] = useState({})
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
-  const [perPage, setPerPage] = useState(10)
+  const [perPage, setPerPage] = useState(1000)
   const [sort, setSort] = useState({ k: 'code', dir: 'asc' })
   const [billTpls, setBillTpls] = useState([])
   const [rate, setRate] = useState(6.7)

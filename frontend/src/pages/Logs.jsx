@@ -44,7 +44,7 @@ export default function Logs() {
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
-  const [perPage, setPerPage] = useState(20)
+  const [perPage, setPerPage] = useState(1000)
   const [filters, setFilters] = useState({ username: '', action: '', start_date: '', end_date: '' })
   const [viewLog, setViewLog] = useState(null)
 

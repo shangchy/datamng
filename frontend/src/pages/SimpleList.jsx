@@ -237,7 +237,7 @@ export default function SimpleList({ kind }) {
   function changePerPage(pp) { setPerPage(pp); setPage(1); load(1, pp) }
   useEffect(() => {
     setFilters({}); setPage(1)
-    const pp = cfg.defaultPerPage || 10
+    const pp = cfg.defaultPerPage || 1000
     setPerPage(pp)
     load(1, pp, {})
   }, [kind])
