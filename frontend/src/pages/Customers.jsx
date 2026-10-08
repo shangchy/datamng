@@ -28,7 +28,7 @@ export default function Customers() {
   const [filters, setFilters] = useState({})
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
-  const [perPage, setPerPage] = useState(1000)
+  const [perPage, setPerPage] = useState(100)
   const [sort, setSort] = useState({ k: 'code', dir: 'asc' })
   const [billTpls, setBillTpls] = useState([])
   const [rate, setRate] = useState(6.7)
@@ -131,7 +131,7 @@ export default function Customers() {
     <div className="page">
       {confirmEl}
       <div className="toolbar">
-        <FilterBar cols={CUST_COLS} filters={filters} setFilters={setFilters} onSearch={search} />
+        <FilterBar cols={CUST_COLS} filters={filters} setFilters={setFilters} onSearch={search} fieldOptions={{ status: ['启用', '停用'] }} />
         <span className="spacer" />
         <button className="btn primary" onClick={() => { setForm(emptyForm); setFormTab('prices'); setModal('create') }}>+ 新增客户</button>
       </div>

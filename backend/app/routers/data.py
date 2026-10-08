@@ -1402,22 +1402,28 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
 
 
 def _attach_history(db, jobs, date_obj):
-    """给「是否撞库=是」的记录补充「近期申请记录」：手机号在日活历史中（早于本次数据日期）最近三次出现的日期+平台"""
-    phones = set()
+    """给「是否撞库=是」的记录补充「近期申请记录」：手机号在日活历史中（早于本次数据日期）
+    最近三次出现，且只匹配相同一级品类的历史（日期+平台）。"""
+    keys = set()
     for job in jobs:
         for rec in job["records"]:
             if rec.get("check_collision") and rec.get("url"):
-                phones.add(rec["url"])
-    phones = sorted(phones)
+                keys.add((rec["url"], rec.get("cat1") or ""))
+    keys = sorted(keys)
+    valid = set(keys)
     history_map = {}
     CHUNK = 500
-    for i in range(0, len(phones), CHUNK):
-        chunk = phones[i:i + CHUNK]
-        rows = db.query(DailyData.phone, DailyData.biz_date, DailyData.platform).filter(
-            DailyData.phone.in_(chunk), DailyData.biz_date < date_obj
+    for i in range(0, len(keys), CHUNK):
+        chunk = keys[i:i + CHUNK]
+        phones = sorted({k[0] for k in chunk})
+        rows = db.query(DailyData.phone, DailyData.cat1, DailyData.biz_date, DailyData.platform).filter(
+            DailyData.phone.in_(phones), DailyData.biz_date < date_obj
         ).order_by(DailyData.phone, DailyData.biz_date.desc()).all()
-        for phone, bd, pf in rows:
-            lst = history_map.setdefault(phone, [])
+        for phone, cat1, bd, pf in rows:
+            key = (phone, cat1 or "")
+            if key not in valid:
+                continue
+            lst = history_map.setdefault(key, [])
             if any(x[0] == bd for x in lst):
                 continue
             if len(lst) < 3:
@@ -1426,7 +1432,7 @@ def _attach_history(db, jobs, date_obj):
         for rec in job["records"]:
             if not rec.get("check_collision"):
                 continue
-            lst = history_map.get(rec.get("url"), [])
+            lst = history_map.get((rec.get("url"), rec.get("cat1") or ""), [])
             rec["history"] = [f"{bd.strftime('%Y%m%d')} {pf or '未知'}" for bd, pf in lst] or ["无"]
 
 
@@ -1602,6 +1608,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             "operator": d.operator or "",
             "channel": d.channel or "",
             "platform": d.platform or "",
+            "cat1": d.cat1 or "",
             "task_name": d.task_name or "",
             "task_id": d.task_id or "",
             "check_collision": info["check_collision"],
@@ -2228,12 +2235,22 @@ def bill_detail(bid: int, db: Session = Depends(get_db), _=Depends(get_current_u
 @router.get("/alerts")
 def list_alerts(db: Session = Depends(get_db), _=Depends(get_current_user),
                 q: str = "", level: str = "", type: str = "", status: str = "未处理",
+                customer_name: str = "", order_no: str = "", task_name: str = "", content: str = "",
                 page: int = 1, per_page: int = 10):
     qy = db.query(Alert).outerjoin(Customer, Alert.customer_id == Customer.id)
     if q:
         like = f"%{q}%"
         qy = qy.filter(or_(Alert.content.like(like), Alert.task_name.like(like),
                            Customer.name.like(like)))
+    if customer_name:
+        like = f"%{customer_name}%"
+        qy = qy.filter(or_(Customer.name.like(like), Customer.code.like(like)))
+    if order_no:
+        qy = qy.filter(Alert.order_no.like(f"%{order_no}%"))
+    if task_name:
+        qy = qy.filter(Alert.task_name.like(f"%{task_name}%"))
+    if content:
+        qy = qy.filter(Alert.content.like(f"%{content}%"))
     if level:
         qy = qy.filter(Alert.level == level)
     if type:
@@ -2485,14 +2502,23 @@ def extract_daily(body: ExtractBody, db: Session = Depends(get_db), _=Depends(ge
 def run_alert_scan(db: Session):
     """定时：停单日临近（按预警天数）-> 停单提醒；余额低于预警额度 -> 账单预警"""
     today = date.today()
+    # 清理历史重复的未处理停单提醒（同一订单只保留最新一条）
+    keep = db.query(func.max(Alert.id)).filter(
+        Alert.type == "停单提醒", Alert.status == "未处理",
+        Alert.order_id.isnot(None)).group_by(Alert.order_id).all()
+    keep_ids = [r[0] for r in keep]
+    if keep_ids:
+        db.query(Alert).filter(Alert.type == "停单提醒", Alert.status == "未处理",
+                               Alert.order_id.isnot(None),
+                               Alert.id.notin_(keep_ids)).delete(synchronize_session=False)
     # 停单提醒（预警天数内到期的订单）
     alert_days = _alert_days(db)
     target = today + timedelta(days=alert_days)
     for o in db.query(Order).filter(Order.stop_date.isnot(None),
                                     Order.stop_date >= today,
                                     Order.stop_date <= target).all():
-        if not db.query(Alert).filter(Alert.type == "停单提醒", Alert.task_name == o.task_name,
-                                      Alert.trigger_time >= datetime(today.year, today.month, today.day)).first():
+        if not db.query(Alert).filter(Alert.type == "停单提醒", Alert.status == "未处理",
+                                      Alert.order_id == o.id).first():
             db.add(Alert(level="提醒", type="停单提醒", customer_id=o.customer_id,
                          task_name=o.task_name, order_no=o.order_no, order_id=o.id,
                          content=f"停单日 {o.stop_date} 已到达，请确认是否停单",
@@ -2501,8 +2527,8 @@ def run_alert_scan(db: Session):
     for o in db.query(Order).filter(Order.status.in_(["在执", "待停"]),
                                     Order.end_date.isnot(None),
                                     Order.end_date <= today).all():
-        if not db.query(Alert).filter(Alert.type == "停单提醒", Alert.task_name == o.task_name,
-                                      Alert.trigger_time >= datetime(today.year, today.month, today.day)).first():
+        if not db.query(Alert).filter(Alert.type == "停单提醒", Alert.status == "未处理",
+                                      Alert.order_id == o.id).first():
             db.add(Alert(level="提醒", type="停单提醒", customer_id=o.customer_id,
                          task_name=o.task_name, order_no=o.order_no, order_id=o.id,
                          content=f"截止时间 {o.end_date} 已过期（{o.task_name or o.order_no}），请确认是否处理",

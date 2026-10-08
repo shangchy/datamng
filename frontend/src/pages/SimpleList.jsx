@@ -237,7 +237,7 @@ export default function SimpleList({ kind }) {
   function changePerPage(pp) { setPerPage(pp); setPage(1); load(1, pp) }
   useEffect(() => {
     setFilters({}); setPage(1)
-    const pp = cfg.defaultPerPage || 1000
+    const pp = cfg.defaultPerPage || 100
     setPerPage(pp)
     load(1, pp, {})
   }, [kind])
@@ -245,6 +245,7 @@ export default function SimpleList({ kind }) {
   // 加载下拉选项（渠道/客户/品类/省市等）
   useEffect(() => {
     const setOpt = (k, arr) => setFieldOptions(o => ({ ...o, [k]: arr }))
+    if (['users', 'channels', 'operators'].includes(kind)) setOpt('status', ['启用', '停用'])
     api.get('/api/customers?per_page=1000').then(r => setCustomers(r.data.rows)).catch(() => {})
     const need = {
       fund: [],
@@ -448,6 +449,9 @@ export default function SimpleList({ kind }) {
     }
     if (kind === 'daily' && c.k === 'task_id' && v) {
       return <a className="link" onClick={() => openOrderByTaskId(v)}>{v}</a>
+    }
+    if (kind === 'alerts' && c.k === 'order_no' && v) {
+      return <a className="link" onClick={() => openOrderByNo(v)}>{v}</a>
     }
     if (kind === 'daily' && c.k === 'source_file' && r.source_file_id) {
       return <a className="link" onClick={() => downloadFile(`/api/source-files/${r.source_file_id}/download`).catch(e => showError(e.message))}>{v || '—'}</a>
@@ -684,6 +688,15 @@ export default function SimpleList({ kind }) {
       const r = await api.get('/api/orders?task_id=' + encodeURIComponent(taskId) + '&per_page=1')
       if (r.data.rows.length) setOrderDetail(r.data.rows[0])
       else showError('未找到订单 ' + taskId)
+    } catch (e) { showError(e.message) }
+  }
+
+  async function openOrderByNo(no) {
+    if (!no) return
+    try {
+      const r = await api.get('/api/orders?order_no=' + encodeURIComponent(no) + '&per_page=1')
+      if (r.data.rows.length) setOrderDetail(r.data.rows[0])
+      else showError('未找到订单 ' + no)
     } catch (e) { showError(e.message) }
   }
 

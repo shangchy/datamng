@@ -56,7 +56,7 @@ const FILTER_COLS = [
   { k: 'status', l: '状态' }, { k: 'order_date', l: '更新日期' },
   { k: 'upstream', l: '甲方' }, { k: 'order_no', l: '订单号' }, { k: 'task_id', l: '工单号' }, { k: 'dup', l: '重复订单' },
   { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' }, { k: 'price', l: '定价' },
-  { k: 'platform', l: '平台' }, { k: 'group_name', l: '小组' }, { k: 'tpl_code', l: '出数模版' },
+  { k: 'platform', l: '平台' }, { k: 'no_cat2', l: '平台无二级品类' }, { k: 'group_name', l: '小组' }, { k: 'tpl_code', l: '出数模版' },
   { k: 'add_name', l: '是否加名' }, { k: 'check_collision', l: '是否撞库' }, { k: 'channel', l: '渠道' }, { k: 'operator', l: '运营商' },
   { k: 'task_name', l: '任务名' }, { k: 'url', l: 'url' }, { k: 'qty', l: '数量' }, { k: 'duration', l: '时长' },
   { k: 'age_min', l: '年龄下限' }, { k: 'age_max', l: '年龄上限' }, { k: 'pv', l: 'pv' },
@@ -91,7 +91,7 @@ export default function Orders({ variant = 'orders' }) {
   const [filters, setFilters] = useState({})
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
-  const [perPage, setPerPage] = useState(1000)
+  const [perPage, setPerPage] = useState(100)
   const [sort, setSort] = useState(null)
   const [modal, setModal] = useState(null) // null | 'create' | 'edit' | 'modify'
   const [form, setForm] = useState(emptyForm)
@@ -171,6 +171,7 @@ export default function Orders({ variant = 'orders' }) {
     customer: customers.map(c => c.code),
     channel: channels.map(c => c.name),
     platform: platforms.map(p => p.name),
+    no_cat2: ['有', '无'],
     add_name: ['是', '否'],
     check_collision: ['是', '否'],
     operator: operators.map(o => o.name),
@@ -503,7 +504,7 @@ export default function Orders({ variant = 'orders' }) {
                 {!isStop && (
                 <td className="ops">
                   {o.status === '未提' && <IconBtn title="编辑" color="#2563eb" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconEdit}</IconBtn>}
-                  {['在执', '已停', '改单'].includes(o.status) && <IconBtn title="改单" color="#7c3aed" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconModify}</IconBtn>}
+                  {['在执', '待停', '已停', '改单'].includes(o.status) && <IconBtn title="改单" color="#7c3aed" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconModify}</IconBtn>}
                   {['在执', '改单'].includes(o.status) && <IconBtn title="停单" color="#d97706" onClick={e => { e.stopPropagation(); const d = new Date(); setStopDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); setStopReason('业务调整'); setStopTarget(o) }}>{IconStop}</IconBtn>}
                   <IconBtn title="复制新增" color="#0891b2" onClick={e => { e.stopPropagation(); copyCreate(o) }}>{IconCopy}</IconBtn>
                   <IconBtn title="删除" color="#dc2626" onClick={e => { e.stopPropagation(); delOrder(o) }}>{IconDelete}</IconBtn>

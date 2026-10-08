@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, aliased
 
 from ..database import get_db
 from ..deps import get_current_user, require_admin
-from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator
+from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator, Platform, Category
 from ..schemas import OrderBody, StopBody, BatchStopBody, OrderDistConfigBody, GenerateBody, BatchGroupBody
 from ..pagination import paginate, ok_page
 from ..utils import fmt_dt
@@ -222,7 +222,7 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
                 task_id: str = "", duration: str = "", group_name: str = "", tpl_code: str = "",
                 add_name: str = "", url: str = "", operator: str = "", price: str = "",
                 dup: str = "", dup_order_no: str = "",
-                check_collision: str = "",
+                check_collision: str = "", no_cat2: str = "",
                 page: int = 1, per_page: int = 10):
     Upstream = aliased(Customer)
     qy = (db.query(Order)
@@ -301,6 +301,14 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(Order.order_date == order_date)
     if platform:
         qy = qy.filter(Order.platform.like(f"%{platform}%"))
+    if no_cat2:
+        Cat2 = aliased(Category)
+        cat2_platforms = db.query(Platform.name).join(Cat2, Cat2.id == Platform.cat_id).subquery()
+        if no_cat2 in ("无", "否", "false", "0", "False", "no", "NO"):
+            qy = qy.filter(or_(Order.platform.is_(None), Order.platform == "",
+                               ~Order.platform.in_(cat2_platforms)))
+        elif no_cat2 in ("有", "是", "true", "1", "True", "yes", "YES"):
+            qy = qy.filter(Order.platform.in_(cat2_platforms))
     if secondary_agent:
         qy = qy.filter(Order.secondary_agent.like(f"%{secondary_agent}%"))
     total, rows = paginate(qy.order_by(Order.id.desc()), page, per_page)

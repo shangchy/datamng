@@ -2,7 +2,6 @@ import React from 'react'
 import { ClearableInput } from './ui'
 
 const ENUM_COLS = {
-  status: ['未提', '在执', '待停', '已停', '改单', '启用', '停用', '已停止', '未处理', '已处理'],
   type: ['停单提醒', '账单预警'],
   level: ['高', '中', '低'],
   gender: ['男', '女'],
@@ -41,6 +40,18 @@ export default function FilterBar({ cols, filters, setFilters, onSearch, fieldOp
         }
         const opts = fieldOptions[c.k]
         if (opts) {
+          if (opts.length <= 20) {
+            return (
+              <select key={c.k} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })}>
+                <option value="">{c.l}</option>
+                {opts.map(o => {
+                  const val = typeof o === 'object' ? o.value : o
+                  const label = typeof o === 'object' ? o.label : o
+                  return <option key={val} value={val}>{label}</option>
+                })}
+              </select>
+            )
+          }
           const id = `dl-${c.k}`
           return (
             <React.Fragment key={c.k}>
