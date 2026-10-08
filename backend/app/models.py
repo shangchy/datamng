@@ -375,6 +375,16 @@ class Alert(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
+class Notification(Base):
+    __tablename__ = "notification"
+    id = Column(Integer, primary_key=True)
+    content = Column(Text, nullable=False)
+    order_no = Column(String(50))
+    task_id = Column(String(100))
+    order_id = Column(Integer)
+    notify_time = Column(DateTime, default=datetime.now)
+
+
 # ============ 通用：操作日志 ============
 
 class OperationLog(Base):

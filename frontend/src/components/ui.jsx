@@ -51,10 +51,10 @@ export function ClearableInput({ value, onChange, className, style, ...props }) 
   )
 }
 
-export function Modal({ title, children, onClose, wide, z }) {
+export function Modal({ title, children, onClose, wide, z, style }) {
   return (
     <div className="mask" style={z ? { zIndex: z } : undefined} onClick={onClose}>
-      <div className={`modal ${wide ? 'wide' : ''}`} onClick={e => e.stopPropagation()}>
+      <div className={`modal ${wide ? 'wide' : ''}`} style={style} onClick={e => e.stopPropagation()}>
         <h3>
           <span className="modal-title">{title}</span>
           <button className="modal-close" title="关闭" onClick={onClose}>

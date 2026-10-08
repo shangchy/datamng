@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import Order, Bill, Customer, Alert, DailyData, Category, Fund, Channel
+from ..models import Order, Bill, Customer, Alert, DailyData, Category, Fund, Channel, Notification
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -53,6 +53,16 @@ def alerts_count(db: Session = Depends(get_db), _=Depends(get_current_user)):
     stop = db.query(func.count(Alert.id)).filter(Alert.type == "停单提醒", Alert.status == "未处理").scalar() or 0
     bill = db.query(func.count(Alert.id)).filter(Alert.type == "账单预警", Alert.status == "未处理").scalar() or 0
     return {"code": 0, "data": {"stop": int(stop), "bill": int(bill)}, "msg": "ok"}
+
+
+@router.get("/notifications")
+def notifications(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    rows = db.query(Notification).order_by(Notification.notify_time.desc()).all()
+    return {"code": 0, "data": [{
+        "id": n.id, "content": n.content, "order_no": n.order_no or "",
+        "task_id": n.task_id or "", "order_id": n.order_id,
+        "notify_time": n.notify_time.strftime("%Y-%m-%d %H:%M:%S") if n.notify_time else "",
+    } for n in rows], "msg": "ok"}
 
 
 @router.get("/trend")

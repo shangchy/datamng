@@ -67,6 +67,10 @@ const FILTER_COLS = [
 const emptyForm = { order_no: '', customer_id: '', upstream_id: '', channel_id: '', operator_id: '', task_name: '', task_id: '', qty: '', duration: '', province: '', city: '', excl_province: '', excl_city: '', age_min: '', age_max: '', pv: '', start_date: '', end_date: '', order_date: '', price: '', secondary_agent: '', platform: '', tpl_id: '', group_name: '', add_name: false, check_collision: false, template_id: '', filename_rule: '', status: '未提', url: '' }
 
 const REGION_SEP = /[|｜,，;；]/
+function todayStr() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 function fmtRegion(val) {
   return (val || '').split(REGION_SEP).map(s => s.trim()).filter(Boolean).join('、')
 }
@@ -199,7 +203,7 @@ export default function Orders({ variant = 'orders' }) {
     return list
   }
 
-  function openCreate() { setForm(emptyForm); setModal('create') }
+  function openCreate() { setForm({ ...emptyForm, order_date: todayStr() }); setModal('create') }
 
   function toggleSelect(id) {
     setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
@@ -258,7 +262,7 @@ export default function Orders({ variant = 'orders' }) {
       province: toComma(o.province), city: toComma(o.city), excl_province: toComma(o.excl_province),
       excl_city: toComma(o.excl_city), age_min: o.age_min ?? '', age_max: o.age_max ?? '', pv: o.pv ?? '',
       start_date: o.start_date || '', end_date: o.end_date || '',
-      order_date: o.order_date || '', price: o.price ?? '', secondary_agent: o.secondary_agent || '',
+      order_date: o.status === '未提' ? (o.order_date || '') : todayStr(), price: o.price ?? '', secondary_agent: o.secondary_agent || '',
       platform: o.platform || '', tpl_id: o.tpl_id ?? '', group_name: o.group_name || '',
       export_filename: o.export_filename || '', add_name: !!o.add_name, check_collision: !!o.check_collision,
       template_id: o.template_id ?? '', filename_rule: o.filename_rule || '', dist_config: o.dist_config || null,
@@ -279,6 +283,7 @@ export default function Orders({ variant = 'orders' }) {
       platform: o.platform || '', tpl_id: o.tpl_id ?? '', group_name: o.group_name || '',
       export_filename: o.export_filename || '', add_name: !!o.add_name, check_collision: !!o.check_collision,
       template_id: o.template_id ?? '', filename_rule: o.filename_rule || '', dist_config: o.dist_config || null,
+      order_date: todayStr(),
       url: (o.urls || []).join('\n'),
     })
     setModal('create')

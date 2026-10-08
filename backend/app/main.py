@@ -385,6 +385,25 @@ def _scheduler_loop():
         time.sleep(60)  # 防止重复触发
 
 
+def _auto_stop_loop():
+    """每天上午 10 点执行到期订单自动停单"""
+    from .routers.data import run_auto_stop
+    while True:
+        now = datetime.now()
+        next_run = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        if next_run <= now:
+            next_run += timedelta(days=1)
+        time.sleep((next_run - now).total_seconds())
+        try:
+            db = SessionLocal()
+            n = run_auto_stop(db)
+            db.close()
+            print(f"[scheduler] 到期自动停单完成，共 {n} 单")
+        except Exception as e:  # noqa
+            print(f"[scheduler] 自动停单异常: {e}")
+        time.sleep(60)  # 防止重复触发
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content={"code": exc.status_code, "data": None, "msg": exc.detail})
@@ -404,6 +423,7 @@ def on_startup():
     finally:
         db.close()
     threading.Thread(target=_scheduler_loop, daemon=True).start()
+    threading.Thread(target=_auto_stop_loop, daemon=True).start()
 
 
 @app.get("/healthz")

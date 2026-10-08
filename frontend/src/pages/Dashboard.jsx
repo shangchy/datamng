@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
-import { useToast } from '../components/ui'
+import { useToast, Modal } from '../components/ui'
 import Chart from '../components/Chart'
 
 const MEDALS = ['🥇', '🥈', '🥉']
@@ -35,6 +35,8 @@ export default function Dashboard() {
   const [range, setRange] = useState('7')
   const [startD, setStartD] = useState('')
   const [endD, setEndD] = useState('')
+  const [notifs, setNotifs] = useState([])
+  const [notifModal, setNotifModal] = useState(false)
 
   function loadCharts(start = '', end = '') {
     api.get(`/api/dashboard/trend?start=${start}&end=${end}`).then(r => setTrend(r.data)).catch(() => {})
@@ -45,6 +47,7 @@ export default function Dashboard() {
   useEffect(() => {
     api.get('/api/dashboard/summary').then(r => setS(r.data)).catch(e => showError(e.message))
     api.get('/api/dashboard/rank').then(r => setRank(r.data)).catch(() => {})
+    api.get('/api/dashboard/notifications').then(r => setNotifs(r.data || [])).catch(() => {})
     loadCharts()
   }, [])
 
@@ -115,6 +118,19 @@ export default function Dashboard() {
           </span>
         </h3>
         <Chart option={trendOption} height={300} />
+        <div className="notif-box">
+          <div className="notif-head">
+            <span className="notif-title">📢 最新消息</span>
+            <button className="btn small" onClick={() => setNotifModal(true)}>查看更多</button>
+          </div>
+          {notifs.length === 0 ? <div className="empty">暂无消息</div> : (
+            <ul className="notif-list">
+              {notifs.slice(0, 10).map(n => (
+                <li key={n.id}><span className="notif-time">{n.notify_time}</span><span>{n.content}</span></li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
       <div className="row3">
@@ -158,6 +174,19 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {notifModal && (
+        <Modal title="全部消息" onClose={() => setNotifModal(false)} style={{ width: 760 }}>
+          {notifs.length === 0 ? <div className="empty">暂无消息</div> : (
+            <ul className="notif-list" style={{ maxHeight: 420 }}>
+              {notifs.map(n => (
+                <li key={n.id}><span className="notif-time">{n.notify_time}</span><span>{n.content}</span></li>
+              ))}
+            </ul>
+          )}
+          <div className="foot"><button className="btn primary" onClick={() => setNotifModal(false)}>关闭</button></div>
+        </Modal>
+      )}
     </div>
   )
 }

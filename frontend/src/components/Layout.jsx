@@ -33,7 +33,6 @@ const MENUS = [
     { key: '/templates', name: '模版管理' },
   ] },
   { key: '/customers', name: '客户管理', icon: '👤', perm: 'customer:view' },
-  { key: '/alerts', name: '预警中心', icon: '🔔', perm: 'alert:view' },
   { key: '/accounts', name: '账户管理', icon: '⚙️', admin: true },
   { key: '/logs', name: '日志管理', icon: '📜', admin: true },
 ]

@@ -15,7 +15,7 @@ from ..database import get_db, SessionLocal
 from ..deps import get_current_user, require_admin
 from ..models import (DailyData, Fund, Bill, Alert, Customer, Channel, Category,
                       Order, SysConfig, Operator, SourceFile, Template, WashName, Platform,
-                      CustomerRecharge, CustomerPrice)
+                      CustomerRecharge, CustomerPrice, Notification)
 from ..pagination import paginate, ok_page
 from ..excel import xlsx_response
 from ..utils import fmt_dt
@@ -2560,3 +2560,25 @@ def run_alert_scan(db: Session):
             if not c or not c.warn_amount or (c.balance or 0) >= c.warn_amount:
                 a.status = "已处理"
     db.commit()
+
+
+def run_auto_stop(db: Session):
+    """每日定时：到期订单自动停单（截止日期已到、仍在执）-> 改为待停并生成通知消息"""
+    today = date.today()
+    rows = db.query(Order).filter(Order.status == "在执",
+                                  Order.end_date.isnot(None),
+                                  Order.end_date <= today).all()
+    for o in rows:
+        o.status = "待停"
+        o.order_date = today
+        o.stop_date = today
+        o.updated_at = datetime.now()
+        db.add(Notification(
+            order_no=o.order_no, task_id=o.task_id, order_id=o.id,
+            content=f"{today.strftime('%Y-%m-%d')} 工单号 {o.task_id or ''} 已到期，系统已自动改为待停单，请及时在今天内向客户提交停单申请。",
+            notify_time=datetime.now(),
+        ))
+        db.query(Alert).filter(Alert.type == "停单提醒", Alert.order_id == o.id,
+                               Alert.status == "未处理").delete()
+    db.commit()
+    return len(rows)
