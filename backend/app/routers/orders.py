@@ -16,7 +16,7 @@ from ..deps import get_current_user, require_admin
 from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator, Platform, Category
 from ..schemas import OrderBody, StopBody, BatchStopBody, OrderDistConfigBody, GenerateBody, BatchGroupBody, ReopenBody
 from ..pagination import paginate, ok_page
-from ..utils import fmt_dt
+from ..utils import fmt_dt, norm_region
 from ..tidabiao import _order_type, _region_mode
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
@@ -126,6 +126,19 @@ def _order_dict(db, o: Order, alert_tasks=None) -> dict:
     order_urls = list(o.urls)
     urls = [u.url for u in order_urls]
     url_items = [{"url": u.url} for u in order_urls]
+    # 小程序：名称和 id 用 | 连接（不丢失 id）
+    if ch and ch.name == "小程序":
+        name = ""
+        ghid = ""
+        for u in urls:
+            if u.startswith("gh_"):
+                ghid = u
+            elif not name:
+                name = u
+        combined = "|".join(x for x in (name, ghid) if x)
+        display_url = combined if combined else (urls[0] if urls else "")
+    else:
+        display_url = urls[0] + f" 等{len(urls)}个" if len(urls) > 1 else (urls[0] if urls else "")
     return {
         "id": o.id, "order_no": o.order_no, "status": o.status,
         "batch_no": o.batch_no or "",
@@ -153,9 +166,10 @@ def _order_dict(db, o: Order, alert_tasks=None) -> dict:
         "first_output_date": str(o.start_date + timedelta(days=2)) if o.start_date else None,
         "last_output_date": str(o.end_date + timedelta(days=1)) if o.end_date else None,
         "dist_config": json.loads(o.dist_config_json) if o.dist_config_json else None,
-        "url": urls[0] + f" 等{len(urls)}个" if len(urls) > 1 else (urls[0] if urls else ""),
+        "url": display_url,
         "urls": urls, "url_items": url_items, "region": _region_summary(o),
-        "province": o.province, "city": o.city, "excl_province": o.excl_province, "excl_city": o.excl_city,
+        "province": norm_region(o.province), "city": norm_region(o.city),
+        "excl_province": norm_region(o.excl_province), "excl_city": norm_region(o.excl_city),
         "qty": o.qty, "age_min": o.age_min, "age_max": o.age_max, "pv": o.pv,
         "created_at": fmt_dt(o.created_at), "stop_date": str(o.stop_date) if o.stop_date else None,
         "has_alert": (o.task_name in alert_tasks) if alert_tasks is not None else False,
@@ -1075,10 +1089,10 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                 existing.updated_at = datetime.now()
                 db.query(OrderUrl).filter(OrderUrl.order_id == existing.id).delete()
                 if url_str:
-                    urls = [u for u in re.split(r"[|\n\r｜]+", url_str) if u.strip()]
+                    urls = [u for u in re.split(r"[\n\r]+", url_str) if u.strip()]
                     for i, u in enumerate(urls):
                         db.add(OrderUrl(order_id=existing.id, url=u.strip(), level="高", sort_no=i))
-                new_urls = sorted(u.strip() for u in re.split(r"[|\n\r｜]+", url_str) if u.strip())
+                new_urls = sorted(u.strip() for u in re.split(r"[\n\r]+", url_str) if u.strip())
                 changed = []
                 if before_urls != new_urls:
                     changed.append("url")
@@ -1118,7 +1132,7 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                 db.flush()
                 o.template_id = match_template(db, o)
                 if url_str:
-                    urls = [u for u in re.split(r"[|\n\r｜]+", url_str) if u.strip()]
+                    urls = [u for u in re.split(r"[\n\r]+", url_str) if u.strip()]
                     for i, u in enumerate(urls):
                         db.add(OrderUrl(order_id=o.id, url=u.strip(), level="高", sort_no=i))
                 imported += 1

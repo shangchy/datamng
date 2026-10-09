@@ -11,6 +11,7 @@ from openpyxl.utils import get_column_letter
 
 from .models import Channel, Customer, Operator, OrderTemplate, Template
 from .regions import CITIES
+from .utils import norm_region
 
 
 def _order_type(task_id):
@@ -134,7 +135,7 @@ def _order_values(db, o):
                 ghid = u
             elif not name:
                 name = u
-        urls = [f"{name} {ghid}".strip()] if (name or ghid) else urls
+        urls = ["|".join(x for x in (name, ghid) if x)] if (name or ghid) else urls
     return {
         "party": up.name if up else "",
         "task_id": o.task_id or o.order_no or "",
@@ -149,11 +150,11 @@ def _order_values(db, o):
         "age_min": o.age_min,
         "age_max": o.age_max,
         "pv": o.pv,
-        "region": _region_value(o),
-        "province": "" if ("全国" in (o.province or "")) else o.province,
-        "excl_province": o.excl_province,
-        "city": _city_value(o),
-        "excl_city": o.excl_city,
+        "region": norm_region(_region_value(o)),
+        "province": "" if ("全国" in (o.province or "")) else norm_region(o.province),
+        "excl_province": norm_region(o.excl_province),
+        "city": norm_region(_city_value(o)),
+        "excl_city": norm_region(o.excl_city),
         "order_no": o.order_no or "",
         "order_date": o.order_date.strftime("%Y-%m-%d") if o.order_date else "",
         "start_date": o.start_date.strftime("%Y-%m-%d") if o.start_date else "",
@@ -504,6 +505,7 @@ def _fill_uploaded_template(db, tpl, orders, action):
     thin = Side(style="thin", color="000000")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    no_wrap = Alignment(horizontal="center", vertical="center", wrap_text=False)
     zebra_color = {"新单": "C6EFCE", "改单": "FCE4D6", "停单": "F2F2F2"}.get(action, "C6EFCE")
     zebra = PatternFill(start_color=zebra_color, end_color=zebra_color, fill_type="solid")
     changed_fill = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
@@ -583,7 +585,7 @@ def _fill_uploaded_template(db, tpl, orders, action):
                 else:
                     value = _cell_value_split(kind, key, vals, url)
                 cell = ws.cell(row=row, column=j, value=value)
-                cell.alignment = center
+                cell.alignment = no_wrap if key in ("province", "city", "excl_province", "excl_city", "region") else center
                 cell.border = border
                 is_changed = action == "改单" and kind == "field" and key not in ("task_id", "task_name") and (changed is None or key in changed)
                 cell.fill = changed_fill if is_changed else zebra

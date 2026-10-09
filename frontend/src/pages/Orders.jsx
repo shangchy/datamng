@@ -75,7 +75,7 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 function fmtRegion(val) {
-  return (val || '').split(REGION_SEP).map(s => s.trim()).filter(Boolean).join('、')
+  return (val || '').split(REGION_SEP).map(s => s.trim()).filter(Boolean).join('|')
 }
 function toComma(val) {
   return (val || '').split(REGION_SEP).map(s => s.trim()).filter(Boolean).join(',')
@@ -460,7 +460,7 @@ export default function Orders({ variant = 'orders' }) {
       const val = o[c.k] || ''
       const parts = val.split(/[|｜,，;；]/).map(s => s.trim()).filter(Boolean)
       if (parts.length > 3) return <td title={val}>{parts[0]} 等{parts.length}个</td>
-      return <td title={val}>{parts.join(',') || '—'}</td>
+      return <td title={val}>{parts.join('|') || '—'}</td>
     }
     return <td className={num ? 'num' : ''}>{o[c.k] ?? '—'}</td>
   }

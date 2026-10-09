@@ -1,4 +1,5 @@
 """通用工具"""
+import re
 
 
 def fmt_dt(dt):
@@ -6,6 +7,14 @@ def fmt_dt(dt):
     if not dt:
         return None
     return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def norm_region(v):
+    """地区字段统一为 | 分隔（兼容 , ， 、 ｜ | ; ； 换行等分隔符）"""
+    if not v:
+        return ""
+    parts = re.split(r"[|｜,，、;；\n\r]+", str(v))
+    return "|".join(p.strip() for p in parts if p.strip())
 
 
 def client_ip(request) -> str:
