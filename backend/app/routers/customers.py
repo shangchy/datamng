@@ -112,6 +112,19 @@ def update_customer(cid: int, body: CustomerBody, db: Session = Depends(get_db),
     return {"code": 0, "data": None, "msg": "ok"}
 
 
+@router.put("/{cid}/balance")
+def update_customer_balance(cid: int, body: dict, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    c = db.query(Customer).filter(Customer.id == cid).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="客户不存在")
+    try:
+        c.balance = Decimal(str(body.get("balance")))
+    except Exception:
+        raise HTTPException(status_code=422, detail="余额格式不正确")
+    db.commit()
+    return {"code": 0, "data": None, "msg": "余额已更新"}
+
+
 @router.delete("/{cid}")
 def delete_customer(cid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     c = db.query(Customer).filter(Customer.id == cid).first()
@@ -150,10 +163,6 @@ def create_recharge(cid: int, body: RechargeBody, db: Session = Depends(get_db),
     db.add(CustomerRecharge(customer_id=cid, recharge_date=body.recharge_date,
                             amount_u=u, amount_rmb=rmb, note=body.note))
     c.balance = (c.balance if c.balance is not None else Decimal("0")) + Decimal(str(rmb))
-    # 联动最新账单余额（保持与客户余额一致）
-    latest_bill = db.query(Bill).filter(Bill.customer_id == cid).order_by(Bill.biz_date.desc()).first()
-    if latest_bill:
-        latest_bill.balance = c.balance
     db.query(Alert).filter(Alert.type == "账单预警", Alert.customer_id == cid, Alert.status == "未处理").delete()
     db.commit()
     return {"code": 0, "data": None, "msg": "充值成功"}
@@ -185,9 +194,6 @@ def update_recharge(cid: int, rid: int, body: RechargeBody, db: Session = Depend
     r.note = body.note
     if delta:
         c.balance = (c.balance if c.balance is not None else Decimal("0")) + Decimal(str(delta))
-        latest_bill = db.query(Bill).filter(Bill.customer_id == cid).order_by(Bill.biz_date.desc()).first()
-        if latest_bill:
-            latest_bill.balance = c.balance
     db.query(Alert).filter(Alert.type == "账单预警", Alert.customer_id == cid, Alert.status == "未处理").delete()
     db.commit()
     return {"code": 0, "data": None, "msg": "充值已更新"}

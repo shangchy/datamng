@@ -22,6 +22,7 @@ export default function Customers() {
   const [tab, setTab] = useState('recharges')
   const [recharge, setRecharge] = useState(null)
   const [rechargeRefresh, setRechargeRefresh] = useState(0)
+  const [balanceEdit, setBalanceEdit] = useState(null)
   const [modal, setModal] = useState(null)
   const [form, setForm] = useState(emptyForm)
   const [formTab, setFormTab] = useState('prices')
@@ -102,6 +103,19 @@ export default function Customers() {
 
   function editRecharge(cid, r, fromDetail) {
     setRecharge({ id: r.id, customer_id: cid, amount_u: r.amount_u ?? '', amount_rmb: r.amount_rmb ?? '', recharge_date: r.recharge_date, note: r.note || '', from_detail: fromDetail })
+  }
+
+  function openBalanceEdit() {
+    setBalanceEdit({ balance: detail.balance ?? 0 })
+  }
+
+  async function saveBalance() {
+    try {
+      await api.put(`/api/customers/${detail.id}/balance`, { balance: Number(balanceEdit.balance) })
+      toast('余额已更新'); setBalanceEdit(null)
+      const r = await api.get(`/api/customers/${detail.id}`)
+      setDetail(r.data)
+    } catch (e) { showError(e.message) }
   }
 
   async function saveRate() {
@@ -196,7 +210,19 @@ export default function Customers() {
           <TabContent tab={tab} customerId={detail.id} refreshKey={rechargeRefresh} onEditRecharge={(r) => editRecharge(detail.id, r, true)} />
           <div className="foot">
             <button className="btn primary" onClick={() => { setRecharge({ customer_id: detail.id, amount_u: '', amount_rmb: '', recharge_date: '', note: '', from_detail: true }) }}>+ 充值</button>
+            <button className="btn" onClick={openBalanceEdit}>修改余额</button>
             <button className="btn" onClick={() => setDetail(null)}>关闭</button>
+          </div>
+        </Modal>
+      )}
+
+      {balanceEdit && (
+        <Modal title="修改余额" onClose={() => setBalanceEdit(null)}>
+          <div className="field" style={{ marginBottom: 12 }}><label>客户余额（元）</label>
+            <input type="number" step="0.01" value={balanceEdit.balance} onChange={e => setBalanceEdit({ balance: e.target.value })} /></div>
+          <div className="foot">
+            <button className="btn" onClick={() => setBalanceEdit(null)}>取消</button>
+            <button className="btn primary" onClick={saveBalance}>保存</button>
           </div>
         </Modal>
       )}

@@ -131,6 +131,7 @@ export default function SimpleList({ kind }) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
   const [billDetail, setBillDetail] = useState(null)
+  const [balanceEdit, setBalanceEdit] = useState(null)
   const [dailyDate, setDailyDate] = useState(() => {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -682,6 +683,19 @@ export default function SimpleList({ kind }) {
     } catch (e) { showError(e.message) }
   }
 
+  function openBalanceEdit() {
+    setBalanceEdit({ balance: billDetail.balance ?? 0 })
+  }
+
+  async function saveBalance() {
+    try {
+      await api.put(`/api/bills/${billDetail.id}/balance`, { balance: Number(balanceEdit.balance) })
+      toast('余额已更新'); setBalanceEdit(null)
+      const r = await api.get(`/api/bills/${billDetail.id}`)
+      setBillDetail(r.data); load()
+    } catch (e) { showError(e.message) }
+  }
+
   async function openOrderByTaskId(taskId) {
     if (!taskId) return
     try {
@@ -1041,7 +1055,21 @@ export default function SimpleList({ kind }) {
               </table>
             </div>
           </div>
-          <div className="foot"><button className="btn primary" onClick={() => setBillDetail(null)}>关闭</button></div>
+          <div className="foot">
+            <button className="btn" onClick={openBalanceEdit}>修改余额</button>
+            <button className="btn primary" onClick={() => setBillDetail(null)}>关闭</button>
+          </div>
+        </Modal>
+      )}
+
+      {balanceEdit && (
+        <Modal title="修改余额" onClose={() => setBalanceEdit(null)}>
+          <div className="field" style={{ marginBottom: 12 }}><label>账单余额（元）</label>
+            <input type="number" step="0.01" value={balanceEdit.balance} onChange={e => setBalanceEdit({ balance: e.target.value })} /></div>
+          <div className="foot">
+            <button className="btn" onClick={() => setBalanceEdit(null)}>取消</button>
+            <button className="btn primary" onClick={saveBalance}>保存</button>
+          </div>
         </Modal>
       )}
 

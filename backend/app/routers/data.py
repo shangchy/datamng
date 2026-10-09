@@ -1953,7 +1953,7 @@ def list_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
             "id": b.id, "customer": f"{c.code} {c.name}" if c else "", "customer_id": b.customer_id,
             "biz_date": str(b.biz_date), "purchase_qty": b.purchase_qty,
             "sales": float(b.sales) if b.sales is not None else 0,
-            "balance": float(c.balance) if c and c.balance is not None else None,
+            "balance": float(b.balance) if b.balance is not None else None,
             "profit": float(b.profit) if b.profit is not None else 0,
             "created_at": fmt_dt(b.created_at),
         })
@@ -2220,7 +2220,7 @@ def bill_detail(bid: int, db: Session = Depends(get_db), _=Depends(get_current_u
         "biz_date": str(b.biz_date),
         "purchase_qty": b.purchase_qty,
         "sales": float(b.sales) if b.sales is not None else 0,
-        "balance": float(c.balance) if c and c.balance is not None else 0,
+        "balance": float(b.balance) if b.balance is not None else 0,
         "profit": float(b.profit) if b.profit is not None else 0,
         "created_at": fmt_dt(b.created_at),
         "groups": [{"task_name": gg["task_name"], "task_id": g, "order_no": gg["order_no"],
@@ -2229,6 +2229,19 @@ def bill_detail(bid: int, db: Session = Depends(get_db), _=Depends(get_current_u
                    for g, gg in sorted(groups.items(), key=lambda kv: _pinyin_key(kv[1]["task_name"]))],
     }
     return {"code": 0, "data": detail, "msg": "ok"}
+
+
+@router.put("/bills/{bid}/balance")
+def update_bill_balance(bid: int, body: dict, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    b = db.query(Bill).filter(Bill.id == bid).first()
+    if not b:
+        raise HTTPException(status_code=404, detail="账单不存在")
+    try:
+        b.balance = round(float(body.get("balance")), 2)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="余额格式不正确")
+    db.commit()
+    return {"code": 0, "data": None, "msg": "余额已更新"}
 
 
 # ============ 预警 ============

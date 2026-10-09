@@ -144,7 +144,7 @@ def _order_values(db, o):
         "channel": ch_name,
         "url": urls,
         "qty": o.qty,
-        "duration": _duration_label(o),
+        "duration": "长期" if (up and up.name == "牛") else _duration_label(o),
         "duration_mode": _duration_mode(o),
         "age_min": o.age_min,
         "age_max": o.age_max,
