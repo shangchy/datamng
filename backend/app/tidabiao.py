@@ -77,8 +77,8 @@ def _duration_label(o):
 
 
 def _region_value(o):
-    if "全国" in (o.task_name or ""):
-        return "全国"
+    if "全国" in (o.province or "") or "全国" in (o.task_name or ""):
+        return ""
     if _region_mode(o) == "地级市":
         return o.city or ""
     return o.province or ""
@@ -125,6 +125,16 @@ def _order_values(db, o):
         elif "106" in nm:
             typ = "106"
     op = db.query(Operator).filter(Operator.id == o.operator_id).first() if o.operator_id else None
+    urls = [u.url for u in o.urls]
+    if typ == "小程序":
+        name = ""
+        ghid = ""
+        for u in urls:
+            if u.startswith("gh_"):
+                ghid = u
+            elif not name:
+                name = u
+        urls = [f"{name} {ghid}".strip()] if (name or ghid) else urls
     return {
         "party": up.name if up else "",
         "task_id": o.task_id or o.order_no or "",
@@ -132,7 +142,7 @@ def _order_values(db, o):
         "type": typ,
         "operator": op.name if op else "",
         "channel": ch_name,
-        "url": [u.url for u in o.urls],
+        "url": urls,
         "qty": o.qty,
         "duration": _duration_label(o),
         "duration_mode": _duration_mode(o),
@@ -140,7 +150,7 @@ def _order_values(db, o):
         "age_max": o.age_max,
         "pv": o.pv,
         "region": _region_value(o),
-        "province": o.province,
+        "province": "" if ("全国" in (o.province or "")) else o.province,
         "excl_province": o.excl_province,
         "city": _city_value(o),
         "excl_city": o.excl_city,
@@ -496,6 +506,7 @@ def _fill_uploaded_template(db, tpl, orders, action):
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     zebra_color = {"新单": "C6EFCE", "改单": "FCE4D6", "停单": "F2F2F2"}.get(action, "C6EFCE")
     zebra = PatternFill(start_color=zebra_color, end_color=zebra_color, fill_type="solid")
+    changed_fill = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
 
     if action == "停单":
         header_row = 1
@@ -574,8 +585,8 @@ def _fill_uploaded_template(db, tpl, orders, action):
                 cell = ws.cell(row=row, column=j, value=value)
                 cell.alignment = center
                 cell.border = border
-                if not multiline_url and block_idx % 2 == 1:
-                    cell.fill = zebra
+                is_changed = action == "改单" and kind == "field" and key not in ("task_id", "task_name") and (changed is None or key in changed)
+                cell.fill = changed_fill if is_changed else zebra
             row += 1
         if row - start > 1:
             for j, m in colmap:

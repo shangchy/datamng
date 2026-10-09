@@ -31,6 +31,9 @@ const IconDelete = (
 const IconCopy = (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
 )
+const IconReopen = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
+)
 
 function IconBtn({ title, color, onClick, children }) {
   return (
@@ -105,6 +108,8 @@ export default function Orders({ variant = 'orders' }) {
   const [stopReason, setStopReason] = useState('业务调整')
   const [reopenTarget, setReopenTarget] = useState(null)
   const [reopenDate, setReopenDate] = useState('')
+  const [reopenOrder, setReopenOrder] = useState(null)
+  const [reopenForm, setReopenForm] = useState({ order_date: '', start_date: '', end_date: '' })
   const [urlDetail, setUrlDetail] = useState(null)
   const [regionDetail, setRegionDetail] = useState(null)
   const [geo, setGeo] = useState({ provinces: [], citiesMap: {} })
@@ -243,6 +248,23 @@ export default function Orders({ variant = 'orders' }) {
     try {
       const r = await api.post('/api/orders/batch-reopen', { ids: reopenTarget.ids, order_date: reopenDate })
       toast(r.msg); setReopenTarget(null); setReopenDate(''); setSelected([]); load()
+    } catch (e) { showError(e.message) }
+  }
+
+  function openReopen(o) {
+    const d = new Date()
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    setReopenOrder(o)
+    setReopenForm({ order_date: today, start_date: o.start_date || '', end_date: o.end_date || '' })
+  }
+
+  async function doReopenOrder() {
+    if (!reopenOrder) return
+    if (!reopenForm.order_date) { showError('请选择更新日期'); return }
+    if (!(await confirm(`确认将该订单复提：状态改为「未提」，更新日期 ${reopenForm.order_date}？`))) return
+    try {
+      const r = await api.post(`/api/orders/${reopenOrder.id}/reopen`, reopenForm)
+      toast(r.msg); setReopenOrder(null); load()
     } catch (e) { showError(e.message) }
   }
 
@@ -510,6 +532,7 @@ export default function Orders({ variant = 'orders' }) {
                 <td className="ops">
                   {o.status === '未提' && <IconBtn title="编辑" color="#2563eb" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconEdit}</IconBtn>}
                   {['在执', '待停', '已停', '改单'].includes(o.status) && <IconBtn title="改单" color="#7c3aed" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconModify}</IconBtn>}
+                  {o.status === '已停' && o.upstream === '牛' && <IconBtn title="复提" color="#059669" onClick={e => { e.stopPropagation(); openReopen(o) }}>{IconReopen}</IconBtn>}
                   {['在执', '改单'].includes(o.status) && <IconBtn title="停单" color="#d97706" onClick={e => { e.stopPropagation(); const d = new Date(); setStopDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); setStopReason('业务调整'); setStopTarget(o) }}>{IconStop}</IconBtn>}
                   <IconBtn title="复制新增" color="#0891b2" onClick={e => { e.stopPropagation(); copyCreate(o) }}>{IconCopy}</IconBtn>
                   <IconBtn title="删除" color="#dc2626" onClick={e => { e.stopPropagation(); delOrder(o) }}>{IconDelete}</IconBtn>
@@ -659,6 +682,21 @@ export default function Orders({ variant = 'orders' }) {
           <div className="foot">
             <button className="btn" onClick={() => setReopenTarget(null)}>取消</button>
             <button className="btn primary" onClick={doReopen}>确认复提</button>
+          </div>
+        </Modal>
+      )}
+
+      {reopenOrder && (
+        <Modal title={`复提 · ${reopenOrder.task_name || reopenOrder.order_no}`} onClose={() => setReopenOrder(null)}>
+          <div className="note">将该订单从「已停」改为「未提」。可修改更新日期（默认当天）、开始日期、结束日期。</div>
+          <div className="row">
+            <div className="field"><label className="required">更新日期</label><input type="date" value={reopenForm.order_date} onChange={e => setReopenForm({ ...reopenForm, order_date: e.target.value })} /></div>
+            <div className="field"><label>开始日期</label><input type="date" value={reopenForm.start_date} onChange={e => setReopenForm({ ...reopenForm, start_date: e.target.value })} /></div>
+            <div className="field"><label>结束日期</label><input type="date" value={reopenForm.end_date} onChange={e => setReopenForm({ ...reopenForm, end_date: e.target.value })} /></div>
+          </div>
+          <div className="foot">
+            <button className="btn" onClick={() => setReopenOrder(null)}>取消</button>
+            <button className="btn primary" onClick={doReopenOrder}>确认复提</button>
           </div>
         </Modal>
       )}

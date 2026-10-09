@@ -169,6 +169,12 @@ class BatchStopBody(BaseModel):
     order_date: Optional[date] = None
 
 
+class ReopenBody(BaseModel):
+    order_date: Optional[date] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+
+
 class GenerateBody(BaseModel):
     order_ids: list[int] = []
     date: str = ""  # 更新日期 YYYY-MM-DD，用于文件名

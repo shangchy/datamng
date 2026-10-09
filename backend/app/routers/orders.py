@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, aliased
 from ..database import get_db
 from ..deps import get_current_user, require_admin
 from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator, Platform, Category
-from ..schemas import OrderBody, StopBody, BatchStopBody, OrderDistConfigBody, GenerateBody, BatchGroupBody
+from ..schemas import OrderBody, StopBody, BatchStopBody, OrderDistConfigBody, GenerateBody, BatchGroupBody, ReopenBody
 from ..pagination import paginate, ok_page
 from ..utils import fmt_dt
 from ..tidabiao import _order_type, _region_mode
@@ -622,6 +622,31 @@ def batch_reopen(body: BatchStopBody, db: Session = Depends(get_db), user=Depend
         _op_log(db, user, "batch_reopen_orders", f"批量复提 {len(order_nos)} 单", None, {"order_nos": order_nos})
     db.commit()
     return {"code": 0, "data": {"reopened": len(order_nos)}, "msg": f"已复提 {len(order_nos)} 单（状态：未提）"}
+
+
+@router.post("/{oid}/reopen")
+def reopen_order(oid: int, body: ReopenBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """复提：已停订单改回未提（状态默认未提，更新日期默认当天，可改开始/结束日期）"""
+    o = db.query(Order).filter(Order.id == oid).first()
+    if not o:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    if o.status != "已停":
+        raise HTTPException(status_code=400, detail="仅已停订单可复提")
+    if body.order_date:
+        if body.order_date > date.today():
+            raise HTTPException(status_code=400, detail="更新日期不能是未来日期，请修改更新日期")
+        o.order_date = body.order_date
+    else:
+        o.order_date = date.today()
+    if body.start_date:
+        o.start_date = body.start_date
+    if body.end_date:
+        o.end_date = body.end_date
+    o.status = "未提"
+    o.stop_date = None
+    o.updated_at = datetime.now()
+    db.commit()
+    return {"code": 0, "data": None, "msg": "已复提（状态：未提）"}
 
 
 @router.post("/batch-delete")
@@ -1372,6 +1397,11 @@ def confirm_tidabiao(body: GenerateBody, db: Session = Depends(get_db), user=Dep
         o.batch_no = batch_no
         o.updated_at = datetime.now()
         db.add(_history_from_order(db, o, batch_no))
+    # 提单确认后清除对应停单提醒（红色提示）
+    task_names = [o.task_name for o in orders if o.task_name]
+    if task_names:
+        db.query(Alert).filter(Alert.type == "停单提醒", Alert.status == "未处理",
+                               Alert.task_name.in_(task_names)).delete(synchronize_session=False)
     after = [{"order_no": o.order_no, "task_name": o.task_name, "status": o.status, "batch_no": o.batch_no} for o in orders]
     _op_log(db, user, "confirm_tidabiao", f"{batch_no}（{date_obj.strftime('%Y-%m-%d')}）", before, after)
     db.commit()
