@@ -354,24 +354,11 @@ app.include_router(logs.router)
 
 
 def _scheduler_loop():
-    """按配置的触发时间每天执行一次预警扫描"""
+    """每天上午 10 点执行一次预警扫描"""
     from .routers.data import run_alert_scan
-    from .models import SysConfig
     while True:
-        # 读取触发时间（默认 00:00）
-        try:
-            db = SessionLocal()
-            cfg = db.query(SysConfig).filter(SysConfig.key == "alert_trigger_time").first()
-            trigger = cfg.value if cfg else "00:00"
-            db.close()
-        except Exception:  # noqa
-            trigger = "00:00"
-        try:
-            hh, mm = [int(x) for x in trigger.split(":")]
-        except Exception:  # noqa
-            hh, mm = 0, 0
         now = datetime.now()
-        next_run = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        next_run = now.replace(hour=10, minute=0, second=0, microsecond=0)
         if next_run <= now:
             next_run += timedelta(days=1)
         time.sleep((next_run - now).total_seconds())
@@ -379,7 +366,7 @@ def _scheduler_loop():
             db = SessionLocal()
             run_alert_scan(db)
             db.close()
-            print(f"[scheduler] 预警扫描完成（触发时间 {trigger}）")
+            print("[scheduler] 预警扫描完成（10:00）")
         except Exception as e:  # noqa
             print(f"[scheduler] 执行异常: {e}")
         time.sleep(60)  # 防止重复触发

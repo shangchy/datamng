@@ -222,7 +222,7 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
                 task_id: str = "", duration: str = "", group_name: str = "", tpl_code: str = "",
                 add_name: str = "", url: str = "", operator: str = "", price: str = "",
                 dup: str = "", dup_order_no: str = "",
-                check_collision: str = "", no_cat2: str = "",
+                check_collision: str = "", no_cat2: str = "", has_alert: str = "",
                 page: int = 1, per_page: int = 10):
     Upstream = aliased(Customer)
     qy = (db.query(Order)
@@ -311,6 +311,12 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
             qy = qy.filter(Order.platform.in_(cat2_platforms))
     if secondary_agent:
         qy = qy.filter(Order.secondary_agent.like(f"%{secondary_agent}%"))
+    if has_alert:
+        alert_sub = db.query(Alert.task_name).filter(Alert.type == "停单提醒", Alert.status == "未处理").subquery()
+        if has_alert in ("有", "是", "true", "1", "True", "yes", "YES"):
+            qy = qy.filter(Order.task_name.in_(alert_sub))
+        elif has_alert in ("无", "否", "false", "0", "False", "no", "NO"):
+            qy = qy.filter(~Order.task_name.in_(alert_sub))
     total, rows = paginate(qy.order_by(Order.id.desc()), page, per_page)
     alert_tasks = {r[0] for r in db.query(Alert.task_name).filter(Alert.type == "停单提醒", Alert.status == "未处理").all() if r[0]}
     return ok_page([_order_dict(db, o, alert_tasks) for o in rows], total)

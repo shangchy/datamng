@@ -7,9 +7,8 @@ from fastapi.responses import Response
 
 
 def xlsx_response(headers, rows, filename, sheet_name="Sheet1"):
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = sheet_name
+    wb = openpyxl.Workbook(write_only=True)
+    ws = wb.create_sheet(title=sheet_name)
     ws.append(headers)
     for r in rows:
         ws.append(r)

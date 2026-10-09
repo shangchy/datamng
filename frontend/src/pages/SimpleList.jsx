@@ -482,6 +482,14 @@ export default function SimpleList({ kind }) {
     toast('已导出')
   }
 
+  function exportDailyCsv() {
+    const qs = buildQuery(filters)
+    const colKeys = cols.map(c => c.k).join(',')
+    const sep = qs ? '&' : ''
+    downloadFile(`/api/daily-data/export-csv?${qs}${sep}cols=${encodeURIComponent(colKeys)}`).catch(e => showError(e.message))
+    toast('正在导出 CSV...')
+  }
+
   async function doExtract() {
     if (!extractForm.price && Number(extractForm.price) !== 0) { showError('请填写单价'); return }
     if (!extractForm.limit || Number(extractForm.limit) <= 0) { showError('请填写抽取条数'); return }
@@ -749,8 +757,15 @@ export default function SimpleList({ kind }) {
             仅看空姓名
           </label>
         )}
+        {kind === 'daily' && (
+          <label style={{ fontSize: 12, color: 'var(--sub)', display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+            <input type="checkbox" checked={filters.platform_empty === '1'} onChange={e => setFilters({ ...filters, platform_empty: e.target.checked ? '1' : '' })} />
+            平台为空
+          </label>
+        )}
         <button className="btn icon" title={filterCollapsed ? '展开查询条件' : '隐藏查询条件'} onClick={() => setFilterCollapsed(!filterCollapsed)}>{filterCollapsed ? IconChevronDown : IconChevronUp}</button>
         {cfg.exp && <button className="btn green" onClick={exportExcel}>导出 Excel</button>}
+        {kind === 'daily' && <button className="btn" onClick={exportDailyCsv}>导出 CSV</button>}
         {cfg.dailyImp && <button className="btn primary" onClick={() => setDailyModal(true)}>① 导入日活</button>}
         {cfg.csvImp && isAdmin && <button className="btn" onClick={() => { setCsvFile(null); setCsvModal(true) }}>导入CSV</button>}
         {cfg.dist && <button className="btn" onClick={() => setWashModal(true)}>② 导出洗名</button>}

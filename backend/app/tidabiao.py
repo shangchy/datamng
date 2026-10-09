@@ -48,8 +48,6 @@ def _region_mode(o):
 def _duration_mode(o):
     if o.status in ("已停", "待停"):
         return "暂停"
-    if o.start_date and o.end_date and (o.end_date - o.start_date).days == 1:
-        return "单次"
     return "持续"
 
 
@@ -116,14 +114,16 @@ def _order_values(db, o):
     ch = db.query(Channel).filter(Channel.id == o.channel_id).first() if o.channel_id else None
     ch_name = ch.name if ch else ""
     typ = _order_type((o.task_id or "") + " " + (o.task_name or ""))
-    if not typ and ch_name:
+    if ch_name and "dpi" in ch_name.lower():
+        typ = ch_name  # 完整渠道：dpi-白 / dpi-灰
+    elif not typ and ch_name:
         nm = ch_name.lower()
         if "小程序" in nm:
             typ = "小程序"
-        elif "dpi" in nm:
-            typ = "dpi"
         elif "106" in nm:
             typ = "106"
+        elif "直播" in nm or "抖音" in nm:
+            typ = "抖音"
     op = db.query(Operator).filter(Operator.id == o.operator_id).first() if o.operator_id else None
     urls = [u.url for u in o.urls]
     if typ == "小程序":
@@ -562,7 +562,7 @@ def _fill_uploaded_template(db, tpl, orders, action):
                 raise ValueError(f"订单「{o.task_name or o.order_no}」缺少工单号（任务ID），无法生成改单表")
         vals = _order_values(db, o)
         if action == "新单" and tpl.code == "MB-008":
-            vals["task_id"] = ""
+            vals["task_id"] = (o.task_id or "").strip()
         raw_changed = o.change_fields_json
         changed = set(json.loads(raw_changed)) if raw_changed else None  # None 表示整单改单，填充全部字段
         urls = vals.get("url") or []

@@ -42,7 +42,7 @@ def list_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
                operator: str = "", cat1: str = "", cat2: str = "", platform: str = "",
                 source_file: str = "", customer: str = "", secondary_agent: str = "",
                 channel: str = "", biz_date: str = "", name: str = "",
-                start_date: str = "", end_date: str = "",
+                start_date: str = "", end_date: str = "", platform_empty: str = "",
                 page: int = 1, per_page: int = 10):
     qy = db.query(DailyData)
     if q:
@@ -73,6 +73,8 @@ def list_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(DailyData.cat2.like(f"%{cat2}%"))
     if platform:
         qy = qy.filter(DailyData.platform.like(f"%{platform}%"))
+    if platform_empty in ("1", "有", "是", "true", "True", "yes", "YES"):
+        qy = qy.filter(or_(DailyData.platform.is_(None), DailyData.platform == ""))
     if source_file:
         qy = qy.filter(DailyData.source_file.like(f"%{source_file}%"))
     if customer:
@@ -142,7 +144,8 @@ def export_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
                  task_name: str = "", province: str = "", city: str = "",
                  operator: str = "", cat1: str = "", cat2: str = "", platform: str = "",
                  source_file: str = "", customer: str = "", secondary_agent: str = "",
-                 channel: str = "", biz_date: str = "", name: str = "", cols: str = ""):
+                 channel: str = "", biz_date: str = "", name: str = "", cols: str = "",
+                 start_date: str = "", end_date: str = "", platform_empty: str = ""):
     qy = db.query(DailyData)
     if q:
         like = f"%{q}%"
@@ -172,6 +175,8 @@ def export_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(DailyData.cat2.like(f"%{cat2}%"))
     if platform:
         qy = qy.filter(DailyData.platform.like(f"%{platform}%"))
+    if platform_empty in ("1", "有", "是", "true", "True", "yes", "YES"):
+        qy = qy.filter(or_(DailyData.platform.is_(None), DailyData.platform == ""))
     if source_file:
         qy = qy.filter(DailyData.source_file.like(f"%{source_file}%"))
     if customer:
@@ -184,12 +189,62 @@ def export_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(DailyData.name.like(f"%{name}%"))
     if biz_date:
         qy = qy.filter(DailyData.biz_date == biz_date)
-    rows = qy.order_by(DailyData.id.desc()).all()
+    if start_date:
+        sd = _parse_biz_date(start_date)
+        if sd:
+            qy = qy.filter(DailyData.biz_date >= sd)
+    if end_date:
+        ed = _parse_biz_date(end_date)
+        if ed:
+            qy = qy.filter(DailyData.biz_date <= ed)
+    rows = qy.order_by(DailyData.id.desc())
     selected = [c for c in (cols or "").split(",") if c.strip()]
     spec = [(k, l, fn) for (k, l, fn) in DAILY_EXPORT_COLS if not selected or k in selected]
     headers = [l for _, l, _ in spec]
-    data = [[fn(d) for _, _, fn in spec] for d in rows]
-    return xlsx_response(headers, data, "日活数据.xlsx", "日活数据")
+
+    def gen():
+        for d in rows.yield_per(2000):
+            yield [fn(d) for _, _, fn in spec]
+
+    return xlsx_response(headers, gen(), "日活数据.xlsx", "日活数据")
+
+
+@router.get("/daily-data/export-csv")
+def export_daily_csv(db: Session = Depends(get_db), _=Depends(get_current_user),
+                     q: str = "", phone: str = "", upstream: str = "", task_id: str = "",
+                     task_name: str = "", province: str = "", city: str = "",
+                     operator: str = "", cat1: str = "", cat2: str = "", platform: str = "",
+                     source_file: str = "", customer: str = "", secondary_agent: str = "",
+                     channel: str = "", biz_date: str = "", name: str = "",
+                     start_date: str = "", end_date: str = "", cols: str = ""):
+    from urllib.parse import quote
+    from fastapi.responses import StreamingResponse
+
+    f = {k: v for k, v in {
+        "q": q, "phone": phone, "upstream": upstream, "task_id": task_id,
+        "task_name": task_name, "province": province, "city": city, "operator": operator,
+        "cat1": cat1, "cat2": cat2, "platform": platform, "source_file": source_file,
+        "customer": customer, "secondary_agent": secondary_agent, "channel": channel,
+        "biz_date": biz_date, "name": name, "start_date": start_date, "end_date": end_date,
+    }.items() if v}
+    qy = _apply_daily_filters(db.query(DailyData), f).order_by(DailyData.id.desc())
+    selected = [c for c in (cols or "").split(",") if c.strip()]
+    spec = [(k, l, fn) for (k, l, fn) in DAILY_EXPORT_COLS if not selected or k in selected]
+    headers = [l for _, l, _ in spec]
+
+    def _esc(v):
+        s = str(v) if v is not None else ""
+        if any(ch in s for ch in (',', '"', '\n', '\r')):
+            return '"' + s.replace('"', '""') + '"'
+        return s
+
+    def gen():
+        yield "\ufeff" + ",".join(_esc(h) for h in headers) + "\r\n"
+        for d in qy.yield_per(5000):
+            yield ",".join(_esc(fn(d)) for _, _, fn in spec) + "\r\n"
+
+    return StreamingResponse(gen(), media_type="text/csv",
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('日活数据.csv')}"})
 
 
 def _parse_biz_date(v):
@@ -1916,16 +1971,20 @@ def export_fund(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(Fund.company.like(f"%{company}%"))
     if deposit_status:
         qy = qy.filter(Fund.deposit_status == deposit_status)
-    rows = qy.order_by(Fund.id.desc()).all()
+    rows = qy.order_by(Fund.id.desc())
     headers = ["手机号", "姓名", "身份证号", "性别", "省份", "地市", "单位名称", "单位性质",
                "缴存基数", "缴存比例", "月缴存额", "账户余额", "缴存状态", "开户日期",
                "缴至年月", "运营商", "来源文件"]
-    data = [[f.phone, f.name, f.id_card, f.gender, f.province, f.city, f.company, f.company_type,
-             float(f.base) if f.base is not None else None, f.ratio,
-             float(f.monthly) if f.monthly is not None else None,
-             float(f.balance) if f.balance is not None else None,
-             f.deposit_status, f.open_date, f.pay_to, f.operator, f.source_file] for f in rows]
-    return xlsx_response(headers, data, "公积金.xlsx", "公积金")
+
+    def gen():
+        for f in rows.yield_per(2000):
+            yield [f.phone, f.name, f.id_card, f.gender, f.province, f.city, f.company, f.company_type,
+                   float(f.base) if f.base is not None else None, f.ratio,
+                   float(f.monthly) if f.monthly is not None else None,
+                   float(f.balance) if f.balance is not None else None,
+                   f.deposit_status, f.open_date, f.pay_to, f.operator, f.source_file]
+
+    return xlsx_response(headers, gen(), "公积金.xlsx", "公积金")
 
 
 # ============ 账单 ============
@@ -2421,6 +2480,8 @@ def _apply_daily_filters(qy, f):
         qy = qy.filter(DailyData.cat2.like(f"%{f['cat2']}%"))
     if f.get("platform"):
         qy = qy.filter(DailyData.platform.like(f"%{f['platform']}%"))
+    if f.get("platform_empty") in ("1", "有", "是", "true", "True", "yes", "YES"):
+        qy = qy.filter(or_(DailyData.platform.is_(None), DailyData.platform == ""))
     if f.get("customer"):
         qy = qy.filter(DailyData.customer.like(f"%{f['customer']}%"))
     if f.get("secondary_agent"):
@@ -2433,6 +2494,14 @@ def _apply_daily_filters(qy, f):
         qy = qy.filter(DailyData.name.like(f"%{f['name']}%"))
     if f.get("biz_date"):
         qy = qy.filter(DailyData.biz_date == f["biz_date"])
+    if f.get("start_date"):
+        sd = _parse_biz_date(f["start_date"])
+        if sd:
+            qy = qy.filter(DailyData.biz_date >= sd)
+    if f.get("end_date"):
+        ed = _parse_biz_date(f["end_date"])
+        if ed:
+            qy = qy.filter(DailyData.biz_date <= ed)
     return qy
 
 
