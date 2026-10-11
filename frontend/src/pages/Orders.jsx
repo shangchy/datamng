@@ -179,7 +179,6 @@ export default function Orders({ variant = 'orders' }) {
     upstream: upstreams.map(u => u.name),
     customer: customers.map(c => c.code),
     channel: channels.map(c => c.name),
-    platform: platforms.map(p => p.name),
     no_cat2: ['有', '无'],
     add_name: ['是', '否'],
     check_collision: ['是', '否'],

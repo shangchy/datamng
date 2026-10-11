@@ -26,7 +26,7 @@ const KINDS = {
       { k: 'city', l: '市' }, { k: 'operator', l: '运营商' }, { k: 'cat1', l: '一级品类' }, { k: 'cat2', l: '二级品类' }, { k: 'platform', l: '平台' },
       { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' }, { k: 'channel', l: '渠道' },
       { k: 'source_file', l: '来源文件名' }, { k: 'created_at', l: '创建时间' }, { k: 'updated_at', l: '更新时间' },
-    ], export: true, dailyImp: true, csvImp: true, batchDel: true, batchDelAdmin: true, dist: true, check: true, showSeq: true, defaultPerPage: 10000,
+    ], export: true, dailyImp: true, csvImp: true, batchDel: true, batchDelAdmin: true, dist: true, check: true, showSeq: true, defaultPerPage: 10000, dailyEdit: true,
   },
   sourcefiles: {
     title: '元文件管理', endpoint: '/api/source-files',
@@ -96,7 +96,7 @@ export default function SimpleList({ kind }) {
   const user = getUser() || {}
   const isAdmin = user.role_code === 'admin' || (user.permissions || []).includes('*')
   const showBatchDel = !!cfg.batchDel && (!cfg.batchDelAdmin || isAdmin)
-  const hasRowOps = !!(cfg.simple || cfg.editUrl || cfg.del || cfg.dl || cfg.handle || cfg.reset || cfg.pwd || cfg.detail)
+  const hasRowOps = !!(cfg.simple || cfg.editUrl || cfg.del || cfg.dl || cfg.handle || cfg.reset || cfg.pwd || cfg.detail || cfg.dailyEdit)
   const { toast, showError } = useToast()
   const nav = useNavigate()
   const [confirm, confirmEl] = useConfirm()
@@ -112,6 +112,7 @@ export default function SimpleList({ kind }) {
   const [cascadeOpts, setCascadeOpts] = useState(null)
   const [customers, setCustomers] = useState([])
   const [simpleModal, setSimpleModal] = useState(null) // {name, status}
+  const [dailyEdit, setDailyEdit] = useState(null) // {id, biz_date, upstream, task_id, ...}
   const [urlModal, setUrlModal] = useState(null) // {mode, id?, name, level, owner_id, channel_id, platform_id, urls:[string]}
   const [urlOptions, setUrlOptions] = useState({ channels: [], platforms: [] })
   const [pwdModal, setPwdModal] = useState(null)
@@ -150,6 +151,8 @@ export default function SimpleList({ kind }) {
   const [billExpStart, setBillExpStart] = useState('')
   const [billExpEnd, setBillExpEnd] = useState('')
   const [billExpCustId, setBillExpCustId] = useState(0)
+  const [billSummaryModal, setBillSummaryModal] = useState(false)
+  const [billSummaryDate, setBillSummaryDate] = useState('')
   const [checkModal, setCheckModal] = useState(false)
   const [checkDate, setCheckDate] = useState(() => {
     const d = new Date()
@@ -307,6 +310,22 @@ export default function SimpleList({ kind }) {
       await api.post(cfg.endpoint, { name: simpleModal.name, status: 1 })
       toast('已新增'); setSimpleModal(null); load()
     }
+  }
+  function openDailyEdit(r) {
+    setDailyEdit({
+      id: r.id, biz_date: r.biz_date || '', upstream: r.upstream || '', task_id: r.task_id || '',
+      task_name: r.task_name || '', phone: r.phone || '', name: r.name || '', province: r.province || '',
+      city: r.city || '', operator: r.operator || '', cat1: r.cat1 || '', cat2: r.cat2 || '',
+      platform: r.platform || '', customer: r.customer || '', secondary_agent: r.secondary_agent || '',
+      channel: r.channel || '',
+    })
+  }
+  async function saveDailyEdit() {
+    if (!(dailyEdit.phone || '').trim()) { showError('手机号不能为空'); return }
+    try {
+      await api.put(`/api/daily-data/${dailyEdit.id}`, dailyEdit)
+      toast('已更新'); setDailyEdit(null); load()
+    } catch (e) { showError(e.message) }
   }
   async function del(id) {
     if (await confirm('确认删除该记录？')) { await api.del(`${cfg.endpoint}/${id}`); toast('已删除'); load() }
@@ -545,13 +564,13 @@ export default function SimpleList({ kind }) {
     const fs = dailyFileRef.current?.files
     if (!fs || !fs.length) { showError('请选择文件'); return }
     if (!dailyDate) { showError('请选择数据日期'); return }
+    const p = { files: Array.from(fs), date: dailyDate }
     setDailyModal(false)
-    setPendingImportFiles({ files: Array.from(fs), date: dailyDate })
-    doUploadDaily(false)
+    setPendingImportFiles(p)
+    doUploadDaily(p, false)
   }
 
-  async function doUploadDaily(confirmFlag) {
-    const p = pendingImportFiles
+  async function doUploadDaily(p, confirmFlag) {
     if (!p || !p.files) return
     const fd = new FormData()
     for (const f of p.files) fd.append('files', f)
@@ -581,7 +600,7 @@ export default function SimpleList({ kind }) {
 
   async function doImportConfirm() {
     setImportWarn(null)
-    doUploadDaily(true)
+    doUploadDaily(pendingImportFiles, true)
   }
 
   async function importDailyCsv() {
@@ -649,6 +668,15 @@ export default function SimpleList({ kind }) {
       if (billExpCustId) p.set('customer_id', billExpCustId)
       await downloadFile(`/api/bills/export?${p.toString()}`)
       toast('账单已导出')
+    } catch (e) { showError(e.message) }
+  }
+
+  async function doBillSummaryExport() {
+    if (!billSummaryDate) { showError('请选择日期'); return }
+    setBillSummaryModal(false)
+    try {
+      await downloadFile(`/api/bills/summary-export?date=${billSummaryDate}`)
+      toast('账单汇总已导出')
     } catch (e) { showError(e.message) }
   }
 
@@ -778,6 +806,7 @@ export default function SimpleList({ kind }) {
         {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
         {cfg.export && <button className="btn green" onClick={exportExcel}>导出 Excel</button>}
         {cfg.billExp && <button className="btn green" onClick={() => setBillExpModal(true)}>导出账单</button>}
+        {cfg.billExp && <button className="btn" onClick={() => setBillSummaryModal(true)}>导出账单汇总</button>}
         {cfg.simple && <button className="btn primary" onClick={() => setSimpleModal({ name: '', status: 1 })}>+ 新增</button>}
         {cfg.addUrl && <button className="btn primary" onClick={openAddUrl}>+ 新增 URL</button>}
         {cfg.clear && <button className="btn danger" onClick={clearData}>清空数据</button>}
@@ -808,6 +837,7 @@ export default function SimpleList({ kind }) {
                     {cfg.detail && <button className="btn small" onClick={() => viewBillDetail(r.id)}>详情</button>}
                     {cfg.simple && <button className="btn small" onClick={() => toast('编辑')}>编辑</button>}
                     {cfg.editUrl && <button className="btn small" onClick={() => openEditUrl(r)}>编辑</button>}
+                    {cfg.dailyEdit && <button className="btn small" onClick={() => openDailyEdit(r)}>编辑</button>}
                     {cfg.del && <button className="btn small danger" onClick={() => del(r.id)}>删除</button>}
                     {cfg.dl && <button className="btn small" onClick={() => downloadSourceFile(r)}>下载</button>}
                     {cfg.handle && r.type === '账单预警' && <button className="btn small primary" onClick={() => openRecharge(r)}>充值</button>}
@@ -832,6 +862,37 @@ export default function SimpleList({ kind }) {
             <div className="field"><label>状态</label><select value={simpleModal.status} onChange={e => setSimpleModal({ ...simpleModal, status: Number(e.target.value) })}><option value={1}>启用</option><option value={0}>停用</option></select></div>
           </div>
           <div className="foot"><button className="btn" onClick={() => setSimpleModal(null)}>取消</button><button className="btn primary" onClick={addSimple}>保存</button></div>
+        </Modal>
+      )}
+
+      {dailyEdit && (
+        <Modal title="编辑日活数据" onClose={() => setDailyEdit(null)} wide>
+          <div className="row">
+            <div className="field"><label>数据日期</label><input type="date" value={dailyEdit.biz_date} onChange={e => setDailyEdit({ ...dailyEdit, biz_date: e.target.value })} /></div>
+            <div className="field"><label>手机号</label><ClearableInput value={dailyEdit.phone} onChange={e => setDailyEdit({ ...dailyEdit, phone: e.target.value })} /></div>
+            <div className="field"><label>姓名</label><ClearableInput value={dailyEdit.name} onChange={e => setDailyEdit({ ...dailyEdit, name: e.target.value })} /></div>
+          </div>
+          <div className="row">
+            <div className="field"><label>甲方</label><ClearableInput value={dailyEdit.upstream} onChange={e => setDailyEdit({ ...dailyEdit, upstream: e.target.value })} /></div>
+            <div className="field"><label>任务id</label><ClearableInput value={dailyEdit.task_id} onChange={e => setDailyEdit({ ...dailyEdit, task_id: e.target.value })} /></div>
+            <div className="field"><label>任务名</label><ClearableInput value={dailyEdit.task_name} onChange={e => setDailyEdit({ ...dailyEdit, task_name: e.target.value })} /></div>
+          </div>
+          <div className="row">
+            <div className="field"><label>省</label><ClearableInput value={dailyEdit.province} onChange={e => setDailyEdit({ ...dailyEdit, province: e.target.value })} /></div>
+            <div className="field"><label>市</label><ClearableInput value={dailyEdit.city} onChange={e => setDailyEdit({ ...dailyEdit, city: e.target.value })} /></div>
+            <div className="field"><label>运营商</label><ClearableInput value={dailyEdit.operator} onChange={e => setDailyEdit({ ...dailyEdit, operator: e.target.value })} /></div>
+          </div>
+          <div className="row">
+            <div className="field"><label>一级品类</label><ClearableInput value={dailyEdit.cat1} onChange={e => setDailyEdit({ ...dailyEdit, cat1: e.target.value })} /></div>
+            <div className="field"><label>二级品类</label><ClearableInput value={dailyEdit.cat2} onChange={e => setDailyEdit({ ...dailyEdit, cat2: e.target.value })} /></div>
+            <div className="field"><label>平台</label><ClearableInput value={dailyEdit.platform} onChange={e => setDailyEdit({ ...dailyEdit, platform: e.target.value })} /></div>
+          </div>
+          <div className="row">
+            <div className="field"><label>一级代理</label><ClearableInput value={dailyEdit.customer} onChange={e => setDailyEdit({ ...dailyEdit, customer: e.target.value })} /></div>
+            <div className="field"><label>二级代理</label><ClearableInput value={dailyEdit.secondary_agent} onChange={e => setDailyEdit({ ...dailyEdit, secondary_agent: e.target.value })} /></div>
+            <div className="field"><label>渠道</label><ClearableInput value={dailyEdit.channel} onChange={e => setDailyEdit({ ...dailyEdit, channel: e.target.value })} /></div>
+          </div>
+          <div className="foot"><button className="btn" onClick={() => setDailyEdit(null)}>取消</button><button className="btn primary" onClick={saveDailyEdit}>保存</button></div>
         </Modal>
       )}
 
@@ -1003,6 +1064,18 @@ export default function SimpleList({ kind }) {
           <div className="foot">
             <button className="btn" onClick={() => setBillExpModal(false)}>取消</button>
             <button className="btn primary" onClick={() => doBillExport().catch(e => showError(e.message))}>导出</button>
+          </div>
+        </Modal>
+      )}
+
+      {billSummaryModal && (
+        <Modal title="导出账单汇总" onClose={() => setBillSummaryModal(false)}>
+          <div className="note">按指定日期导出账单汇总，包含上游（牛/新，按渠道套上游单价）与下游代理的账单。</div>
+          <div className="field" style={{ marginBottom: 12 }}><label className="required">日期</label>
+            <input type="date" value={billSummaryDate} onChange={e => setBillSummaryDate(e.target.value)} /></div>
+          <div className="foot">
+            <button className="btn" onClick={() => setBillSummaryModal(false)}>取消</button>
+            <button className="btn primary" onClick={() => doBillSummaryExport().catch(e => showError(e.message))}>导出</button>
           </div>
         </Modal>
       )}

@@ -172,7 +172,7 @@ def _order_dict(db, o: Order, alert_tasks=None) -> dict:
         "excl_province": norm_region(o.excl_province), "excl_city": norm_region(o.excl_city),
         "qty": o.qty, "age_min": o.age_min, "age_max": o.age_max, "pv": o.pv,
         "created_at": fmt_dt(o.created_at), "stop_date": str(o.stop_date) if o.stop_date else None,
-        "has_alert": (o.task_name in alert_tasks) if alert_tasks is not None else False,
+        "has_alert": (o.task_name in alert_tasks and o.status in ("在执", "待停")) if alert_tasks is not None else False,
     }
 
 
@@ -308,9 +308,9 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
     if pv:
         qy = qy.filter(Order.pv == _num(pv))
     if start_date:
-        qy = qy.filter(Order.start_date >= start_date)
+        qy = qy.filter(Order.start_date == start_date)
     if end_date:
-        qy = qy.filter(Order.end_date <= end_date)
+        qy = qy.filter(Order.end_date == end_date)
     if order_date:
         qy = qy.filter(Order.order_date == order_date)
     if platform:
@@ -906,9 +906,9 @@ def export_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
     if excl_city:
         qy = qy.filter(Order.excl_city.like(f"%{excl_city}%"))
     if start_date:
-        qy = qy.filter(Order.start_date >= start_date)
+        qy = qy.filter(Order.start_date == start_date)
     if end_date:
-        qy = qy.filter(Order.end_date <= end_date)
+        qy = qy.filter(Order.end_date == end_date)
     if order_date:
         qy = qy.filter(Order.order_date == order_date)
     if platform:
@@ -1086,6 +1086,8 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                     existing.status = import_status
                     if import_status == "已停":
                         existing.stop_date = date.today()
+                        db.query(Alert).filter(Alert.type == "停单提醒", Alert.order_id == existing.id,
+                                               Alert.status == "未处理").delete(synchronize_session=False)
                 existing.updated_at = datetime.now()
                 db.query(OrderUrl).filter(OrderUrl.order_id == existing.id).delete()
                 if url_str:

@@ -99,6 +99,33 @@ def list_daily(db: Session = Depends(get_db), _=Depends(get_current_user),
     return ok_page([_daily_dict(d) for d in rows], total)
 
 
+@router.put("/daily-data/{did}")
+def update_daily(did: int, body: dict, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    d = db.query(DailyData).filter(DailyData.id == did).first()
+    if not d:
+        raise HTTPException(status_code=404, detail="日活数据不存在")
+    editable = ["biz_date", "upstream", "task_id", "task_name", "phone", "name",
+                "province", "city", "operator", "cat1", "cat2", "platform",
+                "customer", "secondary_agent", "channel"]
+    for field in editable:
+        if field not in body:
+            continue
+        val = body[field]
+        if field == "biz_date":
+            parsed = _parse_biz_date(val) if val else None
+            if parsed:
+                d.biz_date = parsed
+        elif field == "phone":
+            pv = str(val or "").strip()
+            if pv:
+                d.phone = pv
+        else:
+            setattr(d, field, (str(val).strip() if val is not None and str(val).strip() else None))
+    d.updated_at = datetime.now()
+    db.commit()
+    return {"code": 0, "data": None, "msg": "已更新"}
+
+
 def _daily_dict(d: DailyData):
     return {
         "id": d.id, "biz_date": str(d.biz_date) if d.biz_date else None,
@@ -2243,6 +2270,156 @@ def export_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
     bio.seek(0)
     period = f"{start_date or '起'}-{end_date or '止'}"
     filename = f"账单明细-{period}.xlsx"
+    return Response(content=bio.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
+
+
+@router.get("/bills/summary-export")
+def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_user), date: str = ""):
+    """导出账单汇总：指定日期的上游账单（牛/新，按渠道套上游单价）+ 下游账单"""
+    from urllib.parse import quote
+    from fastapi.responses import Response
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from collections import defaultdict
+
+    date_obj = _parse_biz_date(date)
+    if not date_obj:
+        raise HTTPException(status_code=422, detail="请选择日期")
+
+    # 上游客户（牛/新）
+    up_customers = {c.id: c for c in db.query(Customer).filter(Customer.ctype == "upstream").all()}
+    up_id_by_name = {c.name: c.id for c in up_customers.values()}
+    up_name_by_id = {c.id: c.name for c in up_customers.values()}
+    ch_by_id = {ch.id: ch.name for ch in db.query(Channel).all()}
+    ch_id_by_name = {ch.name: ch.id for ch in db.query(Channel).all()}
+
+    # 上游单价：customer_id -> channel_id -> price（取渠道级，operator 为空）
+    price_map = defaultdict(dict)
+    for p in db.query(CustomerPrice).filter(CustomerPrice.customer_id.in_(up_customers.keys())).all():
+        if p.operator_id is None:
+            price_map[p.customer_id][p.channel_id] = float(p.price)
+
+    # 上游汇总：日活数据按 task_id（工单号）关联订单 -> 上游(牛/新) + 渠道，统计数量
+    task_ids = [r[0] for r in db.query(DailyData.task_id)
+                .filter(DailyData.biz_date == date_obj, DailyData.task_id.isnot(None))
+                .distinct().all()]
+    order_task_map = {}
+    for o in db.query(Order).filter(Order.task_id.in_(task_ids)).all():
+        order_task_map[o.task_id] = (up_name_by_id.get(o.upstream_id, ""),
+                                     ch_by_id.get(o.channel_id, ""))
+    up_agg = defaultdict(lambda: defaultdict(int))
+    for tid, in db.query(DailyData.task_id).filter(DailyData.biz_date == date_obj).all():
+        up_name, ch_name = order_task_map.get(tid, ("", ""))
+        up_agg[up_name or ""][ch_name or ""] += 1
+
+    # 下游账单
+    down_bills = db.query(Bill).filter(Bill.biz_date == date_obj).order_by(Bill.customer_id).all()
+    cust_map = {c.id: c for c in db.query(Customer).all()}
+
+    wb = openpyxl.Workbook()
+    title_font = Font(bold=True, size=14)
+    header_font = Font(bold=True, size=11, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="4472C4")
+    total_font = Font(bold=True)
+    total_fill = PatternFill("solid", fgColor="FCE4D6")
+    thin = Side(style="thin", color="D9D9D9")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center")
+    right = Alignment(horizontal="right", vertical="center")
+
+    # ---- Sheet1 上游账单 ----
+    ws1 = wb.active
+    ws1.title = "上游账单"
+    up_headers = ["甲方", "渠道", "数量", "单价(元)", "金额(元)"]
+    ws1.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(up_headers))
+    tc = ws1.cell(row=1, column=1, value=f"上游账单汇总（{date}）")
+    tc.font = title_font
+    tc.alignment = center
+    ws1.row_dimensions[1].height = 26
+    for j, h in enumerate(up_headers, 1):
+        c = ws1.cell(row=2, column=j, value=h)
+        c.font = header_font; c.fill = header_fill; c.border = border; c.alignment = center
+    r = 3
+    total_qty = total_amt = 0
+    for up_name in sorted(up_agg.keys()):
+        channels = up_agg[up_name]
+        sub_qty = sum(channels.values())
+        sub_amt = 0.0
+        for ch_name in sorted(channels.keys()):
+            cnt = channels[ch_name]
+            up_id = up_id_by_name.get(up_name)
+            ch_id = ch_id_by_name.get(ch_name)
+            price = price_map.get(up_id, {}).get(ch_id, 0.0) if up_id and ch_id else 0.0
+            amt = round(cnt * price, 2)
+            sub_amt = round(sub_amt + amt, 2)
+            vals = [up_name, ch_name, cnt, price, amt]
+            for j, v in enumerate(vals, 1):
+                cell = ws1.cell(row=r, column=j, value=v)
+                cell.border = border
+                cell.alignment = right if j >= 3 else center
+                if j == 5:
+                    cell.number_format = '#,##0.00'
+            r += 1
+        # 甲方合计
+        for j, v in enumerate(["", "", sub_qty, "", round(sub_amt, 2)], 1):
+            cell = ws1.cell(row=r, column=j, value=v)
+            cell.font = total_font; cell.fill = total_fill; cell.border = border
+            cell.alignment = right if j >= 3 else center
+            if j == 5:
+                cell.number_format = '#,##0.00'
+        r += 1
+        total_qty += sub_qty
+        total_amt = round(total_amt + sub_amt, 2)
+    # 总合计
+    for j, v in enumerate(["合计", "", total_qty, "", round(total_amt, 2)], 1):
+        cell = ws1.cell(row=r, column=j, value=v)
+        cell.font = total_font; cell.fill = total_fill; cell.border = border
+        cell.alignment = right if j >= 3 else center
+        if j == 5:
+            cell.number_format = '#,##0.00'
+    for j, w in enumerate([10, 12, 10, 10, 12], 1):
+        ws1.column_dimensions[openpyxl.utils.get_column_letter(j)].width = w
+
+    # ---- Sheet2 下游账单 ----
+    ws2 = wb.create_sheet("下游账单")
+    down_headers = ["代理编号", "代理名称", "进货量", "销售金额(元)", "余额(元)"]
+    ws2.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(down_headers))
+    tc2 = ws2.cell(row=1, column=1, value=f"下游账单（{date}）")
+    tc2.font = title_font
+    tc2.alignment = center
+    ws2.row_dimensions[1].height = 26
+    for j, h in enumerate(down_headers, 1):
+        c = ws2.cell(row=2, column=j, value=h)
+        c.font = header_font; c.fill = header_fill; c.border = border; c.alignment = center
+    r = 3
+    d_qty = d_sales = d_bal = 0
+    for b in down_bills:
+        c = cust_map.get(b.customer_id)
+        vals = [c.code if c else "", c.name if c else "", b.purchase_qty or 0,
+                float(b.sales) if b.sales is not None else 0, float(b.balance) if b.balance is not None else 0]
+        d_qty += vals[2]; d_sales = round(d_sales + vals[3], 2); d_bal = round(d_bal + vals[4], 2)
+        for j, v in enumerate(vals, 1):
+            cell = ws2.cell(row=r, column=j, value=v)
+            cell.border = border
+            cell.alignment = right if j >= 3 else center
+            if j >= 4:
+                cell.number_format = '#,##0.00'
+        r += 1
+    for j, v in enumerate(["合计", "", d_qty, round(d_sales, 2), round(d_bal, 2)], 1):
+        cell = ws2.cell(row=r, column=j, value=v)
+        cell.font = total_font; cell.fill = total_fill; cell.border = border
+        cell.alignment = right if j >= 3 else center
+        if j >= 4:
+            cell.number_format = '#,##0.00'
+    for j, w in enumerate([12, 16, 10, 14, 14], 1):
+        ws2.column_dimensions[openpyxl.utils.get_column_letter(j)].width = w
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    filename = f"账单汇总-{date}.xlsx"
     return Response(content=bio.getvalue(),
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
