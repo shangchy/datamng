@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { api } from '../api'
 import { useToast, Modal } from '../components/ui'
 import Chart from '../components/Chart'
+import Pagination from '../components/Pagination'
 
 const MEDALS = ['🥇', '🥈', '🥉']
 
@@ -37,6 +38,10 @@ export default function Dashboard() {
   const [endD, setEndD] = useState('')
   const [notifs, setNotifs] = useState([])
   const [notifModal, setNotifModal] = useState(false)
+  const [notifPage, setNotifPage] = useState(1)
+  const [notifPerPage, setNotifPerPage] = useState(500)
+  const [notifTotal, setNotifTotal] = useState(0)
+  const [notifRows, setNotifRows] = useState([])
 
   function loadCharts(start = '', end = '') {
     api.get(`/api/dashboard/trend?start=${start}&end=${end}`).then(r => setTrend(r.data)).catch(() => {})
@@ -47,7 +52,7 @@ export default function Dashboard() {
   useEffect(() => {
     api.get('/api/dashboard/summary').then(r => setS(r.data)).catch(e => showError(e.message))
     api.get('/api/dashboard/rank').then(r => setRank(r.data)).catch(() => {})
-    api.get('/api/dashboard/notifications').then(r => setNotifs(r.data || [])).catch(() => {})
+    api.get('/api/dashboard/notifications?per_page=10').then(r => setNotifs(r.data?.rows || [])).catch(() => {})
     loadCharts()
   }, [])
 
@@ -60,6 +65,16 @@ export default function Dashboard() {
   }
   function pickCustom() { setRange('custom') }
   function applyCustom() { loadCharts(startD, endD) }
+
+  function loadNotifs(p = 1, pp = 500) {
+    api.get(`/api/dashboard/notifications?page=${p}&per_page=${pp}`).then(r => {
+      setNotifRows(r.data?.rows || [])
+      setNotifTotal(r.data?.total || 0)
+      setNotifPage(p)
+      setNotifPerPage(pp)
+    }).catch(() => {})
+  }
+  function openNotifs() { setNotifModal(true); loadNotifs(1, 500) }
 
   const trendOption = {
     tooltip: { trigger: 'axis' },
@@ -100,33 +115,35 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <div className="panel">
-        <h3 style={{ justifyContent: 'space-between' }}>
-          <span>入出与利润趋势</span>
-          <span>
-            <button className={`btn small ${range === '7' ? 'primary' : ''}`} onClick={pick7}>7天</button>{' '}
-            <button className={`btn small ${range === '30' ? 'primary' : ''}`} onClick={pick30}>30天</button>{' '}
-            <button className={`btn small ${range === 'custom' ? 'primary' : ''}`} onClick={pickCustom}>自定义</button>
-            {range === 'custom' && (
-              <>
-                <input type="date" value={startD} onChange={e => setStartD(e.target.value)} />
-                <span>~</span>
-                <input type="date" value={endD} onChange={e => setEndD(e.target.value)} />
-                <button className="btn primary small" onClick={applyCustom}>统计</button>
-              </>
-            )}
-          </span>
-        </h3>
-        <Chart option={trendOption} height={300} />
-        <div className="notif-box">
+      <div className="row-trend">
+        <div className="panel trend-panel">
+          <h3 style={{ justifyContent: 'space-between' }}>
+            <span>入出与利润趋势</span>
+            <span>
+              <button className={`btn small ${range === '7' ? 'primary' : ''}`} onClick={pick7}>7天</button>{' '}
+              <button className={`btn small ${range === '30' ? 'primary' : ''}`} onClick={pick30}>30天</button>{' '}
+              <button className={`btn small ${range === 'custom' ? 'primary' : ''}`} onClick={pickCustom}>自定义</button>
+              {range === 'custom' && (
+                <>
+                  <input type="date" value={startD} onChange={e => setStartD(e.target.value)} />
+                  <span>~</span>
+                  <input type="date" value={endD} onChange={e => setEndD(e.target.value)} />
+                  <button className="btn primary small" onClick={applyCustom}>统计</button>
+                </>
+              )}
+            </span>
+          </h3>
+          <Chart option={trendOption} height={300} />
+        </div>
+        <div className="panel notif-panel">
           <div className="notif-head">
             <span className="notif-title">📢 最新消息</span>
-            <button className="btn small" onClick={() => setNotifModal(true)}>查看更多</button>
+            <button className="btn small" onClick={openNotifs}>查看更多</button>
           </div>
           {notifs.length === 0 ? <div className="empty">暂无消息</div> : (
             <ul className="notif-list">
               {notifs.slice(0, 10).map(n => (
-                <li key={n.id}><span className="notif-time">{n.notify_time}</span><span>{n.content}</span></li>
+                <li key={n.id}><span className="notif-text">{n.content}</span></li>
               ))}
             </ul>
           )}
@@ -176,14 +193,21 @@ export default function Dashboard() {
       </div>
 
       {notifModal && (
-        <Modal title="全部消息" onClose={() => setNotifModal(false)} style={{ width: 760 }}>
-          {notifs.length === 0 ? <div className="empty">暂无消息</div> : (
-            <ul className="notif-list" style={{ maxHeight: 420 }}>
-              {notifs.map(n => (
-                <li key={n.id}><span className="notif-time">{n.notify_time}</span><span>{n.content}</span></li>
-              ))}
-            </ul>
-          )}
+        <Modal title="全部消息" onClose={() => setNotifModal(false)} wide style={{ width: 1000 }}>
+          <div className="notif-table-wrap">
+            {notifRows.length === 0 ? <div className="empty">暂无消息</div> : (
+              <table className="notif-table">
+                <thead><tr><th style={{ width: '70%' }}>消息内容</th><th style={{ width: '30%' }}>通知时间</th></tr></thead>
+                <tbody>
+                  {notifRows.map(n => (
+                    <tr key={n.id}><td className="notif-cell-content">{n.content}</td><td className="notif-cell-time">{n.notify_time}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <Pagination total={notifTotal} page={notifPage} perPage={notifPerPage}
+            setPage={setNotifPage} setPerPage={pp => loadNotifs(1, pp)} goPage={p => loadNotifs(p, notifPerPage)} />
           <div className="foot"><button className="btn primary" onClick={() => setNotifModal(false)}>关闭</button></div>
         </Modal>
       )}

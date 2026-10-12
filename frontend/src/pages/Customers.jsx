@@ -200,11 +200,11 @@ export default function Customers() {
               <tr><td>状态</td><td>{detail.status === 1 ? '启用' : '停用'}</td><td>备注</td><td style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{detail.note || '—'}</td></tr>
             </tbody></table>
           </div>
-          <div className="toolbar" style={{ marginTop: 14, marginBottom: 8 }}>
+          <div className="tabs">
             {['recharges', 'prices'].map(t => (
-              <button key={t} className={`btn small ${tab === t ? 'primary' : ''}`} onClick={() => setTab(t)}>
-                {t === 'recharges' ? '充值记录' : '设定单价'}
-              </button>
+              <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
+                {t === 'recharges' ? '充值管理' : '单价管理'}
+              </div>
             ))}
           </div>
           <TabContent tab={tab} customerId={detail.id} refreshKey={rechargeRefresh} onEditRecharge={(r) => editRecharge(detail.id, r, true)} />
@@ -286,11 +286,11 @@ export default function Customers() {
               <div className="field"><label>备注</label><textarea rows={3} value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} /></div>
             </div>
           </div>
-          <div className="toolbar" style={{ marginTop: 14, marginBottom: 8 }}>
+          <div className="tabs">
             {(modal === 'create' ? ['prices'] : ['recharges', 'prices']).map(t => (
-              <button key={t} className={`btn small ${formTab === t ? 'primary' : ''}`} onClick={() => setFormTab(t)}>
-                {t === 'recharges' ? '充值记录' : '设定单价'}
-              </button>
+              <div key={t} className={`tab ${formTab === t ? 'active' : ''}`} onClick={() => setFormTab(t)}>
+                {t === 'recharges' ? '充值管理' : '单价管理'}
+              </div>
             ))}
           </div>
           {formTab === 'prices' && !form.id ? (
@@ -350,7 +350,7 @@ function TabContent({ tab, customerId, onEditRecharge, refreshKey }) {
   return (
     <div>
       {confirmEl}
-      <div className="note">数据来源于渠道，为当前客户维护每个渠道单价。</div>
+      <div className="note">数据来源于渠道，dpi 渠道按运营商（移动/联通/电信）细分，为当前客户维护各渠道及运营商的单价。</div>
       <table><thead><tr><th>渠道</th><th>单价(元/条)</th></tr></thead>
         <tbody>{data.map((c, i) => (
           <tr key={i}>

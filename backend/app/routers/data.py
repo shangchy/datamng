@@ -955,7 +955,7 @@ def wash_stats(date: str = "", db: Session = Depends(get_db), _=Depends(get_curr
 
 
 def _check_daily_result(db, date_obj):
-    """工单检查：统计所有在执工单在所选日期的数据量（按数据量降序）"""
+    """工单检查：统计所有在执工单在所选日期的数据量（按数据量降序），未到出数日(T+2)的工单不检查"""
     orders = db.query(Order).filter(Order.status == "在执").all()
     counts = {}
     for tid, cnt in db.query(DailyData.task_id, func.count(DailyData.id)) \
@@ -964,6 +964,9 @@ def _check_daily_result(db, date_obj):
         counts[tid] = int(cnt)
     result = []
     for o in orders:
+        # 未到达出数日（提单日+2天）的工单不检查
+        if o.order_date and date_obj < o.order_date + timedelta(days=2):
+            continue
         result.append({
             "task_id": o.task_id or "",
             "task_name": o.task_name or "",
@@ -2924,9 +2927,13 @@ def run_stop_check(db: Session):
                                   Order.end_date <= today).all()
     for o in rows:
         if _sync_order_stop_alert(db, o):
+            task_label = o.task_name or o.order_no or ""
+            if o.task_id:
+                task_label += f"（{o.task_id}）"
+            end_str = o.end_date.strftime("%m/%d") if o.end_date else ""
             db.add(Notification(
                 order_no=o.order_no, task_id=o.task_id, order_id=o.id,
-                content=f"{today.strftime('%Y-%m-%d')} 工单号 {o.task_id or ''} 已到期，请及时处理停单。",
+                content=f"{task_label}于 {end_str} 到期，请及时处理停单。",
                 notify_time=datetime.now(),
             ))
     db.commit()

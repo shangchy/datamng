@@ -235,9 +235,10 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
                 platform: str = "", secondary_agent: str = "",
                 task_id: str = "", duration: str = "", group_name: str = "", tpl_code: str = "",
                 add_name: str = "", url: str = "", operator: str = "", price: str = "",
-                dup: str = "", dup_order_no: str = "",
-                check_collision: str = "", no_cat2: str = "", has_alert: str = "",
-                page: int = 1, per_page: int = 10):
+                 dup: str = "", dup_order_no: str = "",
+                 check_collision: str = "", no_cat2: str = "", has_alert: str = "",
+                 plat_issue: str = "",
+                 page: int = 1, per_page: int = 10):
     Upstream = aliased(Customer)
     qy = (db.query(Order)
           .outerjoin(Customer, Order.customer_id == Customer.id)
@@ -335,6 +336,16 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
             qy = qy.filter(Order.task_name.in_(alert_sub))
         elif has_alert in ("无", "否", "false", "0", "False", "no", "NO"):
             qy = qy.filter(~Order.task_name.in_(alert_sub))
+    if plat_issue == "missing":
+        # 平台不存在：platform 为空，或不在平台（品类管理）中
+        all_plats = db.query(Platform.name).subquery()
+        qy = qy.filter(or_(Order.platform.is_(None), Order.platform == "",
+                           ~Order.platform.in_(all_plats)))
+    elif plat_issue == "no_cat2":
+        # 平台无二级品类：platform 在平台表中，但平台无有效二级品类（cat_id 为空或非二级品类）
+        bad_plats = db.query(Platform.name).outerjoin(Category, Category.id == Platform.cat_id) \
+            .filter(or_(Platform.cat_id.is_(None), Category.id.is_(None), Category.level != 2)).subquery()
+        qy = qy.filter(Order.platform.in_(bad_plats))
     total, rows = paginate(qy.order_by(Order.id.desc()), page, per_page)
     alert_tasks = {r[0] for r in db.query(Alert.task_name).filter(Alert.type == "停单提醒", Alert.status == "未处理").all() if r[0]}
     return ok_page([_order_dict(db, o, alert_tasks) for o in rows], total)

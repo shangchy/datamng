@@ -57,12 +57,11 @@ const COLS = [
 
 const FILTER_COLS = [
   { k: 'status', l: '状态' }, { k: 'order_date', l: '更新日期' },
-  { k: 'upstream', l: '甲方' }, { k: 'order_no', l: '订单号' }, { k: 'task_id', l: '工单号' }, { k: 'dup', l: '重复订单' },
-  { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' }, { k: 'price', l: '定价' },
-  { k: 'platform', l: '平台' }, { k: 'no_cat2', l: '平台无二级品类' }, { k: 'group_name', l: '小组' }, { k: 'tpl_code', l: '出数模版' },
+  { k: 'upstream', l: '甲方' }, { k: 'order_no', l: '订单号' }, { k: 'task_id', l: '工单号' },
+  { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' },
+  { k: 'platform', l: '平台' }, { k: 'group_name', l: '小组' }, { k: 'task_name', l: '任务名' },
   { k: 'add_name', l: '是否加名' }, { k: 'check_collision', l: '是否撞库' }, { k: 'channel', l: '渠道' }, { k: 'operator', l: '运营商' },
-  { k: 'has_alert', l: '预警' }, { k: 'task_name', l: '任务名' }, { k: 'url', l: 'url' }, { k: 'qty', l: '数量' }, { k: 'duration', l: '时长' },
-  { k: 'age_min', l: '年龄下限' }, { k: 'age_max', l: '年龄上限' }, { k: 'pv', l: 'pv' },
+  { k: 'tpl_code', l: '出数模版' }, { k: 'url', l: 'url' },
   { k: 'province', l: '省份' }, { k: 'excl_province', l: '排除省份' }, { k: 'city', l: '地市' },
   { k: 'excl_city', l: '排除地市' },
 ]
@@ -127,6 +126,7 @@ export default function Orders({ variant = 'orders' }) {
   const [selected, setSelected] = useState([])
   const [groupModal, setGroupModal] = useState(false)
   const [groupVal, setGroupVal] = useState('')
+  const [catCheckModal, setCatCheckModal] = useState(false)
   const [busy, setBusy] = useState(false)
   const [busyMsg, setBusyMsg] = useState('')
   const [busyProgress, setBusyProgress] = useState(null)
@@ -147,10 +147,28 @@ export default function Orders({ variant = 'orders' }) {
     const params = qs ? qs + `&page=${p}&per_page=${pp}` : `page=${p}&per_page=${pp}`
     const r = await api.get('/api/orders?' + params)
     setRows(r.data.rows); setTotal(r.data.total)
+    return r.data.total
   }
-  function search(f) { setPage(1); load(1, perPage, f) }
+  async function search(f) {
+    setPage(1); setBusy(true); setBusyMsg('正在查询，请稍候…')
+    try {
+      const total = await load(1, perPage, f)
+      toast(`查询完成，共 ${total} 条`)
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
+  }
   function goPage(p) { setPage(p); load(p, perPage) }
   function changePerPage(pp) { setPerPage(pp); setPage(1); load(1, pp) }
+  function checkAlert() {
+    const next = filters.has_alert === '有' ? '' : '有'
+    const f = { ...filters, has_alert: next }
+    setFilters(f); search(f)
+  }
+  function doCatCheck(issue) {
+    setCatCheckModal(false)
+    const next = filters.plat_issue === issue ? '' : issue
+    const f = { ...filters, plat_issue: next }
+    setFilters(f); search(f)
+  }
   useEffect(() => {
     const on = searchParams.get('order_no')
     if (on) {
@@ -231,10 +249,11 @@ export default function Orders({ variant = 'orders' }) {
   async function batchDelete() {
     if (!selected.length) { showError('请先勾选要删除的订单'); return }
     if (!(await confirm(`确认删除选中的 ${selected.length} 个订单？此操作不可恢复。`))) return
+    setBusy(true); setBusyMsg('正在删除，请稍候…')
     try {
       await api.post('/api/orders/batch-delete', { ids: selected })
       toast('已批量删除'); setSelected([]); load()
-    } catch (e) { showError(e.message) }
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
   async function batchReopen() {
@@ -248,10 +267,11 @@ export default function Orders({ variant = 'orders' }) {
     if (!reopenDate) { showError('请选择更新日期'); return }
     if (!reopenTarget) return
     if (!(await confirm(`确认将选中的 ${reopenTarget.ids.length} 个订单从「已停」改为「未提」，并将更新日期更新为 ${reopenDate}？`))) return
+    setBusy(true); setBusyMsg('正在批量复提，请稍候…')
     try {
       const r = await api.post('/api/orders/batch-reopen', { ids: reopenTarget.ids, order_date: reopenDate })
       toast(r.msg); setReopenTarget(null); setReopenDate(''); setSelected([]); load()
-    } catch (e) { showError(e.message) }
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
   function openReopen(o) {
@@ -265,17 +285,19 @@ export default function Orders({ variant = 'orders' }) {
     if (!reopenOrder) return
     if (!reopenForm.order_date) { showError('请选择更新日期'); return }
     if (!(await confirm(`确认将该订单复提：状态改为「未提」，更新日期 ${reopenForm.order_date}？`))) return
+    setBusy(true); setBusyMsg('正在复提，请稍候…')
     try {
       const r = await api.post(`/api/orders/${reopenOrder.id}/reopen`, reopenForm)
       toast(r.msg); setReopenOrder(null); load()
-    } catch (e) { showError(e.message) }
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
   async function batchGroup() {
+    setBusy(true); setBusyMsg('正在修改小组，请稍候…')
     try {
       await api.post('/api/orders/batch-group', { ids: selected, group_name: groupVal })
       toast('小组已批量修改'); setGroupModal(false); setSelected([]); load()
-    } catch (e) { showError(e.message) }
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
   function openEdit(o) {
@@ -326,18 +348,20 @@ export default function Orders({ variant = 'orders' }) {
     if (!(form.url || '').trim()) missing.push('URL')
     if (missing.length) { showError('缺少必填字段：' + missing.join('、')); return }
     if (!(await confirm('确认保存该订单？'))) return
+    setBusy(true); setBusyMsg('正在保存，请稍候…')
     try {
       const body = { ...form, qty: form.qty === '' ? null : Number(form.qty), age_min: form.age_min === '' ? null : Number(form.age_min), age_max: form.age_max === '' ? null : Number(form.age_max), pv: form.pv === '' ? null : Number(form.pv), customer_id: Number(form.customer_id), upstream_id: form.upstream_id ? Number(form.upstream_id) : null, channel_id: form.channel_id ? Number(form.channel_id) : null, operator_id: form.operator_id ? Number(form.operator_id) : null, template_id: form.template_id === '' || form.template_id == null ? null : Number(form.template_id), tpl_id: form.tpl_id === '' || form.tpl_id == null ? null : Number(form.tpl_id), price: form.price === '' || form.price == null ? null : Number(form.price), order_date: form.order_date || null, duration: computedDuration, urls: (form.url || '').split('\n').map(s => s.trim()).filter(Boolean).map(u => ({ url: u, level: '高' })) }
       const r = modal === 'create' ? await api.post('/api/orders', body) : await api.put(`/api/orders/${form.id}`, body)
       toast(modal === 'modify' ? '改单已保存（状态：改单）' : '已保存（状态：未提）'); setModal(null); load()
       if (r.warning) showError(r.warning)
-    } catch (e) { showError(e.message) }
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
   async function stop() {
     if (!stopDate) { showError('请选择更新日期'); return }
     const isBatch = stopTarget && stopTarget.batch
     if (!(await confirm(isBatch ? `确认停单选中的 ${stopTarget.ids.length} 个订单？` : '确认停单？'))) return
+    setBusy(true); setBusyMsg('正在停单，请稍候…')
     try {
       if (isBatch) {
         await api.post('/api/orders/batch-stop', { ids: stopTarget.ids, reason: stopReason, note: '', order_date: stopDate })
@@ -347,15 +371,16 @@ export default function Orders({ variant = 'orders' }) {
         toast('已停')
       }
       setStopTarget(null); setStopDate(''); load(); window.dispatchEvent(new Event('alert-count-refresh'))
-    } catch (e) { showError(e.message) }
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
   async function delOrder(o) {
     if (!(await confirm(`确认删除订单 ${o.order_no}？此操作不可恢复。`))) return
+    setBusy(true); setBusyMsg('正在删除，请稍候…')
     try {
       await api.del(`/api/orders/${o.id}`)
       toast('已删除'); setSelected(s => s.filter(x => x !== o.id)); load()
-    } catch (e) { showError(e.message) }
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
   async function importOrders(file) {
@@ -438,7 +463,9 @@ export default function Orders({ variant = 'orders' }) {
     setBusy(true); setBusyMsg('正在验重，请稍候…')
     try {
       const r = await api.post('/api/orders/check-duplicates')
-      toast(r.msg || '验重完成'); load()
+      toast(r.msg || '验重完成')
+      const f = { ...filters, dup: '有' }
+      setFilters(f); load(1, perPage, f)
     } catch (e) { showError(e.message) } finally { setBusy(false) }
   }
 
@@ -486,9 +513,12 @@ export default function Orders({ variant = 'orders' }) {
   async function exportExcel() {
     const summary = summarizeFilters()
     if (!(await confirm(`确认按以下筛选条件导出订单数据？\n\n${summary}`))) return
-    const qs = buildQuery(filters)
-    downloadFile('/api/orders/export?' + qs).catch(e => showError(e.message))
-    toast('正在导出订单...')
+    setBusy(true); setBusyMsg('正在导出订单，请稍候…')
+    try {
+      const qs = buildQuery(filters)
+      await downloadFile('/api/orders/export?' + qs)
+      toast('订单导出完成')
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
   return (
@@ -498,21 +528,22 @@ export default function Orders({ variant = 'orders' }) {
       {busy && <Loading text={busyMsg} progress={busyProgress} />}
       <div className="toolbar">
         <div className={`filter-wrap ${filterCollapsed ? 'collapsed' : ''}`}>
+          <FilterBar cols={FILTER_COLS} filters={filters} setFilters={setFilters} onSearch={search} fieldOptions={fieldOptions} actions={false} />
           <MultiSelect full searchable placeholder="开始日期" options={dateOptions.start_date} value={filters.start_date || ''} onChange={v => setFilters({ ...filters, start_date: v })} />
           <MultiSelect full searchable placeholder="截止日期" options={dateOptions.end_date} value={filters.end_date || ''} onChange={v => setFilters({ ...filters, end_date: v })} />
-          <FilterBar cols={FILTER_COLS} filters={filters} setFilters={setFilters} onSearch={search} fieldOptions={fieldOptions} actions={false} />
         </div>
         <div className="toolbar-actions">
           <button className="btn primary" onClick={() => search()}>查询</button>
           <button className="btn" onClick={() => { setFilters({}); search({}) }}>重置</button>
           <button className="btn icon" title={filterCollapsed ? '展开查询条件' : '隐藏查询条件'} onClick={() => setFilterCollapsed(!filterCollapsed)}>{filterCollapsed ? IconChevronDown : IconChevronUp}</button>
+          <button className="btn green" onClick={exportExcel}>导出订单</button>
           {!isStop && <button className="btn" onClick={() => { setImportResult(null); setImportModal(true) }}>导入订单</button>}
           {!isStop && <button className="btn" onClick={() => { setReceiptResult(null); setReceiptModal(true) }}>导入回执</button>}
           {!isStop && <button className="btn green" onClick={() => setGenModal(true)}>生成提单表</button>}
-          {!isStop && <button className="btn primary" onClick={() => setConfirmModal(true)}>提单确认</button>}
+          {!isStop && <button className="btn orange" onClick={() => setConfirmModal(true)}>提单确认</button>}
           {!isStop && <button className="btn" onClick={checkDuplicates}>订单验重</button>}
-          <button className="btn green" onClick={exportExcel}>导出订单</button>
-          {!isStop && <button className="btn" onClick={() => downloadFile('/api/orders/export-template').catch(e => showError(e.message))}>导出模版</button>}
+          <button className={`btn ${filters.plat_issue ? 'primary' : ''}`} onClick={() => setCatCheckModal(true)}>品类检查</button>
+          <button className={`btn ${filters.has_alert === '有' ? 'primary' : ''}`} onClick={checkAlert}>预警检查</button>
           {!isStop && selected.length > 0 && <button className="btn danger" onClick={batchStop}>批量停单({selected.length})</button>}
           {!isStop && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
           {!isStop && isAdmin && selected.length > 0 && <button className="btn" onClick={batchReopen}>批量复提({selected.length})</button>}
@@ -833,6 +864,23 @@ export default function Orders({ variant = 'orders' }) {
             <button className="btn" onClick={() => setGroupModal(false)}>取消</button>
             <button className="btn primary" onClick={batchGroup}>保存</button>
           </div>
+        </Modal>
+      )}
+
+      {catCheckModal && (
+        <Modal title="品类检查" onClose={() => setCatCheckModal(false)}>
+          <div className="note">根据品类管理中的平台与二级品类数据，过滤存在问题的订单。</div>
+          <div className="batch-del-list">
+            <button className={`batch-del-item ${filters.plat_issue === 'missing' ? 'on' : ''}`} onClick={() => doCatCheck('missing')}>
+              <span className="bd-title">平台不存在检查</span>
+              <span className="bd-sub">过滤 platform 为空、或不在品类管理平台表中的订单</span>
+            </button>
+            <button className={`batch-del-item ${filters.plat_issue === 'no_cat2' ? 'on' : ''}`} onClick={() => doCatCheck('no_cat2')}>
+              <span className="bd-title">平台无二级品类检查</span>
+              <span className="bd-sub">过滤平台存在、但没有有效二级品类的订单</span>
+            </button>
+          </div>
+          <div className="foot"><button className="btn" onClick={() => setCatCheckModal(false)}>取消</button></div>
         </Modal>
       )}
     </div>

@@ -160,6 +160,9 @@ export default function SimpleList({ kind }) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
   const [checkResult, setCheckResult] = useState(null)
+  const [exportModal, setExportModal] = useState(false)
+  const [exportType, setExportType] = useState('excel')
+  const [batchDelModal, setBatchDelModal] = useState(false)
   const [delByDateModal, setDelByDateModal] = useState(false)
   const [delByDate, setDelByDate] = useState(() => {
     const d = new Date()
@@ -534,6 +537,12 @@ export default function SimpleList({ kind }) {
     toast('正在导出 CSV...')
   }
 
+  function doExport() {
+    setExportModal(false)
+    if (exportType === 'csv') exportDailyCsv()
+    else exportExcel()
+  }
+
   async function doExtract() {
     if (!extractForm.price && Number(extractForm.price) !== 0) { showError('请填写单价'); return }
     if (!extractForm.limit || Number(extractForm.limit) <= 0) { showError('请填写抽取条数'); return }
@@ -820,18 +829,16 @@ export default function SimpleList({ kind }) {
         )}
         <button className="btn icon" title={filterCollapsed ? '展开查询条件' : '隐藏查询条件'} onClick={() => setFilterCollapsed(!filterCollapsed)}>{filterCollapsed ? IconChevronDown : IconChevronUp}</button>
         {cfg.exp && <button className="btn green" onClick={exportExcel}>导出 Excel</button>}
-        {kind === 'daily' && <button className="btn" onClick={exportDailyCsv}>导出 CSV</button>}
-        {cfg.dailyImp && <button className="btn primary" onClick={() => setDailyModal(true)}>① 导入日活</button>}
-        {cfg.csvImp && isAdmin && <button className="btn" onClick={() => { setCsvFile(null); setCsvModal(true) }}>导入CSV</button>}
-        {cfg.dist && <button className="btn" onClick={() => setWashModal(true)}>② 导出洗名</button>}
-        {cfg.dist && <button className="btn" onClick={() => washFileRef.current.click()}>③ 导入洗名</button>}
-        {cfg.dist && <button className="btn green" onClick={() => { setDistCustomerIds(customers.filter(c => c.ctype === 'downstream').map(c => c.id)); setDistModal(true) }}>④ 分发数据</button>}
+        {cfg.dailyImp && <button className="btn orange" onClick={() => setDailyModal(true)}>① 导入日活</button>}
+        {cfg.dist && <button className="btn orange" onClick={() => setWashModal(true)}>② 导出洗名</button>}
+        {cfg.dist && <button className="btn orange" onClick={() => washFileRef.current.click()}>③ 导入洗名</button>}
+        {cfg.dist && <button className="btn orange" onClick={() => { setDistCustomerIds(customers.filter(c => c.ctype === 'downstream').map(c => c.id)); setDistModal(true) }}>④ 分发数据</button>}
         {cfg.check && <button className="btn" onClick={() => { setCheckResult(null); setCheckModal(true) }}>工单检查</button>}
-        {showBatchDel && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
-        {kind === 'daily' && isAdmin && <button className="btn danger" onClick={() => setDelByDateModal(true)}>按日期删除</button>}
+        {showBatchDel && kind !== 'daily' && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
         {kind === 'daily' && <button className="btn" onClick={() => backfillCategory().catch(e => showError(e.message))}>补充品类</button>}
         {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
-        {cfg.export && <button className="btn green" onClick={exportExcel}>导出 Excel</button>}
+        {cfg.export && <button className="btn green" onClick={() => setExportModal(true)}>导出数据</button>}
+        {kind === 'daily' && isAdmin && <button className="btn danger" onClick={() => setBatchDelModal(true)}>批量删除</button>}
         {cfg.billExp && <button className="btn green" onClick={() => setBillExpModal(true)}>导出账单</button>}
         {cfg.billExp && <button className="btn" onClick={() => setBillSummaryModal(true)}>导出账单汇总</button>}
         {cfg.simple && <button className="btn primary" onClick={() => setSimpleModal({ name: '', status: 1 })}>+ 新增</button>}
@@ -1015,6 +1022,45 @@ export default function SimpleList({ kind }) {
             <button className="btn" onClick={() => setExtractModal(false)}>取消</button>
             <button className="btn primary" onClick={() => doExtract().catch(e => showError(e.message))}>抽取并记账</button>
           </div>
+        </Modal>
+      )}
+
+      {exportModal && (
+        <Modal title="导出数据" onClose={() => setExportModal(false)}>
+          <div className="note">选择导出格式。</div>
+          <div className="export-opts">
+            <label className={`export-opt ${exportType === 'excel' ? 'on' : ''}`}>
+              <input type="radio" name="exportType" checked={exportType === 'excel'} onChange={() => setExportType('excel')} />
+              <span className="eo-title">Excel</span>
+              <span className="eo-sub">导出为 .xlsx 文件（默认）</span>
+            </label>
+            <label className={`export-opt ${exportType === 'csv' ? 'on' : ''}`}>
+              <input type="radio" name="exportType" checked={exportType === 'csv'} onChange={() => setExportType('csv')} />
+              <span className="eo-title">CSV</span>
+              <span className="eo-sub">导出为 .csv 文件</span>
+            </label>
+          </div>
+          <div className="foot">
+            <button className="btn" onClick={() => setExportModal(false)}>取消</button>
+            <button className="btn primary" onClick={doExport}>导出</button>
+          </div>
+        </Modal>
+      )}
+
+      {batchDelModal && (
+        <Modal title="批量删除日活数据" onClose={() => setBatchDelModal(false)}>
+          <div className="note">选择删除方式（仅管理员可用，不可恢复）。</div>
+          <div className="batch-del-list">
+            <button className="batch-del-item" disabled={selected.length === 0} onClick={() => { setBatchDelModal(false); batchDelete() }}>
+              <span className="bd-title">按选择对象删除</span>
+              <span className="bd-sub">{selected.length > 0 ? `删除当前勾选的 ${selected.length} 条数据` : '请先在列表中勾选数据'}</span>
+            </button>
+            <button className="batch-del-item" onClick={() => { setBatchDelModal(false); setDelByDateModal(true) }}>
+              <span className="bd-title">按指定日期删除</span>
+              <span className="bd-sub">删除所选数据日期下的全部日活数据</span>
+            </button>
+          </div>
+          <div className="foot"><button className="btn" onClick={() => setBatchDelModal(false)}>取消</button></div>
         </Modal>
       )}
 

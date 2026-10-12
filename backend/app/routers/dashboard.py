@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import Order, Bill, Customer, Alert, DailyData, Category, Fund, Channel, Notification
+from ..pagination import paginate, ok_page
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -56,13 +57,15 @@ def alerts_count(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 
 @router.get("/notifications")
-def notifications(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    rows = db.query(Notification).order_by(Notification.notify_time.desc()).all()
-    return {"code": 0, "data": [{
+def notifications(db: Session = Depends(get_db), _=Depends(get_current_user),
+                  page: int = 1, per_page: int = 500):
+    qy = db.query(Notification).order_by(Notification.notify_time.desc(), Notification.id.desc())
+    total, rows = paginate(qy, page, per_page)
+    return ok_page([{
         "id": n.id, "content": n.content, "order_no": n.order_no or "",
         "task_id": n.task_id or "", "order_id": n.order_id,
         "notify_time": n.notify_time.strftime("%Y-%m-%d %H:%M:%S") if n.notify_time else "",
-    } for n in rows], "msg": "ok"}
+    } for n in rows], total)
 
 
 @router.get("/trend")
