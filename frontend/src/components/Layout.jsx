@@ -18,14 +18,15 @@ const TITLE_MAP = {
 const MENUS = [
   { key: '/', name: '工作台', icon: '📊' },
   { key: '/orders', name: '订单管理', icon: '📝', perm: 'order:view' },
-  { key: '/tidabiao-history', name: '提单历史', icon: '🗂️', perm: 'order:view' },
+  { key: '/daily', name: '日活数据', icon: '📈', perm: 'data:view' },
+  { key: '/bills', name: '账单管理', icon: '💰', perm: 'bill:view' },
+  { key: '/customers', name: '客户管理', icon: '👤', perm: 'customer:view' },
   { key: 'data', name: '数据管理', icon: '📋', perm: 'data:view', children: [
-    { key: '/daily', name: '日活数据' },
+    { key: '/tidabiao-history', name: '提单历史' },
     { key: '/wash-names', name: '洗名库' },
     { key: '/fund', name: '公积金' },
     { key: '/source-files', name: '源头文件' },
   ] },
-  { key: '/bills', name: '账单管理', icon: '💰', perm: 'bill:view' },
   { key: 'master', name: '基础数据', icon: '🗄️', perm: 'master:view', children: [
     { key: '/parts', name: '配件管理' },
     { key: '/categories', name: '品类管理' },
@@ -33,7 +34,6 @@ const MENUS = [
     { key: '/operators', name: '运营商管理' },
     { key: '/templates', name: '模版管理' },
   ] },
-  { key: '/customers', name: '客户管理', icon: '👤', perm: 'customer:view' },
   { key: '/accounts', name: '账户管理', icon: '⚙️', admin: true },
   { key: '/config-center', name: '配置中心', icon: '🛠️', admin: true },
   { key: '/logs', name: '日志管理', icon: '📜', admin: true },

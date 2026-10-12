@@ -2461,7 +2461,7 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
 
     # ---- Sheet2 下游账单 ----
     ws2 = wb.create_sheet("下游账单")
-    down_headers = ["代理编号", "代理名称", "进货量", "销售金额(元)", "余额(元)"]
+    down_headers = ["代理编号", "代理名称", "进货量", "销售金额(元)", "利润(元)", "余额(元)"]
     ws2.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(down_headers))
     tc2 = ws2.cell(row=1, column=1, value=f"下游账单（{date}）")
     tc2.font = title_font
@@ -2471,12 +2471,15 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
         c = ws2.cell(row=2, column=j, value=h)
         c.font = header_font; c.fill = header_fill; c.border = border; c.alignment = center
     r = 3
-    d_qty = d_sales = d_bal = 0
+    d_qty = d_sales = d_profit = d_bal = 0
     for b in down_bills:
         c = cust_map.get(b.customer_id)
         vals = [c.code if c else "", c.name if c else "", b.purchase_qty or 0,
-                float(b.sales) if b.sales is not None else 0, float(b.balance) if b.balance is not None else 0]
-        d_qty += vals[2]; d_sales = round(d_sales + vals[3], 2); d_bal = round(d_bal + vals[4], 2)
+                float(b.sales) if b.sales is not None else 0,
+                float(b.profit) if b.profit is not None else 0,
+                float(b.balance) if b.balance is not None else 0]
+        d_qty += vals[2]; d_sales = round(d_sales + vals[3], 2)
+        d_profit = round(d_profit + vals[4], 2); d_bal = round(d_bal + vals[5], 2)
         for j, v in enumerate(vals, 1):
             cell = ws2.cell(row=r, column=j, value=v)
             cell.border = border
@@ -2484,13 +2487,13 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
             if j >= 4:
                 cell.number_format = '#,##0.00'
         r += 1
-    for j, v in enumerate(["合计", "", d_qty, round(d_sales, 2), round(d_bal, 2)], 1):
+    for j, v in enumerate(["合计", "", d_qty, round(d_sales, 2), round(d_profit, 2), round(d_bal, 2)], 1):
         cell = ws2.cell(row=r, column=j, value=v)
         cell.font = total_font; cell.fill = total_fill; cell.border = border
         cell.alignment = right if j >= 3 else center
         if j >= 4:
             cell.number_format = '#,##0.00'
-    for j, w in enumerate([12, 16, 10, 14, 14], 1):
+    for j, w in enumerate([12, 16, 10, 14, 14, 14], 1):
         ws2.column_dimensions[openpyxl.utils.get_column_letter(j)].width = w
 
     bio = io.BytesIO()
