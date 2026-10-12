@@ -1601,8 +1601,6 @@ def _build_distribute_zip(jobs, bills, date_str, progress_cb, bill_tpls=None):
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for i, job in enumerate(jobs):
             parts = [date_str, job["cust_code"]]
-            if job["sec_agent"]:
-                parts.append(job["sec_agent"])
             if job["group_name"]:
                 parts.append(job["group_name"])
             parts.append(str(len(job["records"])))
@@ -1713,14 +1711,13 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
         if not info["cust_code"]:
             raise HTTPException(status_code=400, detail=f"订单「{tid}」的一级代理为空，无法分数据")
 
-    # 3. 按小组聚合，校验出数模版/一级代理/二级代理一致性
+    # 3. 按小组聚合，校验出数模版/一级代理一致性
     group_meta = {}
     for tid, info in orders_info.items():
         g = info["group_name"]
-        m = group_meta.setdefault(g, {"tpl": set(), "cust": set(), "sec": set(), "set_tid": None})
+        m = group_meta.setdefault(g, {"tpl": set(), "cust": set(), "set_tid": None})
         m["tpl"].add(info["tpl_code"])
         m["cust"].add(info["cust_code"])
-        m["sec"].add(info["sec_agent"])
         if info["tpl_code"] and m["set_tid"] is None:
             m["set_tid"] = tid
 
@@ -1733,8 +1730,6 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             raise HTTPException(status_code=400, detail=f"小组「{g}」的出数模版为空，无法分数据")
         if len(m["cust"]) > 1:
             raise HTTPException(status_code=400, detail=f"小组「{g}」对应多个一级代理：{'、'.join(sorted(m['cust']))}")
-        if len(m["sec"]) > 1:
-            raise HTTPException(status_code=400, detail=f"小组「{g}」对应多个二级代理：{'、'.join(sorted(m['sec']))}")
         if "" in m["tpl"]:
             unset_count = sum(1 for info in orders_info.values() if info["group_name"] == g and not info["tpl_code"])
             soft_issues.append({"group_name": g, "tpl_code": sorted(set_tpls)[0], "unset_count": unset_count})

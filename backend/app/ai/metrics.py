@@ -145,13 +145,12 @@ def bill_alerts(db):
 
 def channel_qty(db, date=None):
     d = _parse_date(date) or _latest_biz_date(db) or date.today()
-    rows = (db.query(Channel.name, func.count(DailyData.id))
-            .join(Channel, DailyData.channel_id == Channel.id)
+    rows = (db.query(DailyData.channel, func.count(DailyData.id))
             .filter(DailyData.biz_date == d)
-            .group_by(Channel.name).order_by(func.count(DailyData.id).desc()).all())
-    data = [{"渠道": r[0] or "", "数量": int(r[1])} for r in rows]
+            .group_by(DailyData.channel).order_by(func.count(DailyData.id).desc()).all())
+    data = [{"渠道": r[0] or "未关联", "数量": int(r[1])} for r in rows]
     return _table(f"渠道数量 · {d}", ["渠道", "数量"], data,
-                  "按 daily_data.channel_id 统计当日明细数量", "daily_data/channel")
+                  "按 daily_data.channel 统计当日明细数量", "daily_data")
 
 
 def recharge_records(db, limit=50):
@@ -167,17 +166,16 @@ def phone_lookup(db, phone=None):
     if not phone:
         return _table("手机号查询", ["字段", "值"], [], "请输入要查询的手机号", "-")
     d_rows = (db.query(DailyData.phone, DailyData.name, DailyData.upstream, DailyData.task_name,
-                       Channel.name, DailyData.province, DailyData.city, DailyData.wash_status, DailyData.biz_date)
-              .outerjoin(Channel, DailyData.channel_id == Channel.id)
+                       DailyData.channel, DailyData.province, DailyData.city, DailyData.biz_date)
               .filter(DailyData.phone == phone).order_by(DailyData.id.desc()).limit(50).all())
     data = [{"来源": "日活", "姓名": r[1] or "", "上游": r[2] or "", "任务": r[3] or "",
-             "渠道": r[4] or "", "省市": f"{r[5] or ''}{r[6] or ''}", "洗名状态": r[7] or "", "日期": str(r[8])} for r in d_rows]
+             "渠道": r[4] or "", "省市": f"{r[5] or ''}{r[6] or ''}", "日期": str(r[7])} for r in d_rows]
     f_rows = db.query(Fund).filter(Fund.phone == phone).limit(20).all()
     for f in f_rows:
         data.append({"来源": "公积金", "姓名": f.name or "", "上游": "", "任务": "",
                      "渠道": f.company or "", "省市": f"{f.province or ''}{f.city or ''}",
-                     "洗名状态": f.deposit_status or "", "日期": f.open_date or ""})
-    return _table(f"手机号 {_mask_phone(phone)} 全历史", ["来源", "姓名", "上游", "任务", "渠道", "省市", "洗名状态", "日期"], data,
+                     "日期": f.open_date or ""})
+    return _table(f"手机号 {_mask_phone(phone)} 全历史", ["来源", "姓名", "上游", "任务", "渠道", "省市", "日期"], data,
                   "跨 daily_data 与 fund 检索，手机号已脱敏", "daily_data/fund")
 
 
@@ -278,6 +276,38 @@ def category_stats(db, date=None):
                   "按 daily_data 的 cat1/cat2/platform 统计当日数量", "daily_data")
 
 
+def channel_stats(db, date=None, upstream=None):
+    """按甲方（牛/新）+ 渠道统计某日数据量"""
+    d = _parse_date(date) or _latest_biz_date(db) or date.today()
+    q = (db.query(DailyData.upstream, DailyData.channel, func.count(DailyData.id))
+         .filter(DailyData.biz_date == d))
+    if upstream:
+        q = q.filter(DailyData.upstream.like(f"%{upstream}%"))
+    rows = q.group_by(DailyData.upstream, DailyData.channel).order_by(func.count(DailyData.id).desc()).all()
+    data = [{"甲方": r[0] or "未关联", "渠道": r[1] or "未关联", "数量": int(r[2])} for r in rows]
+    return _table(f"甲方·渠道数据量 · {d}", ["甲方", "渠道", "数量"], data,
+                  "按 daily_data.upstream/channel 统计当日数量", "daily_data")
+
+
+def profit_detail(db, customer=None, start_date=None, end_date=None, days=7, limit=100):
+    """按客户/日期区间查利润明细（营业额、利润、进货量）"""
+    if start_date and end_date:
+        s, e = _parse_date(start_date), _parse_date(end_date)
+    else:
+        e = _latest_biz_date(db) or date.today()
+        s = e - timedelta(days=max(1, int(days or 7)) - 1)
+    q = (db.query(Customer.code, Customer.name, Bill.biz_date, Bill.sales, Bill.profit, Bill.purchase_qty)
+         .join(Bill, Bill.customer_id == Customer.id)
+         .filter(Bill.biz_date >= s, Bill.biz_date <= e))
+    if customer:
+        q = q.filter(or_(Customer.code.like(f"%{customer}%"), Customer.name.like(f"%{customer}%")))
+    rows = q.order_by(Bill.biz_date.desc()).limit(int(limit or 100)).all()
+    data = [{"编号": r[0], "客户": r[1], "日期": str(r[2]), "营业额": _fmt(r[3]),
+             "利润": _fmt(r[4]), "进货量": int(r[5] or 0)} for r in rows]
+    return _table(f"利润明细 · {s} ~ {e}", ["编号", "客户", "日期", "营业额", "利润", "进货量"], data,
+                  "按 bill 明细，利润 = 销售金额 - 成本（上游渠道单价）", "bill/customer")
+
+
 # ---------------- 工具注册表（供 LLM function-calling） ----------------
 
 IMPL = {
@@ -298,6 +328,8 @@ IMPL = {
     "bill_detail": bill_detail,
     "work_order_check": work_order_check,
     "category_stats": category_stats,
+    "channel_stats": channel_stats,
+    "profit_detail": profit_detail,
 }
 
 TOOLS = [
@@ -365,6 +397,17 @@ TOOLS = [
     {"type": "function", "function": {
         "name": "category_stats", "description": "品类/平台分布：按一级品类、二级品类、平台统计某日数据量。",
         "parameters": {"type": "object", "properties": {"date": {"type": "string"}}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "channel_stats", "description": "按甲方（牛/新）+ 渠道统计某日数据量。用于「牛各渠道出了多少」「某天新各渠道数据」类问题。",
+        "parameters": {"type": "object", "properties": {
+            "date": {"type": "string", "description": "日期 YYYY-MM-DD"},
+            "upstream": {"type": "string", "description": "甲方名：牛 或 新"}}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "profit_detail", "description": "按客户/日期区间查利润明细（营业额、利润、进货量）。用于「最近N天赚了多少」「某客户利润」类问题。",
+        "parameters": {"type": "object", "properties": {
+            "customer": {"type": "string", "description": "客户编号或名称"},
+            "start_date": {"type": "string"}, "end_date": {"type": "string"},
+            "days": {"type": "integer"}, "limit": {"type": "integer"}}, "required": []}}},
 ]
 
 
