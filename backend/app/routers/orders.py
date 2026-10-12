@@ -1222,18 +1222,24 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
             continue
         op = db.query(Operator).filter(Operator.name == operator_val).first() if operator_val else None
         ch = db.query(Channel).filter(Channel.name == channel_val).first() if channel_val else None
-        orders_q = db.query(Order).filter(
+        orders = db.query(Order).filter(
             Order.task_name == task_name,
             Order.upstream_id == up_id,
             Order.operator_id == (op.id if op else None),
             Order.channel_id == (ch.id if ch else None),
             Order.status != "已停",
             or_(Order.task_id.is_(None), Order.task_id == ""),
-        )
+        ).all()
+        # 有 url 时：按 URL 集合精确比对（拆行 -> 去空格 -> 排序，顺序无关）
         if url_val:
-            url_sub = db.query(OrderUrl.order_id).filter(OrderUrl.url.like(f"%{url_val}%")).subquery()
-            orders_q = orders_q.filter(Order.id.in_(url_sub))
-        orders = orders_q.all()
+            receipt_urls = sorted(u for u in re.split(r"[\n\r]+", url_val) if u.strip())
+            matched = []
+            for o in orders:
+                o_urls = sorted(u.url.strip() for u in db.query(OrderUrl).filter(OrderUrl.order_id == o.id).all()
+                                if u.url and u.url.strip())
+                if o_urls == receipt_urls:
+                    matched.append(o)
+            orders = matched
         if len(orders) == 0:
             errors.append({"task_name": task_name, "reason": "未找到匹配订单（甲方+任务名+运营商+渠道+url 且工单号为空、非已停）"})
             continue
