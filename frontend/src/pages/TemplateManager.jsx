@@ -2,6 +2,18 @@ import React, { useEffect, useRef, useState } from 'react'
 import { api, getToken, downloadFile } from '../api'
 import { Modal, Badge, useToast, useConfirm, Loading, ClearableInput } from '../components/ui'
 
+function plainText(html) {
+  if (!html) return ''
+  return String(html)
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function RichTextEditor({ value, onChange }) {
   const ref = useRef(null)
   const initialized = useRef(false)
@@ -123,7 +135,7 @@ export default function TemplateManager() {
       <div className="panel">
         <div className="table-scroll">
           <table>
-            <thead><tr><th>模版类型</th><th>模版名称</th><th>模版编号</th><th>文件名</th><th>创建时间</th><th>更新时间</th><th className="ops">操作</th></tr></thead>
+            <thead><tr><th>模版类型</th><th>模版名称</th><th>模版编号</th><th>文件名</th><th>说明</th><th>创建时间</th><th>更新时间</th><th className="ops">操作</th></tr></thead>
             <tbody>
               {rows.map(t => (
                 <tr key={t.id} className="clickable" onDoubleClick={() => setDetail(t)}>
@@ -131,6 +143,7 @@ export default function TemplateManager() {
                   <td>{t.ttype || '—'}</td>
                   <td><code>{t.code}</code></td>
                   <td>{t.has_file ? <a className="link" onClick={() => showPreview(t)}>{t.file_name || t.name}</a> : <Badge value="未上传" />}</td>
+                  <td title={plainText(t.description)} style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{plainText(t.description) || '—'}</td>
                   <td>{t.created_at || '—'}</td>
                   <td>{t.updated_at || '—'}</td>
                   <td className="ops">

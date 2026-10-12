@@ -801,7 +801,7 @@ export default function SimpleList({ kind }) {
         {cfg.csvImp && isAdmin && <button className="btn" onClick={() => { setCsvFile(null); setCsvModal(true) }}>导入CSV</button>}
         {cfg.dist && <button className="btn" onClick={() => setWashModal(true)}>② 导出洗名</button>}
         {cfg.dist && <button className="btn" onClick={() => washFileRef.current.click()}>③ 导入洗名</button>}
-        {cfg.dist && <button className="btn green" onClick={() => { setDistCustomerIds([]); setDistModal(true) }}>④ 分发数据</button>}
+        {cfg.dist && <button className="btn green" onClick={() => { setDistCustomerIds(customers.filter(c => c.ctype === 'downstream').map(c => c.id)); setDistModal(true) }}>④ 分发数据</button>}
         {cfg.check && <button className="btn" onClick={() => { setCheckResult(null); setCheckModal(true) }}>工单检查</button>}
         {showBatchDel && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
         {kind === 'daily' && isAdmin && <button className="btn danger" onClick={() => setDelByDateModal(true)}>按日期删除</button>}
@@ -925,31 +925,42 @@ export default function SimpleList({ kind }) {
         </Modal>
       )}
 
-      {distModal && (
+      {distModal && (() => {
+        const downstreamCustomers = customers.filter(c => c.ctype === 'downstream')
+        const allChecked = downstreamCustomers.length > 0 && downstreamCustomers.every(c => distCustomerIds.includes(c.id))
+        function toggleAll() {
+          setDistCustomerIds(allChecked ? [] : downstreamCustomers.map(c => c.id))
+        }
+        return (
         <Modal title="分数据" onClose={() => setDistModal(false)}>
           <div className="note">选择数据日期，将该日期下的日活数据按订单的小组分组，用对应订单的出数模版生成文件打包下载。</div>
           <div className="field" style={{ marginBottom: 14 }}><label className="required">数据日期</label>
             <input type="date" value={distDate} onChange={e => setDistDate(e.target.value)} /></div>
           <div className="field" style={{ marginBottom: 14 }}>
-            <label>一级代理（不选则全部分发）</label>
-            <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: '6px 10px' }}>
-              {customers.filter(c => c.ctype === 'downstream').map(c => (
-                <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, padding: '3px 0', cursor: 'pointer' }}>
+            <label>一级代理</label>
+            <div className="agent-list">
+              <label className="agent-item agent-item-all">
+                <input type="checkbox" checked={allChecked} onChange={toggleAll} />
+                <span>全选 / 全不选</span>
+              </label>
+              {downstreamCustomers.map(c => (
+                <label className="agent-item" key={c.id}>
                   <input type="checkbox" checked={distCustomerIds.includes(c.id)} onChange={() => {
                     setDistCustomerIds(ids => ids.includes(c.id) ? ids.filter(x => x !== c.id) : [...ids, c.id])
                   }} />
-                  {c.code} {c.name}
+                  <span>{c.code} {c.name}</span>
                 </label>
               ))}
-              {customers.filter(c => c.ctype === 'downstream').length === 0 && <div className="empty">暂无下游客户</div>}
+              {downstreamCustomers.length === 0 && <div className="empty">暂无下游客户</div>}
             </div>
           </div>
           <div className="foot">
-            <button className="btn" onClick={() => { setDistModal(false); setDistCustomerIds([]) }}>取消</button>
+            <button className="btn" onClick={() => setDistModal(false)}>取消</button>
             <button className="btn primary" onClick={() => doDistribute().catch(e => showError(e.message))}>分数据</button>
           </div>
         </Modal>
-      )}
+        )
+      })()}
 
       {extractModal && (
         <Modal title="单独抽取" onClose={() => setExtractModal(false)}>

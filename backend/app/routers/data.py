@@ -316,6 +316,57 @@ def _wash_name_by_phone(db, phone):
     return w.name if w and w.name else ""
 
 
+def _build_import_ctx(db):
+    """预加载导入所需的参考数据，避免逐行 N+1 查询"""
+    wash = {w.phone: w.name for w in db.query(WashName).filter(WashName.name.isnot(None), WashName.name != "").all()}
+    platforms = {p.name: p.cat_id for p in db.query(Platform).all()}
+    cats = {c.id: (c.name, c.parent_id) for c in db.query(Category).all()}
+    customers = {c.id: c for c in db.query(Customer).all()}
+    operators = {op.id: op.name for op in db.query(Operator).all()}
+    channels = {ch.id: ch.name for ch in db.query(Channel).all()}
+    orders = {o.task_id: o for o in db.query(Order).filter(Order.task_id.isnot(None)).all()}
+    return {"wash": wash, "platforms": platforms, "cats": cats,
+            "customers": customers, "operators": operators, "channels": channels, "orders": orders}
+
+
+def _ctx_order_info(ctx, task_id):
+    if not task_id:
+        return {}
+    o = ctx["orders"].get(task_id)
+    if not o:
+        return {}
+    up = ctx["customers"].get(o.upstream_id)
+    cust = ctx["customers"].get(o.customer_id)
+    return {
+        "upstream": up.name if up else "",
+        "task_name": o.task_name or "",
+        "operator": ctx["operators"].get(o.operator_id, ""),
+        "customer": (f"{cust.code} {cust.name}" if cust else ""),
+        "secondary_agent": o.secondary_agent or "",
+        "channel": ctx["channels"].get(o.channel_id, ""),
+        "platform": o.platform or "",
+    }
+
+
+def _ctx_wash(ctx, phone):
+    if not phone:
+        return ""
+    return ctx["wash"].get(phone, "")
+
+
+def _ctx_cat(ctx, platform_name):
+    if not platform_name:
+        return "", ""
+    cat_id = ctx["platforms"].get(platform_name)
+    if not cat_id:
+        return "", ""
+    cat2_name, parent_id = ctx["cats"].get(cat_id, (None, None))
+    if not cat2_name:
+        return "", ""
+    cat1_name = ctx["cats"].get(parent_id, (None, None))[0] if parent_id else None
+    return cat1_name or "", cat2_name or ""
+
+
 def _cat_by_platform(db, platform_name):
     """按平台名称关联品类管理，返回 (一级品类, 二级品类)"""
     if not platform_name:
@@ -338,7 +389,7 @@ def _is_header_row(values):
     return any(k in joined for k in ("任务id", "任务名", "手机号", "运营商", "省", "市"))
 
 
-def _import_niu_excel(db, content, biz_date, source_file, source_file_id, errors, seen):
+def _import_niu_excel(db, content, biz_date, source_file, source_file_id, errors, seen, ctx=None):
     """解析牛的数据 excel（第一行是表头）：任务id/任务名/手机号/省/市/运营商"""
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
@@ -346,6 +397,8 @@ def _import_niu_excel(db, content, biz_date, source_file, source_file_id, errors
     n = 0
     deduped = 0
     header = None
+    batch = []
+    now = datetime.now()
     for values in ws.iter_rows(values_only=True):
         if header is None:
             header = [str(v).strip() if v is not None else "" for v in values]
@@ -378,39 +431,48 @@ def _import_niu_excel(db, content, biz_date, source_file, source_file_id, errors
             deduped += 1
             continue
         seen.add(key)
-        info = _order_info_by_task_id(db, task_id)
-        cat1, cat2 = _cat_by_platform(db, info.get("platform") or "")
-        db.add(DailyData(
-            biz_date=biz_date,
-            upstream=info.get("upstream") or "",
-            task_id=task_id,
-            task_name=task_name or info.get("task_name") or "",
-            phone=phone,
-            name=_wash_name_by_phone(db, phone),
-            province=province,
-            city=city,
-            operator=operator or info.get("operator") or "",
-            cat1=cat1,
-            cat2=cat2,
-            platform=info.get("platform") or "",
-            customer=info.get("customer") or "",
-            secondary_agent=info.get("secondary_agent") or "",
-            channel=info.get("channel") or "",
-            source_file=source_file,
-            source_file_id=source_file_id,
-        ))
+        info = _ctx_order_info(ctx, task_id) if ctx else _order_info_by_task_id(db, task_id)
+        cat1, cat2 = _ctx_cat(ctx, info.get("platform") or "") if ctx else _cat_by_platform(db, info.get("platform") or "")
+        batch.append({
+            "biz_date": biz_date,
+            "upstream": info.get("upstream") or "",
+            "task_id": task_id,
+            "task_name": task_name or info.get("task_name") or "",
+            "phone": phone,
+            "name": _ctx_wash(ctx, phone) if ctx else _wash_name_by_phone(db, phone),
+            "province": province,
+            "city": city,
+            "operator": operator or info.get("operator") or "",
+            "cat1": cat1,
+            "cat2": cat2,
+            "platform": info.get("platform") or "",
+            "customer": info.get("customer") or "",
+            "secondary_agent": info.get("secondary_agent") or "",
+            "channel": info.get("channel") or "",
+            "source_file": source_file,
+            "source_file_id": source_file_id,
+            "created_at": now,
+            "updated_at": now,
+        })
         n += 1
+        if len(batch) >= 5000:
+            db.execute(insert(DailyData), batch)
+            batch = []
+    if batch:
+        db.execute(insert(DailyData), batch)
     wb.close()
     return n, deduped
 
 
-def _import_new_excel(db, content, biz_date, source_file, source_file_id, errors, seen):
+def _import_new_excel(db, content, biz_date, source_file, source_file_id, errors, seen, ctx=None):
     """解析新的数据 excel（第一行是数据，无表头）：手机号/甲方工单号/平台/省/市"""
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     ws = wb.active
     n = 0
     deduped = 0
+    batch = []
+    now = datetime.now()
     for values in ws.iter_rows(values_only=True):
         if not any((str(v) if v is not None else "").strip() for v in values):
             continue
@@ -426,33 +488,40 @@ def _import_new_excel(db, content, biz_date, source_file, source_file_id, errors
             deduped += 1
             continue
         seen.add(key)
-        info = _order_info_by_task_id(db, task_id)
-        cat1, cat2 = _cat_by_platform(db, info.get("platform") or "")
-        db.add(DailyData(
-            biz_date=biz_date,
-            upstream=info.get("upstream") or "",
-            task_id=task_id,
-            task_name=info.get("task_name") or "",
-            phone=phone,
-            name=_wash_name_by_phone(db, phone),
-            province=province,
-            city=city,
-            operator=info.get("operator") or "",
-            cat1=cat1,
-            cat2=cat2,
-            platform=info.get("platform") or "",
-            customer=info.get("customer") or "",
-            secondary_agent=info.get("secondary_agent") or "",
-            channel=info.get("channel") or "",
-            source_file=source_file,
-            source_file_id=source_file_id,
-        ))
+        info = _ctx_order_info(ctx, task_id) if ctx else _order_info_by_task_id(db, task_id)
+        cat1, cat2 = _ctx_cat(ctx, info.get("platform") or "") if ctx else _cat_by_platform(db, info.get("platform") or "")
+        batch.append({
+            "biz_date": biz_date,
+            "upstream": info.get("upstream") or "",
+            "task_id": task_id,
+            "task_name": info.get("task_name") or "",
+            "phone": phone,
+            "name": _ctx_wash(ctx, phone) if ctx else _wash_name_by_phone(db, phone),
+            "province": province,
+            "city": city,
+            "operator": info.get("operator") or "",
+            "cat1": cat1,
+            "cat2": cat2,
+            "platform": info.get("platform") or "",
+            "customer": info.get("customer") or "",
+            "secondary_agent": info.get("secondary_agent") or "",
+            "channel": info.get("channel") or "",
+            "source_file": source_file,
+            "source_file_id": source_file_id,
+            "created_at": now,
+            "updated_at": now,
+        })
         n += 1
+        if len(batch) >= 5000:
+            db.execute(insert(DailyData), batch)
+            batch = []
+    if batch:
+        db.execute(insert(DailyData), batch)
     wb.close()
     return n, deduped
 
 
-def _import_one_daily_file(db, fn, content, date_obj, source_file_id, errors, seen):
+def _import_one_daily_file(db, fn, content, date_obj, source_file_id, errors, seen, ctx=None):
     """处理单个文件（zip 或 excel），返回 (导入条数, 去重条数)"""
     ext = fn.rsplit(".", 1)[-1].lower() if "." in fn else ""
     if ext not in ("zip", "xlsx", "xls"):
@@ -467,7 +536,7 @@ def _import_one_daily_file(db, fn, content, date_obj, source_file_id, errors, se
             for name in zf.namelist():
                 if name.lower().endswith((".xlsx", ".xls")):
                     try:
-                        nn, dd = _import_niu_excel(db, zf.read(name), date_obj, fn, source_file_id, errors, seen)
+                        nn, dd = _import_niu_excel(db, zf.read(name), date_obj, fn, source_file_id, errors, seen, ctx)
                         n += nn
                         deduped += dd
                     except Exception as e:  # noqa
@@ -485,9 +554,9 @@ def _import_one_daily_file(db, fn, content, date_obj, source_file_id, errors, se
             break
         wb.close()
         if _is_header_row(first):
-            nn, dd = _import_niu_excel(db, content, date_obj, fn, source_file_id, errors, seen)
+            nn, dd = _import_niu_excel(db, content, date_obj, fn, source_file_id, errors, seen, ctx)
         else:
-            nn, dd = _import_new_excel(db, content, date_obj, fn, source_file_id, errors, seen)
+            nn, dd = _import_new_excel(db, content, date_obj, fn, source_file_id, errors, seen, ctx)
         n += nn
         deduped += dd
     return n, deduped
@@ -624,6 +693,9 @@ async def import_daily(files: List[UploadFile] = File(...), biz_date: str = Form
     # 当天已有 (任务id, 手机号)，用于同任务内去重
     seen = {(r.task_id, r.phone) for r in db.query(DailyData).filter(DailyData.biz_date == date_obj).all()}
 
+    # 预加载参考数据，避免逐行 N+1 查询
+    ctx = _build_import_ctx(db)
+
     imported = 0
     deduped = 0
     errors = []
@@ -637,7 +709,7 @@ async def import_daily(files: List[UploadFile] = File(...), biz_date: str = Form
                         biz_date=date_obj.strftime("%Y-%m-%d"), size=len(content))
         db.add(sf)
         db.flush()
-        n, dd = _import_one_daily_file(db, fn, content, date_obj, sf.id, errors, seen)
+        n, dd = _import_one_daily_file(db, fn, content, date_obj, sf.id, errors, seen, ctx)
         imported += n
         deduped += dd
     db.commit()
