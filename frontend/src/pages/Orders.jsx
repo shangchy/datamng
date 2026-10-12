@@ -559,7 +559,7 @@ export default function Orders({ variant = 'orders' }) {
         <Modal title={modal === 'create' ? '新建提单' : (modal === 'edit' ? '编辑提单' : '改单')} onClose={() => setModal(null)} wide>
           <div className="row">
             <div className="field"><label>订单编号</label><input value={form.order_no} disabled placeholder="自动生成" /></div>
-            <div className="field"><label>工单号</label><input value={form.task_id} disabled placeholder="自动生成" /></div>
+            <div className="field"><label>工单号</label><ClearableInput value={form.task_id} onChange={e => setForm({ ...form, task_id: e.target.value })} placeholder="自动生成" /></div>
             <div className="field"><label className="required">上游</label>
               <select value={form.upstream_id} onChange={e => setForm({ ...form, upstream_id: e.target.value })}>
                 <option value="">请选择</option>{upstreams.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -579,11 +579,11 @@ export default function Orders({ variant = 'orders' }) {
           </div>
           <div className="row">
             <div className="field"><label>渠道</label>
-              <select value={form.channel_id} disabled={modal === 'modify'} onChange={e => setForm({ ...form, channel_id: e.target.value })}>
+              <select value={form.channel_id} onChange={e => setForm({ ...form, channel_id: e.target.value })}>
                 <option value="">请选择</option>{channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select></div>
             <div className="field"><label>运营商</label>
-              <select value={form.operator_id} disabled={modal === 'modify'} onChange={e => setForm({ ...form, operator_id: e.target.value })}>
+              <select value={form.operator_id} onChange={e => setForm({ ...form, operator_id: e.target.value })}>
                 <option value="">请选择</option>{operators.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select></div>
             <div className="field"><label>平台</label>

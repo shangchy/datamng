@@ -508,9 +508,6 @@ def update_order(oid: int, body: OrderBody, db: Session = Depends(get_db), user=
     if is_edit:
         new_status = "未提"
     else:
-        # 在执/已停/改单：渠道/类型/运营商不允许修改
-        if _norm(body.channel_id) != _norm(o.channel_id) or _norm(body.operator_id) != _norm(o.operator_id):
-            raise HTTPException(status_code=400, detail="在执/已停订单不允许修改渠道/类型/运营商")
         # 只有 Url/数量/地区/年龄上下限/pv 变化才算改单
         before_urls = sorted(before.get("urls") or [])
         new_urls = sorted((u.get("url") or "").strip() for u in (body.urls or []))
@@ -1195,6 +1192,7 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
     id_col = _find("任务ID", "工单号", "甲方订单号", "订单号", "id")
     op_col = _find("运营商")
     ch_col = _find("渠道", "类型")
+    url_col = _find("url", "URL", "拓展码")
     if name_col < 0:
         raise HTTPException(status_code=422, detail="回执文件缺少「任务名」列")
     if id_col < 0:
@@ -1219,20 +1217,25 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
         new_task_id = str(r[id_col]).strip() if id_col < len(r) and r[id_col] is not None else ""
         operator_val = str(r[op_col]).strip() if op_col < len(r) and r[op_col] is not None else ""
         channel_val = str(r[ch_col]).strip() if ch_col < len(r) and r[ch_col] is not None else ""
+        url_val = str(r[url_col]).strip() if url_col >= 0 and url_col < len(r) and r[url_col] is not None else ""
         if not task_name:
             continue
         op = db.query(Operator).filter(Operator.name == operator_val).first() if operator_val else None
         ch = db.query(Channel).filter(Channel.name == channel_val).first() if channel_val else None
-        orders = db.query(Order).filter(
+        orders_q = db.query(Order).filter(
             Order.task_name == task_name,
             Order.upstream_id == up_id,
             Order.operator_id == (op.id if op else None),
             Order.channel_id == (ch.id if ch else None),
             Order.status != "已停",
             or_(Order.task_id.is_(None), Order.task_id == ""),
-        ).all()
+        )
+        if url_val:
+            url_sub = db.query(OrderUrl.order_id).filter(OrderUrl.url.like(f"%{url_val}%")).subquery()
+            orders_q = orders_q.filter(Order.id.in_(url_sub))
+        orders = orders_q.all()
         if len(orders) == 0:
-            errors.append({"task_name": task_name, "reason": "未找到匹配订单（甲方+任务名+运营商+渠道 且工单号为空、非已停）"})
+            errors.append({"task_name": task_name, "reason": "未找到匹配订单（甲方+任务名+运营商+渠道+url 且工单号为空、非已停）"})
             continue
         if len(orders) > 1:
             errors.append({"task_name": task_name, "reason": f"匹配到 {len(orders)} 个订单"})
