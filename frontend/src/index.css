@@ -116,11 +116,11 @@ th .arr { color: var(--blue); font-size: 11px; }
 .multidate { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .multidate > input { width: 100%; }
 .multidate-tags { display: flex; flex-wrap: wrap; gap: 4px; }
-.agent-list { max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 6px; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 2px 8px; }
-.agent-item { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 6px; cursor: pointer; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.agent-item:hover { background: var(--blue2); }
-.agent-item input { margin: 0; flex-shrink: 0; }
-.agent-item-all { font-weight: 600; border-bottom: 1px dashed var(--line); padding-bottom: 6px; margin-bottom: 4px; }
+.agent-list { max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.agent-chip { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 4px 12px; font-size: 13px; cursor: pointer; color: var(--ink); }
+.agent-chip:hover { border-color: var(--blue); }
+.agent-chip.on { background: var(--blue2); border-color: var(--blue); color: var(--blue); font-weight: 600; }
+.agent-chip-all { font-weight: 600; }
 .tag { display: inline-flex; align-items: center; gap: 4px; background: #eef4ff; color: #2563eb; border-radius: 10px; padding: 1px 8px; font-size: 12px; }
 .tag-x { cursor: pointer; color: #94a3b8; font-weight: 700; }
 .tag-x:hover { color: #b91c1c; }

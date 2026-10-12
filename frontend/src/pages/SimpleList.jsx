@@ -937,20 +937,19 @@ export default function SimpleList({ kind }) {
           <div className="field" style={{ marginBottom: 14 }}><label className="required">数据日期</label>
             <input type="date" value={distDate} onChange={e => setDistDate(e.target.value)} /></div>
           <div className="field" style={{ marginBottom: 14 }}>
-            <label>一级代理</label>
+            <label>一级代理（点击名称选中 / 取消）</label>
             <div className="agent-list">
-              <label className="agent-item agent-item-all">
-                <input type="checkbox" checked={allChecked} onChange={toggleAll} />
-                <span>全选 / 全不选</span>
-              </label>
-              {downstreamCustomers.map(c => (
-                <label className="agent-item" key={c.id}>
-                  <input type="checkbox" checked={distCustomerIds.includes(c.id)} onChange={() => {
+              <button type="button" className="agent-chip agent-chip-all" onClick={toggleAll}>{allChecked ? '全不选' : '全选'}</button>
+              {downstreamCustomers.map(c => {
+                const on = distCustomerIds.includes(c.id)
+                return (
+                  <button type="button" key={c.id} className={`agent-chip ${on ? 'on' : ''}`} onClick={() => {
                     setDistCustomerIds(ids => ids.includes(c.id) ? ids.filter(x => x !== c.id) : [...ids, c.id])
-                  }} />
-                  <span>{c.code} {c.name}</span>
-                </label>
-              ))}
+                  }}>
+                    {c.code} {c.name}
+                  </button>
+                )
+              })}
               {downstreamCustomers.length === 0 && <div className="empty">暂无下游客户</div>}
             </div>
           </div>
