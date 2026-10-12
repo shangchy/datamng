@@ -12,6 +12,7 @@ const TITLE_MAP = {
   '/alerts': '预警中心', '/accounts': '账户管理', '/templates': '模版管理',
   '/tidabiao-history': '提单历史',
   '/logs': '日志管理',
+  '/config-center': '配置中心',
 }
 
 const MENUS = [
@@ -34,6 +35,7 @@ const MENUS = [
   ] },
   { key: '/customers', name: '客户管理', icon: '👤', perm: 'customer:view' },
   { key: '/accounts', name: '账户管理', icon: '⚙️', admin: true },
+  { key: '/config-center', name: '配置中心', icon: '🛠️', admin: true },
   { key: '/logs', name: '日志管理', icon: '📜', admin: true },
 ]
 

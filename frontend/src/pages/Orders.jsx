@@ -64,7 +64,7 @@ const FILTER_COLS = [
   { k: 'has_alert', l: '预警' }, { k: 'task_name', l: '任务名' }, { k: 'url', l: 'url' }, { k: 'qty', l: '数量' }, { k: 'duration', l: '时长' },
   { k: 'age_min', l: '年龄下限' }, { k: 'age_max', l: '年龄上限' }, { k: 'pv', l: 'pv' },
   { k: 'province', l: '省份' }, { k: 'excl_province', l: '排除省份' }, { k: 'city', l: '地市' },
-  { k: 'excl_city', l: '排除地市' }, { k: 'start_date', l: '开始日期' }, { k: 'end_date', l: '截止日期' },
+  { k: 'excl_city', l: '排除地市' },
 ]
 
 const emptyForm = { order_no: '', customer_id: '', upstream_id: '', channel_id: '', operator_id: '', task_name: '', task_id: '', qty: '', duration: '', province: '', city: '', excl_province: '', excl_city: '', age_min: '', age_max: '', pv: '', start_date: '', end_date: '', order_date: '', price: '', secondary_agent: '', platform: '', tpl_id: '', group_name: '', add_name: false, check_collision: false, template_id: '', filename_rule: '', status: '未提', url: '' }
@@ -115,6 +115,7 @@ export default function Orders({ variant = 'orders' }) {
   const [geo, setGeo] = useState({ provinces: [], citiesMap: {} })
   const [tpls, setTpls] = useState([])
   const [platforms, setPlatforms] = useState([])
+  const [dateOptions, setDateOptions] = useState({ start_date: [], end_date: [] })
   const [tplDetail, setTplDetail] = useState(null)
   const [importModal, setImportModal] = useState(false)
   const [importResult, setImportResult] = useState(null)
@@ -171,6 +172,8 @@ export default function Orders({ variant = 'orders' }) {
     }).catch(() => {})
     api.get('/api/templates').then(r => setTpls(r.data || [])).catch(() => {})
     api.get('/api/platforms').then(r => setPlatforms(r.data || [])).catch(() => {})
+    api.get('/api/distinct?model=orders&field=start_date').then(r => setDateOptions(o => ({ ...o, start_date: r.data || [] }))).catch(() => {})
+    api.get('/api/distinct?model=orders&field=end_date').then(r => setDateOptions(o => ({ ...o, end_date: r.data || [] }))).catch(() => {})
   }, [])
 
   const allCities = [...new Set(Object.values(geo.citiesMap).flat())]
@@ -472,6 +475,8 @@ export default function Orders({ variant = 'orders' }) {
         parts.push(`${c.l}：${Array.isArray(v) ? v.join('、') : v}`)
       }
     })
+    if (filters.start_date) parts.push(`开始日期：${filters.start_date.split(',').filter(Boolean).join('、')}`)
+    if (filters.end_date) parts.push(`截止日期：${filters.end_date.split(',').filter(Boolean).join('、')}`)
     return parts.length ? parts.join('\n') : '无筛选条件（导出全部订单）'
   }
 
@@ -490,6 +495,8 @@ export default function Orders({ variant = 'orders' }) {
       {busy && <Loading text={busyMsg} progress={busyProgress} />}
       <div className="toolbar">
         <div className={`filter-wrap ${filterCollapsed ? 'collapsed' : ''}`}>
+          <MultiSelect full searchable placeholder="开始日期" options={dateOptions.start_date} value={filters.start_date || ''} onChange={v => setFilters({ ...filters, start_date: v })} />
+          <MultiSelect full searchable placeholder="截止日期" options={dateOptions.end_date} value={filters.end_date || ''} onChange={v => setFilters({ ...filters, end_date: v })} />
           <FilterBar cols={FILTER_COLS} filters={filters} setFilters={setFilters} onSearch={search} fieldOptions={fieldOptions} actions={false} />
         </div>
         <div className="toolbar-actions">

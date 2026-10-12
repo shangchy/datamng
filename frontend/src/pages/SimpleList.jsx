@@ -131,6 +131,7 @@ export default function SimpleList({ kind }) {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
+  const [distCustomerIds, setDistCustomerIds] = useState([])
   const [billDetail, setBillDetail] = useState(null)
   const [balanceEdit, setBalanceEdit] = useState(null)
   const [dailyDate, setDailyDate] = useState(() => {
@@ -620,12 +621,14 @@ export default function SimpleList({ kind }) {
     if (!distDate) { showError('请选择数据日期'); return }
     setDistModal(false)
     try {
-      let r = await api.post('/api/daily-data/distribute', { date: distDate })
+      const body = { date: distDate }
+      if (distCustomerIds.length) body.customer_ids = distCustomerIds
+      let r = await api.post('/api/daily-data/distribute', body)
       if (r.data.needs_confirm) {
         const issues = r.data.issues || []
         const detail = issues.map(i => `「${i.group_name}」${i.unset_count} 个订单未设定出数模版（将按 ${i.tpl_code} 出数）`).join('、')
         if (!(await confirm(`以下小组存在未设定出数模版的订单：${detail}。\n\n是否继续分数据（未设定的订单将按小组已设定的出数模版处理）？`))) return
-        r = await api.post('/api/daily-data/distribute', { date: distDate, confirm: true })
+        r = await api.post('/api/daily-data/distribute', { ...body, confirm: true })
       }
       setBusy(true); setBusyMsg('正在分数据…'); setBusyProgress(0)
       const taskId = r.data.task_id
@@ -798,7 +801,7 @@ export default function SimpleList({ kind }) {
         {cfg.csvImp && isAdmin && <button className="btn" onClick={() => { setCsvFile(null); setCsvModal(true) }}>导入CSV</button>}
         {cfg.dist && <button className="btn" onClick={() => setWashModal(true)}>② 导出洗名</button>}
         {cfg.dist && <button className="btn" onClick={() => washFileRef.current.click()}>③ 导入洗名</button>}
-        {cfg.dist && <button className="btn green" onClick={() => setDistModal(true)}>④ 分发数据</button>}
+        {cfg.dist && <button className="btn green" onClick={() => { setDistCustomerIds([]); setDistModal(true) }}>④ 分发数据</button>}
         {cfg.check && <button className="btn" onClick={() => { setCheckResult(null); setCheckModal(true) }}>工单检查</button>}
         {showBatchDel && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
         {kind === 'daily' && isAdmin && <button className="btn danger" onClick={() => setDelByDateModal(true)}>按日期删除</button>}
@@ -927,8 +930,22 @@ export default function SimpleList({ kind }) {
           <div className="note">选择数据日期，将该日期下的日活数据按订单的小组分组，用对应订单的出数模版生成文件打包下载。</div>
           <div className="field" style={{ marginBottom: 14 }}><label className="required">数据日期</label>
             <input type="date" value={distDate} onChange={e => setDistDate(e.target.value)} /></div>
+          <div className="field" style={{ marginBottom: 14 }}>
+            <label>一级代理（不选则全部分发）</label>
+            <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: '6px 10px' }}>
+              {customers.filter(c => c.ctype === 'downstream').map(c => (
+                <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, padding: '3px 0', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={distCustomerIds.includes(c.id)} onChange={() => {
+                    setDistCustomerIds(ids => ids.includes(c.id) ? ids.filter(x => x !== c.id) : [...ids, c.id])
+                  }} />
+                  {c.code} {c.name}
+                </label>
+              ))}
+              {customers.filter(c => c.ctype === 'downstream').length === 0 && <div className="empty">暂无下游客户</div>}
+            </div>
+          </div>
           <div className="foot">
-            <button className="btn" onClick={() => setDistModal(false)}>取消</button>
+            <button className="btn" onClick={() => { setDistModal(false); setDistCustomerIds([]) }}>取消</button>
             <button className="btn primary" onClick={() => doDistribute().catch(e => showError(e.message))}>分数据</button>
           </div>
         </Modal>

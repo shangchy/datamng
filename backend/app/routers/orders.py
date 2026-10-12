@@ -308,9 +308,13 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
     if pv:
         qy = qy.filter(Order.pv == _num(pv))
     if start_date:
-        qy = qy.filter(Order.start_date == start_date)
+        sds = [d.strip() for d in start_date.split(",") if d.strip()]
+        if sds:
+            qy = qy.filter(Order.start_date.in_(sds))
     if end_date:
-        qy = qy.filter(Order.end_date == end_date)
+        eds = [d.strip() for d in end_date.split(",") if d.strip()]
+        if eds:
+            qy = qy.filter(Order.end_date.in_(eds))
     if order_date:
         qy = qy.filter(Order.order_date == order_date)
     if platform:
@@ -550,6 +554,9 @@ def update_order(oid: int, body: OrderBody, db: Session = Depends(get_db), user=
         url = (u.get("url") or "").strip()
         url_list.append(url)
         db.add(OrderUrl(order_id=oid, url=url, level=u.get("level", "中"), sort_no=i))
+    # 截止时间/状态变化时同步停单提醒（预警）状态
+    from ..routers.data import _sync_order_stop_alert
+    _sync_order_stop_alert(db, o)
     _op_log(db, user, "update_order", o.order_no or str(oid), before, _snapshot(db, o, urls=url_list))
     db.commit()
     if is_edit:
@@ -906,9 +913,13 @@ def export_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
     if excl_city:
         qy = qy.filter(Order.excl_city.like(f"%{excl_city}%"))
     if start_date:
-        qy = qy.filter(Order.start_date == start_date)
+        sds = [d.strip() for d in start_date.split(",") if d.strip()]
+        if sds:
+            qy = qy.filter(Order.start_date.in_(sds))
     if end_date:
-        qy = qy.filter(Order.end_date == end_date)
+        eds = [d.strip() for d in end_date.split(",") if d.strip()]
+        if eds:
+            qy = qy.filter(Order.end_date.in_(eds))
     if order_date:
         qy = qy.filter(Order.order_date == order_date)
     if platform:
@@ -969,6 +980,8 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
         rows = _parse_xlsx(content)
     else:
         raise HTTPException(status_code=422, detail="仅支持 csv / xlsx 文件")
+
+    from ..routers.data import _sync_order_stop_alert
 
     imported = 0
     updated = 0
@@ -1105,6 +1118,7 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                     if _norm(before_vals.get(f)) != _norm(new_vals.get(f)):
                         changed.append(f)
                 existing.change_fields_json = json.dumps(changed, ensure_ascii=False) if changed else None
+                _sync_order_stop_alert(db, existing)
                 updated += 1
                 updated_nos.append(existing.order_no)
             else:
@@ -1137,6 +1151,7 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                     urls = [u for u in re.split(r"[\n\r]+", url_str) if u.strip()]
                     for i, u in enumerate(urls):
                         db.add(OrderUrl(order_id=o.id, url=u.strip(), level="高", sort_no=i))
+                _sync_order_stop_alert(db, o)
                 imported += 1
                 imported_nos.append(order_no)
         except Exception as e:  # noqa

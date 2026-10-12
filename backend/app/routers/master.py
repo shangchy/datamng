@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import Category, Channel, Operator, Url, Customer, Platform
+from ..models import Category, Channel, Operator, Url, Customer, Platform, SysConfig
 from ..schemas import CategoryBody, SimpleBody, UrlBody, PlatformBody
 from ..pagination import paginate, ok_page
 from ..utils import fmt_dt
@@ -416,3 +416,34 @@ async def import_urls(file: UploadFile = File(...), db: Session = Depends(get_db
         n += 1
     db.commit()
     return {"code": 0, "data": {"imported": n}, "msg": f"导入 {n} 条配件"}
+
+
+# ============ 配置中心 ============
+
+CONFIG_ITEMS = [
+    {"key": "stop_check_time", "label": "停单检查时间", "type": "time", "default": "10:00"},
+]
+
+
+@router.get("/config-center")
+def get_config_center(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    data = []
+    for item in CONFIG_ITEMS:
+        cfg = db.query(SysConfig).filter(SysConfig.key == item["key"]).first()
+        data.append({**item, "value": cfg.value if cfg else item["default"]})
+    return {"code": 0, "data": data, "msg": "ok"}
+
+
+@router.put("/config-center")
+def set_config_center(body: dict, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    key = body.get("key")
+    value = str(body.get("value", "")).strip()
+    if key not in {item["key"] for item in CONFIG_ITEMS}:
+        raise HTTPException(status_code=422, detail="未知的配置项")
+    cfg = db.query(SysConfig).filter(SysConfig.key == key).first()
+    if cfg:
+        cfg.value = value
+    else:
+        db.add(SysConfig(key=key, value=value))
+    db.commit()
+    return {"code": 0, "data": None, "msg": "已保存"}

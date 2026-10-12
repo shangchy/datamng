@@ -57,6 +57,7 @@ input:disabled, select:disabled { background: #f1f5f9; color: var(--sub); }
 .filter-wrap > select,
 .filter-wrap > .multiselect,
 .filter-wrap > .btn { width: 100%; min-width: 0; }
+.filter-wrap > .multidate { min-width: 0; }
 .filter-wrap .multiselect .btn { width: 100%; }
 .filter-wrap .range-sep { text-align: center; color: var(--sub); user-select: none; }
 .clearable { position: relative; display: inline-flex; align-items: center; }
@@ -112,6 +113,9 @@ th .arr { color: var(--blue); font-size: 11px; }
 .btn.icon { padding: 0 9px; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
 
 .tag-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.multidate { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.multidate > input { width: 100%; }
+.multidate-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .tag { display: inline-flex; align-items: center; gap: 4px; background: #eef4ff; color: #2563eb; border-radius: 10px; padding: 1px 8px; font-size: 12px; }
 .tag-x { cursor: pointer; color: #94a3b8; font-weight: 700; }
 .tag-x:hover { color: #b91c1c; }

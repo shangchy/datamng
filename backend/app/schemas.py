@@ -179,6 +179,7 @@ class GenerateBody(BaseModel):
     order_ids: list[int] = []
     date: str = ""  # 更新日期 YYYY-MM-DD，用于文件名
     confirm: bool = False  # 分数据：是否已确认继续（忽略未设定出数模版的订单）
+    customer_ids: list[int] = []  # 分数据：指定一级代理（为空则全部分发）
 
 
 class AlertHandleBody(BaseModel):

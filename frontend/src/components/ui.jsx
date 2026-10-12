@@ -51,6 +51,31 @@ export function ClearableInput({ value, onChange, className, style, ...props }) 
   )
 }
 
+export function MultiDateInput({ value, onChange, placeholder }) {
+  const dates = (value || '').split(',').map(s => s.trim()).filter(Boolean)
+  function add(e) {
+    const d = e.target.value
+    e.target.value = ''
+    if (!d || dates.includes(d)) return
+    onChange(dates.length ? `${dates.join(',')},${d}` : d)
+  }
+  function remove(d) {
+    onChange(dates.filter(x => x !== d).join(','))
+  }
+  return (
+    <div className="multidate" title={placeholder}>
+      <input type="date" onChange={add} placeholder={placeholder} />
+      {dates.length > 0 && (
+        <div className="multidate-tags">
+          {dates.map(d => (
+            <span key={d} className="tag">{d}<span className="tag-x" onClick={() => remove(d)}>×</span></span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Modal({ title, children, onClose, wide, z, style }) {
   return (
     <div className="mask" style={z ? { zIndex: z } : undefined} onClick={onClose}>

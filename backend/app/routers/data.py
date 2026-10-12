@@ -1623,6 +1623,13 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
     if not orders_info:
         raise HTTPException(status_code=404, detail="没有可分发的数据（任务id未关联到订单）")
 
+    # 指定一级代理时，只分发这些代理的数据
+    if body.customer_ids:
+        selected = set(body.customer_ids)
+        orders_info = {tid: info for tid, info in orders_info.items() if info.get("customer_id") in selected}
+        if not orders_info:
+            raise HTTPException(status_code=404, detail="所选一级代理没有可分发的数据")
+
     # 停单(t+2)之后仍在出数的数据：不分发、不记账
     stopped_tids = {tid for tid, info in orders_info.items()
                     if info.get("stop_date") and date_obj > info["stop_date"] + timedelta(days=2)}
@@ -2616,15 +2623,19 @@ def distinct_values(db: Session = Depends(get_db), _=Depends(get_current_user),
                     model: str = "", field: str = ""):
     allowed = {
         "daily_data": {"province", "city", "platform", "upstream", "wash_status"},
-        "orders": {"province", "city"},
+        "orders": {"province", "city", "start_date", "end_date"},
         "fund": {"province", "city", "company_type", "operator", "source_file"},
     }
     if model not in allowed or field not in allowed[model]:
         return {"code": 0, "data": [], "msg": "ok"}
     table = {"daily_data": DailyData, "orders": Order, "fund": Fund, "customer": Customer}[model]
     col = getattr(table, field)
-    rows = db.query(col).filter(col.isnot(None), col != "").distinct().order_by(col).all()
-    return {"code": 0, "data": [r[0] for r in rows], "msg": "ok"}
+    # 日期字段不参与「空字符串」过滤（Date 列无法与 "" 比较）
+    if field in ("start_date", "end_date"):
+        rows = db.query(col).filter(col.isnot(None)).distinct().order_by(col).all()
+    else:
+        rows = db.query(col).filter(col.isnot(None), col != "").distinct().order_by(col).all()
+    return {"code": 0, "data": [str(r[0]) if r[0] is not None else "" for r in rows], "msg": "ok"}
 
 
 def _apply_daily_filters(qy, f):
@@ -2821,23 +2832,35 @@ def run_alert_scan(db: Session):
     db.commit()
 
 
-def run_auto_stop(db: Session):
-    """每日定时：到期订单自动停单（截止日期已到、仍在执）-> 改为待停并生成通知消息"""
+def _sync_order_stop_alert(db: Session, o):
+    """同步订单的停单提醒（预警）状态：到期仍在执则创建，否则清除已处理的预警"""
+    today = date.today()
+    should = o.status == "在执" and o.end_date is not None and o.end_date <= today
+    existing = db.query(Alert).filter(Alert.type == "停单提醒", Alert.status == "未处理",
+                                      Alert.order_id == o.id).first()
+    if should and not existing:
+        db.add(Alert(level="提醒", type="停单提醒", customer_id=o.customer_id,
+                     task_name=o.task_name, order_no=o.order_no, order_id=o.id,
+                     content=f"截止时间 {o.end_date} 已过期（{o.task_name or o.order_no}），请及时处理停单",
+                     trigger_time=datetime.now()))
+        return True
+    if not should and existing:
+        existing.status = "已处理"
+    return False
+
+
+def run_stop_check(db: Session):
+    """停单检查：到期订单（截止日期已到、仍在执）生成停单提醒（预警）+ 通知消息，不自动停单"""
     today = date.today()
     rows = db.query(Order).filter(Order.status == "在执",
                                   Order.end_date.isnot(None),
                                   Order.end_date <= today).all()
     for o in rows:
-        o.status = "待停"
-        o.order_date = today
-        o.stop_date = today
-        o.updated_at = datetime.now()
-        db.add(Notification(
-            order_no=o.order_no, task_id=o.task_id, order_id=o.id,
-            content=f"{today.strftime('%Y-%m-%d')} 工单号 {o.task_id or ''} 已到期，系统已自动改为待停单，请及时在今天内向客户提交停单申请。",
-            notify_time=datetime.now(),
-        ))
-        db.query(Alert).filter(Alert.type == "停单提醒", Alert.order_id == o.id,
-                               Alert.status == "未处理").delete()
+        if _sync_order_stop_alert(db, o):
+            db.add(Notification(
+                order_no=o.order_no, task_id=o.task_id, order_id=o.id,
+                content=f"{today.strftime('%Y-%m-%d')} 工单号 {o.task_id or ''} 已到期，请及时处理停单。",
+                notify_time=datetime.now(),
+            ))
     db.commit()
     return len(rows)

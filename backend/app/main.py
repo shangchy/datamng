@@ -373,21 +373,34 @@ def _scheduler_loop():
 
 
 def _auto_stop_loop():
-    """每天上午 10 点执行到期订单自动停单"""
-    from .routers.data import run_auto_stop
+    """按配置的停单检查时间执行停单检查（不自动停单，仅预警+通知）"""
+    from .routers.data import run_stop_check
+    from .models import SysConfig
     while True:
+        # 读取停单检查时间（默认 10:00）
+        try:
+            db = SessionLocal()
+            cfg = db.query(SysConfig).filter(SysConfig.key == "stop_check_time").first()
+            trigger = cfg.value if cfg and cfg.value else "10:00"
+            db.close()
+        except Exception:  # noqa
+            trigger = "10:00"
+        try:
+            hh, mm = [int(x) for x in trigger.split(":")]
+        except Exception:  # noqa
+            hh, mm = 10, 0
         now = datetime.now()
-        next_run = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        next_run = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
         if next_run <= now:
             next_run += timedelta(days=1)
         time.sleep((next_run - now).total_seconds())
         try:
             db = SessionLocal()
-            n = run_auto_stop(db)
+            n = run_stop_check(db)
             db.close()
-            print(f"[scheduler] 到期自动停单完成，共 {n} 单")
+            print(f"[scheduler] 停单检查完成，共 {n} 单（触发时间 {trigger}）")
         except Exception as e:  # noqa
-            print(f"[scheduler] 自动停单异常: {e}")
+            print(f"[scheduler] 停单检查异常: {e}")
         time.sleep(60)  # 防止重复触发
 
 
