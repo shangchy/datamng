@@ -204,8 +204,6 @@ DPI_OPERATORS = ["移动", "联通", "电信"]
 
 @router.get("/{cid}/prices")
 def list_prices(cid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    cust = db.query(Customer).filter(Customer.id == cid).first()
-    is_upstream = cust.ctype == "upstream" if cust else False
     channels = db.query(Channel).filter(Channel.status == 1).all()
     operator_ids = {op.name: op.id for op in db.query(Operator).filter(Operator.status == 1).all()}
     prices = {}
@@ -217,7 +215,7 @@ def list_prices(cid: int, db: Session = Depends(get_db), _=Depends(get_current_u
         name = (ch.name or "").strip()
         if not name:
             continue
-        if "dpi" in name and not is_upstream:
+        if "dpi" in name:
             for op_name in DPI_OPERATORS:
                 op_id = operator_ids.get(op_name)
                 if op_id is None:

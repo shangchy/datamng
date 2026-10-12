@@ -122,15 +122,110 @@ def preview_template(tid: int, db: Session = Depends(get_db), _=Depends(get_curr
     wb = openpyxl.load_workbook(io.BytesIO(bytes(t.file_data)), data_only=True)
     sheets = []
     for ws in wb.worksheets:
-        rows = []
-        for i, row in enumerate(ws.iter_rows(values_only=True)):
-            rows.append(["" if v is None else str(v) for v in row])
-            if i >= 49:
-                rows.append(["…（仅预览前 50 行）"])
-                break
-        sheets.append({"name": ws.title, "rows": rows})
+        sheets.append({"name": ws.title, "html": _ws_to_html(ws)})
     wb.close()
     return {"code": 0, "data": {"filename": t.name or t.code, "sheets": sheets}, "msg": "ok"}
+
+
+def _color_hex(color):
+    if color is None:
+        return None
+    rgb = getattr(color, "rgb", None)
+    if isinstance(rgb, str) and rgb:
+        rgb = rgb.strip().upper()
+        if len(rgb) == 8 and rgb.startswith("00"):
+            rgb = rgb[2:]
+        if len(rgb) == 6:
+            try:
+                int(rgb, 16)
+                return f"#{rgb}"
+            except ValueError:
+                return None
+    return None
+
+
+def _ws_to_html(ws, max_rows=200, max_cols=60):
+    """把工作表转成带样式的 HTML 表格，尽量还原 Excel 外观"""
+    from openpyxl.utils import get_column_letter
+    from html import escape
+
+    max_row = min(ws.max_row or 1, max_rows)
+    max_col = min(ws.max_column or 1, max_cols)
+
+    # 合并单元格：记录每个左上角单元格的 span，以及被覆盖的单元格
+    span_map = {}
+    covered = set()
+    for rng in ws.merged_cells.ranges:
+        if rng.min_row > max_row or rng.min_col > max_col:
+            continue
+        r0, r1 = rng.min_row, min(rng.max_row, max_row)
+        c0, c1 = rng.min_col, min(rng.max_col, max_col)
+        span_map[(r0, c0)] = (r1 - r0 + 1, c1 - c0 + 1)
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                if (r, c) != (r0, c0):
+                    covered.add((r, c))
+
+    # 列宽
+    cols_html = []
+    for c in range(1, max_col + 1):
+        w = ws.column_dimensions[get_column_letter(c)].width
+        cols_html.append(f'<col style="{("width:%dpx" % round(w * 7)) if w else ""}">')
+
+    rows_html = []
+    for r in range(1, max_row + 1):
+        rd = ws.row_dimensions[r]
+        rh = rd.height if rd and rd.height else None
+        row_style = f' style="height:{round(rh)}px"' if rh else ""
+        tds = []
+        for c in range(1, max_col + 1):
+            if (r, c) in covered:
+                continue
+            cell = ws.cell(row=r, column=c)
+            val = "" if cell.value is None else str(cell.value)
+            span = span_map.get((r, c))
+            span_attrs = ""
+            if span and (span[0] > 1 or span[1] > 1):
+                span_attrs = f' rowspan="{span[0]}" colspan="{span[1]}"'
+            css = []
+            f = cell.font
+            if f and f.bold:
+                css.append("font-weight:bold")
+            if f and f.italic:
+                css.append("font-style:italic")
+            if f and f.underline and str(f.underline) != "none":
+                css.append("text-decoration:underline")
+            if f and f.size:
+                css.append(f"font-size:{f.size}pt")
+            if f and f.name:
+                css.append(f"font-family:'{f.name}'")
+            fg = _color_hex(f.color) if f else None
+            if fg:
+                css.append(f"color:{fg}")
+            if cell.fill and cell.fill.patternType == "solid":
+                bg = _color_hex(cell.fill.fgColor)
+                if bg:
+                    css.append(f"background-color:{bg}")
+            if cell.alignment:
+                a = cell.alignment
+                if a.horizontal:
+                    css.append(f"text-align:{a.horizontal}")
+                if a.vertical:
+                    css.append(f"vertical-align:{a.vertical}")
+                if a.wrap_text:
+                    css.append("white-space:pre-wrap")
+            b = cell.border
+            if b:
+                for side in ("left", "right", "top", "bottom"):
+                    bd = getattr(b, side)
+                    if bd and bd.style:
+                        col = _color_hex(bd.color) or "#000"
+                        css.append(f"border-{side}:1px solid {col}")
+            style = f' style="{";".join(css)}"' if css else ""
+            tds.append(f"<td{span_attrs}{style}>{escape(val)}</td>")
+        rows_html.append(f"<tr{row_style}>{''.join(tds)}</tr>")
+
+    return f'<table class="excel-preview"><colgroup>{"".join(cols_html)}</colgroup><tbody>{"".join(rows_html)}</tbody></table>'
 
 
 @router.get("/{tid}/download")

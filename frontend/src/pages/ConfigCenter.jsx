@@ -37,7 +37,9 @@ export default function ConfigCenter() {
                 <td>
                   {it.type === 'time'
                     ? <input type="time" value={it.value} onChange={e => setValue(it.key, e.target.value)} />
-                    : <input value={it.value} onChange={e => setValue(it.key, e.target.value)} />}
+                    : it.type === 'number'
+                      ? <input type="number" value={it.value} onChange={e => setValue(it.key, e.target.value)} />
+                      : <input value={it.value} onChange={e => setValue(it.key, e.target.value)} />}
                 </td>
                 <td className="ops"><button className="btn small primary" disabled={saving} onClick={() => save(it)}>保存</button></td>
               </tr>

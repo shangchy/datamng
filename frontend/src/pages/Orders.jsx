@@ -116,7 +116,7 @@ export default function Orders({ variant = 'orders' }) {
   const [tpls, setTpls] = useState([])
   const [platforms, setPlatforms] = useState([])
   const [dateOptions, setDateOptions] = useState({ start_date: [], end_date: [] })
-  const [tplDetail, setTplDetail] = useState(null)
+  const [tplPreview, setTplPreview] = useState(null)
   const [importModal, setImportModal] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const importFileRef = useRef(null)
@@ -418,9 +418,12 @@ export default function Orders({ variant = 'orders' }) {
     } catch (e) { showError(e.message) } finally { setBusy(false) }
   }
 
-  function showTpl(o) {
-    const t = tpls.find(x => x.id === o.tpl_id)
-    setTplDetail(t || { code: o.tpl_code, name: o.tpl_name })
+  async function showTpl(o) {
+    if (!o.tpl_id) { showError('该订单未设置出数模版'); return }
+    try {
+      const r = await api.get(`/api/templates/${o.tpl_id}/preview`)
+      setTplPreview(r.data)
+    } catch (e) { showError(e.message) }
   }
 
   async function openOrderByNo(no) {
@@ -729,14 +732,17 @@ export default function Orders({ variant = 'orders' }) {
         </Modal>
       )}
 
-      {tplDetail && (
-        <Modal title={`模版信息 · ${tplDetail.code}`} onClose={() => setTplDetail(null)}>
-          <table className="kv"><tbody>
-            <tr><td>模版类型</td><td>{tplDetail.ttype || '—'}</td></tr>
-            <tr><td>模版编号</td><td>{tplDetail.code || '—'}</td></tr>
-            <tr><td>模版文件名</td><td>{tplDetail.name || '—'}</td></tr>
-          </tbody></table>
-          <div className="foot"><button className="btn primary" onClick={() => setTplDetail(null)}>关闭</button></div>
+      {tplPreview && (
+        <Modal title={`模版预览 · ${tplPreview.filename}`} onClose={() => setTplPreview(null)} wide>
+          {tplPreview.sheets.map((s, si) => (
+            <div key={si} style={{ marginBottom: 12 }}>
+              <div className="note" style={{ marginBottom: 6 }}>工作表：{s.name}</div>
+              <div className="table-scroll" style={{ maxHeight: 420 }}>
+                <div dangerouslySetInnerHTML={{ __html: s.html }} />
+              </div>
+            </div>
+          ))}
+          <div className="foot"><button className="btn primary" onClick={() => setTplPreview(null)}>关闭</button></div>
         </Modal>
       )}
 

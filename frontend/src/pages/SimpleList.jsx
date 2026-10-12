@@ -167,6 +167,7 @@ export default function SimpleList({ kind }) {
   })
   const [rechargeAlert, setRechargeAlert] = useState(null)
   const [rechargeRate, setRechargeRate] = useState(6.7)
+  const [recentDays, setRecentDays] = useState(7)
   const [stopAlert, setStopAlert] = useState(null)
   const [importWarn, setImportWarn] = useState(null) // {title, items:[{task_id,task_name,channel}], confirm:boolean}
   const [pendingImportFiles, setPendingImportFiles] = useState(null)
@@ -240,11 +241,34 @@ export default function SimpleList({ kind }) {
   function search(f) { setPage(1); load(1, perPage, f) }
   function goPage(p) { setPage(p); load(p, perPage) }
   function changePerPage(pp) { setPerPage(pp); setPage(1); load(1, pp) }
+  function dateNDaysAgo(n) {
+    const d = new Date()
+    d.setDate(d.getDate() - (n || 0))
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+  function defaultFilters() {
+    return kind === 'daily' ? { start_date: dateNDaysAgo(recentDays) } : {}
+  }
   useEffect(() => {
-    setFilters({}); setPage(1)
+    setPage(1)
     const pp = cfg.defaultPerPage || 100
     setPerPage(pp)
-    load(1, pp, {})
+    if (kind === 'daily') {
+      api.get('/api/config-center').then(r => {
+        const days = parseInt((r.data || []).find(i => i.key === 'daily_recent_days')?.value) || 7
+        setRecentDays(days)
+        const f = { start_date: dateNDaysAgo(days) }
+        setFilters(f)
+        load(1, pp, f)
+      }).catch(() => {
+        const f = { start_date: dateNDaysAgo(7) }
+        setFilters(f)
+        load(1, pp, f)
+      })
+    } else {
+      setFilters({})
+      load(1, pp, {})
+    }
   }, [kind])
 
   // 加载下拉选项（渠道/客户/品类/省市等）
@@ -781,7 +805,7 @@ export default function SimpleList({ kind }) {
         </div>
         <div className="toolbar-actions">
         <button className="btn primary" onClick={() => search()}>查询</button>
-        <button className="btn" onClick={() => { setFilters({}); search({}) }}>重置</button>
+        <button className="btn" onClick={() => { const f = defaultFilters(); setFilters(f); search(f) }}>重置</button>
         {kind === 'washnames' && (
           <label style={{ fontSize: 12, color: 'var(--sub)', display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
             <input type="checkbox" checked={filters.name_empty === '1'} onChange={e => setFilters({ ...filters, name_empty: e.target.checked ? '1' : '' })} />

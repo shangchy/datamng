@@ -196,16 +196,8 @@ export default function TemplateManager() {
           {preview.sheets.map((s, si) => (
             <div key={si} style={{ marginBottom: 12 }}>
               <div className="note" style={{ marginBottom: 6 }}>工作表：{s.name}</div>
-              <div className="table-scroll" style={{ maxHeight: 360 }}>
-                <table>
-                  <tbody>
-                    {s.rows.map((r, ri) => (
-                      <tr key={ri}>
-                        {r.map((c, ci) => <td key={ci}>{c}</td>)}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="table-scroll" style={{ maxHeight: 420 }}>
+                <div dangerouslySetInnerHTML={{ __html: s.html }} />
               </div>
             </div>
           ))}
