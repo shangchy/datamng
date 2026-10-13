@@ -96,8 +96,6 @@ export default function Dashboard() {
     { icon: '📝', label: '在执订单量', value: s?.order_count ?? '-', bg: 'linear-gradient(135deg,#eff6ff,#dbeafe)', c: 'var(--blue)' },
     { icon: '📊', label: '日活总量', value: s?.daily_total ?? '-', bg: 'linear-gradient(135deg,#ecfdf5,#d1fae5)', c: 'var(--green)' },
     { icon: '🏦', label: '公积金总量', value: s?.fund_total ?? '-', bg: 'linear-gradient(135deg,#f5f3ff,#ede9fe)', c: 'var(--violet)' },
-    { icon: '📦', label: '交付总量', value: s?.delivery_total ?? '-', bg: 'linear-gradient(135deg,#eff6ff,#dbeafe)', c: 'var(--blue)' },
-    { icon: '💰', label: '利润', value: s?.profit_total !== undefined ? `¥${s.profit_total.toLocaleString()}` : '-', bg: 'linear-gradient(135deg,#fef2f2,#fee2e2)', c: 'var(--red)' },
     { icon: '🔔', label: '待处理预警', value: s?.alert_count ?? '-', bg: 'linear-gradient(135deg,#fffbeb,#fef3c7)', c: 'var(--amber)' },
   ]
 
