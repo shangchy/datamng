@@ -140,6 +140,7 @@ export default function Orders({ variant = 'orders' }) {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
+  const [pendingCheck, setPendingCheck] = useState(null)
   const [filterCollapsed, setFilterCollapsed] = useState(false)
 
   async function load(p = page, pp = perPage, f) {
@@ -434,7 +435,21 @@ export default function Orders({ variant = 'orders' }) {
   }
 
   async function doConfirm() {
-    setConfirmModal(false)
+    setBusy(true); setBusyMsg('正在检查待确认订单…')
+    try {
+      const r = await api.get('/api/orders/confirm-tidabiao/pending-check')
+      const pending = r.data || []
+      setBusy(false)
+      if (pending.length > 0) {
+        setConfirmModal(false)
+        setPendingCheck(pending)
+        return
+      }
+      await runConfirm()
+    } catch (e) { setBusy(false); showError(e.message) }
+  }
+
+  async function runConfirm() {
     setBusy(true); setBusyMsg('正在提单确认，请稍候…')
     try {
       const body = { date: confirmDate, order_ids: selected.length ? selected : [] }
@@ -867,6 +882,28 @@ export default function Orders({ variant = 'orders' }) {
           <div className="foot">
             <button className="btn" onClick={() => setConfirmModal(false)}>取消</button>
             <button className="btn primary" onClick={() => doConfirm().catch(e => showError(e.message))}>确认</button>
+          </div>
+        </Modal>
+      )}
+
+      {pendingCheck && (
+        <Modal title="存在过去日期的未确认订单" onClose={() => setPendingCheck(null)} wide>
+          <div className="note" style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
+            存在 {pendingCheck.length} 条过去日期仍为「未提/待停/改单」的订单，可能遗漏了提单确认。是否继续提单确认？
+          </div>
+          <div className="table-scroll" style={{ maxHeight: 320 }}>
+            <table>
+              <thead><tr><th>更新日期</th><th>订单号</th><th>任务名</th><th>状态</th></tr></thead>
+              <tbody>
+                {pendingCheck.map((o, i) => (
+                  <tr key={i}><td>{o.order_date}</td><td>{o.order_no}</td><td>{o.task_name}</td><td><Badge value={o.status} /></td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="foot">
+            <button className="btn" onClick={() => setPendingCheck(null)}>取消</button>
+            <button className="btn primary" onClick={() => { setPendingCheck(null); runConfirm().catch(e => showError(e.message)) }}>继续提单确认</button>
           </div>
         </Modal>
       )}

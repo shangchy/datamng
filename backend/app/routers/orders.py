@@ -1434,6 +1434,20 @@ def generate_tidabiao(body: GenerateBody, db: Session = Depends(get_db), user=De
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
 
 
+@router.get("/confirm-tidabiao/pending-check")
+def confirm_tidabiao_pending_check(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """提单确认前检查：过去日期（早于今天）仍为 未提/待停/改单 的订单"""
+    today = date.today()
+    rows = db.query(Order).filter(Order.order_date.isnot(None),
+                                  Order.order_date < today,
+                                  Order.status.in_(["未提", "待停", "改单"])) \
+        .order_by(Order.order_date, Order.id).all()
+    data = [{"order_no": o.order_no or "", "task_name": o.task_name or "",
+             "status": o.status or "", "order_date": str(o.order_date) if o.order_date else ""}
+            for o in rows]
+    return {"code": 0, "data": data, "msg": "ok"}
+
+
 @router.post("/confirm-tidabiao")
 def confirm_tidabiao(body: GenerateBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
     """提单确认：按提单日期更新订单状态并写入提单历史"""

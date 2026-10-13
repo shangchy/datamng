@@ -2655,6 +2655,26 @@ def manual_scan(db: Session = Depends(get_db), _=Depends(get_current_user)):
     return {"code": 0, "data": {"unhandled": int(count)}, "msg": "预警扫描完成"}
 
 
+@router.post("/alerts/reset")
+def reset_alerts(body: dict, db: Session = Depends(get_db), _=Depends(require_admin)):
+    """重置预警：按指定日期清除预警数据后重新扫描生成新预警"""
+    date_val = (body.get("date") or "").strip()
+    scope = (body.get("scope") or "stop").strip()
+    date_obj = _parse_biz_date(date_val) if date_val else None
+    q = db.query(Alert)
+    if scope != "all":
+        q = q.filter(Alert.type == "停单提醒")
+    if date_obj:
+        cutoff = datetime.combine(date_obj + timedelta(days=1), datetime.min.time())
+        q = q.filter(Alert.trigger_time < cutoff)
+    deleted = q.delete(synchronize_session=False)
+    db.commit()
+    run_alert_scan(db)
+    remaining = db.query(func.count(Alert.id)).filter(Alert.status == "未处理").scalar() or 0
+    return {"code": 0, "data": {"deleted": deleted, "remaining": int(remaining)},
+            "msg": f"已清除 {deleted} 条预警并重新扫描，当前未处理 {remaining} 条"}
+
+
 @router.get("/daily-data/filter-options")
 def daily_filter_options(db: Session = Depends(get_db), _=Depends(get_current_user)):
     """日活数据筛选级联选项：品类（一级→二级→平台）、一级代理→二级代理/渠道"""
