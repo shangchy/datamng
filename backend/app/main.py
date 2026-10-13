@@ -354,30 +354,11 @@ app.include_router(logs.router)
 
 
 def _scheduler_loop():
-    """每天上午 10 点执行一次预警扫描"""
+    """每天按配置时间执行一次预警扫描（含停单提醒、通知、账单预警、自动消警）"""
     from .routers.data import run_alert_scan
-    while True:
-        now = datetime.now()
-        next_run = now.replace(hour=10, minute=0, second=0, microsecond=0)
-        if next_run <= now:
-            next_run += timedelta(days=1)
-        time.sleep((next_run - now).total_seconds())
-        try:
-            db = SessionLocal()
-            run_alert_scan(db)
-            db.close()
-            print("[scheduler] 预警扫描完成（10:00）")
-        except Exception as e:  # noqa
-            print(f"[scheduler] 执行异常: {e}")
-        time.sleep(60)  # 防止重复触发
-
-
-def _auto_stop_loop():
-    """按配置的停单检查时间执行停单检查（不自动停单，仅预警+通知）"""
-    from .routers.data import run_stop_check
     from .models import SysConfig
     while True:
-        # 读取停单检查时间（默认 10:00）
+        # 读取预警检查时间（默认 10:00）
         try:
             db = SessionLocal()
             cfg = db.query(SysConfig).filter(SysConfig.key == "stop_check_time").first()
@@ -396,11 +377,11 @@ def _auto_stop_loop():
         time.sleep((next_run - now).total_seconds())
         try:
             db = SessionLocal()
-            n = run_stop_check(db)
+            run_alert_scan(db)
             db.close()
-            print(f"[scheduler] 停单检查完成，共 {n} 单（触发时间 {trigger}）")
+            print(f"[scheduler] 预警扫描完成（触发时间 {trigger}）")
         except Exception as e:  # noqa
-            print(f"[scheduler] 停单检查异常: {e}")
+            print(f"[scheduler] 执行异常: {e}")
         time.sleep(60)  # 防止重复触发
 
 
@@ -423,7 +404,6 @@ def on_startup():
     finally:
         db.close()
     threading.Thread(target=_scheduler_loop, daemon=True).start()
-    threading.Thread(target=_auto_stop_loop, daemon=True).start()
 
 
 @app.get("/healthz")

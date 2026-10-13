@@ -421,7 +421,7 @@ async def import_urls(file: UploadFile = File(...), db: Session = Depends(get_db
 # ============ 配置中心 ============
 
 CONFIG_ITEMS = [
-    {"key": "stop_check_time", "label": "停单检查时间", "type": "time", "default": "10:00"},
+    {"key": "stop_check_time", "label": "预警检查时间", "type": "time", "default": "10:00"},
     {"key": "daily_recent_days", "label": "日活列表默认最近天数", "type": "number", "default": "7"},
 ]
 

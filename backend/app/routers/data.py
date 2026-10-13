@@ -634,7 +634,7 @@ def _count_unmatched(db, file_list):
 
 
 def _count_stopped_abnormal(db, file_list, date_obj):
-    """统计关联到已停订单、且数据日期 >= 订单更新日期+2 的异常数据，返回 (条数, 工单明细列表)"""
+    """统计关联到已停订单、且数据日期已过截止日期 T+1（末次出数日期 end_date+1）仍在出数的异常数据"""
     stopped = {o.task_id: o for o in db.query(Order).filter(Order.status == "已停").all() if o.task_id}
     chans = {c.id: c.name for c in db.query(Channel).all()}
     total = 0
@@ -642,7 +642,7 @@ def _count_stopped_abnormal(db, file_list, date_obj):
     for fn, content in file_list:
         for tid in _extract_task_ids(fn, content):
             o = stopped.get(tid)
-            if o and o.order_date and date_obj >= o.order_date + timedelta(days=2):
+            if o and o.end_date and date_obj > o.end_date + timedelta(days=1):
                 total += 1
                 tids.add(tid)
     items = []
@@ -1678,6 +1678,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             "task_name": order.task_name or "",
             "order_no": order.order_no or "",
             "stop_date": order.stop_date,
+            "end_date": order.end_date,
             "city": order.city or "",
             "province": order.province or "",
             "channel": ch.name if ch else "",
@@ -1703,9 +1704,9 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
         if not orders_info:
             raise HTTPException(status_code=404, detail="所选一级代理没有可分发的数据")
 
-    # 停单(t+2)之后仍在出数的数据：不分发、不记账
-    stopped_tids = {tid for tid, info in orders_info.items()
-                    if info.get("stop_date") and date_obj > info["stop_date"] + timedelta(days=2)}
+    # 截止日期过了 T+1（末次出数日期 end_date+1）之后仍在出数的数据：不分发、不记账
+    expired_tids = {tid for tid, info in orders_info.items()
+                    if info.get("end_date") and date_obj > info["end_date"] + timedelta(days=1)}
 
     # 2. 校验：小组名/一级代理 不能为空
     for tid, info in orders_info.items():
@@ -1746,7 +1747,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
     # 5. 按小组名分组（同一小组的数据合并到一个文件，使用小组已设定的出数模版）
     jobs = {}
     for d in rows:
-        if not d.task_id or d.task_id not in orders_info or d.task_id in stopped_tids:
+        if not d.task_id or d.task_id not in orders_info or d.task_id in expired_tids:
             continue
         info = orders_info[d.task_id]
         g = info["group_name"]
@@ -1779,7 +1780,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
     # 6. 计算各代理账单（进货量、销售金额 = 手机号 × 订单单价）
     bills = {}
     for d in rows:
-        if not d.task_id or d.task_id not in orders_info or d.task_id in stopped_tids:
+        if not d.task_id or d.task_id not in orders_info or d.task_id in expired_tids:
             continue
         info = orders_info[d.task_id]
         cc = info["cust_code"]
@@ -2854,10 +2855,11 @@ def run_alert_scan(db: Session):
         db.query(Alert).filter(Alert.type == "停单提醒", Alert.status == "未处理",
                                Alert.order_id.isnot(None),
                                Alert.id.notin_(keep_ids)).delete(synchronize_session=False)
-    # 停单提醒（预警天数内到期的订单）
+    # 停单提醒（预警天数内到期的订单，仅「在执」才提醒，待停/已停不再提醒）
     alert_days = _alert_days(db)
     target = today + timedelta(days=alert_days)
     for o in db.query(Order).filter(Order.stop_date.isnot(None),
+                                    Order.status == "在执",
                                     Order.stop_date >= today,
                                     Order.stop_date <= target).all():
         if not db.query(Alert).filter(Alert.type == "停单提醒", Alert.status == "未处理",
@@ -2866,8 +2868,8 @@ def run_alert_scan(db: Session):
                          task_name=o.task_name, order_no=o.order_no, order_id=o.id,
                          content=f"停单日 {o.stop_date} 已到达，请确认是否停单",
                          trigger_time=datetime.now()))
-    # 在执/待停订单截止时间过期提醒（类型：停单提醒）
-    for o in db.query(Order).filter(Order.status.in_(["在执", "待停"]),
+    # 在执订单截止时间过期提醒（类型：停单提醒，仅「在执」才提醒），新建提醒时同步生成通知消息
+    for o in db.query(Order).filter(Order.status == "在执",
                                     Order.end_date.isnot(None),
                                     Order.end_date <= today).all():
         if not db.query(Alert).filter(Alert.type == "停单提醒", Alert.status == "未处理",
@@ -2876,6 +2878,13 @@ def run_alert_scan(db: Session):
                          task_name=o.task_name, order_no=o.order_no, order_id=o.id,
                          content=f"截止时间 {o.end_date} 已过期（{o.task_name or o.order_no}），请确认是否处理",
                          trigger_time=datetime.now()))
+            task_label = o.task_name or o.order_no or ""
+            if o.task_id:
+                task_label += f"（{o.task_id}）"
+            end_str = o.end_date.strftime("%m/%d") if o.end_date else ""
+            db.add(Notification(order_no=o.order_no, task_id=o.task_id, order_id=o.id,
+                                content=f"{task_label}于 {end_str} 到期，请及时处理停单。",
+                                notify_time=datetime.now()))
     # 账单预警
     for c in db.query(Customer).filter(Customer.ctype == "downstream", Customer.status == 1).all():
         if c.warn_amount and (c.balance or 0) < c.warn_amount:
@@ -2888,13 +2897,15 @@ def run_alert_scan(db: Session):
     for a in db.query(Alert).filter(Alert.status == "未处理").all():
         if a.type == "停单提醒":
             o = None
-            if a.order_no:
+            if a.order_id:
+                o = db.query(Order).filter(Order.id == a.order_id).first()
+            if not o and a.order_no:
                 o = db.query(Order).filter(Order.order_no == a.order_no).first()
             if not o and a.task_name:
                 o = db.query(Order).filter(Order.task_name == a.task_name).first()
             if not o:
                 a.status = "已处理"
-            elif o.status not in ("在执", "待停"):
+            elif o.status != "在执":
                 a.status = "已处理"
             elif (a.content or "").startswith("截止时间") and o.end_date and o.end_date > today:
                 a.status = "已处理"
@@ -2920,24 +2931,3 @@ def _sync_order_stop_alert(db: Session, o):
     if not should and existing:
         existing.status = "已处理"
     return False
-
-
-def run_stop_check(db: Session):
-    """停单检查：到期订单（截止日期已到、仍在执）生成停单提醒（预警）+ 通知消息，不自动停单"""
-    today = date.today()
-    rows = db.query(Order).filter(Order.status == "在执",
-                                  Order.end_date.isnot(None),
-                                  Order.end_date <= today).all()
-    for o in rows:
-        if _sync_order_stop_alert(db, o):
-            task_label = o.task_name or o.order_no or ""
-            if o.task_id:
-                task_label += f"（{o.task_id}）"
-            end_str = o.end_date.strftime("%m/%d") if o.end_date else ""
-            db.add(Notification(
-                order_no=o.order_no, task_id=o.task_id, order_id=o.id,
-                content=f"{task_label}于 {end_str} 到期，请及时处理停单。",
-                notify_time=datetime.now(),
-            ))
-    db.commit()
-    return len(rows)

@@ -809,16 +809,31 @@ export default function Orders({ variant = 'orders' }) {
           </div>
           <input type="file" accept=".xlsx,.xls" ref={receiptFileRef} />
           {receiptResult && (
-            <div className="note" style={{ background: '#ecfdf5', border: '1px solid #a7f3d0' }}>
-              更新 {receiptResult.updated} 条
-              <table style={{ marginTop: 6, width: '100%' }}>
-                <thead><tr><th>甲方</th><th>工单号</th><th>任务名</th><th>运营商</th><th>类型</th></tr></thead>
-                <tbody>
-                  {(receiptResult.updated_list || []).map((e, i) => (
-                    <tr key={i}><td>{e.party}</td><td>{e.task_id}</td><td>{e.task_name}</td><td>{e.operator}</td><td>{e.channel}</td></tr>
-                  ))}
-                </tbody>
-              </table>
+            <div>
+              <div className="note" style={{ background: '#ecfdf5', border: '1px solid #a7f3d0' }}>
+                更新 {receiptResult.updated} 条
+                <table style={{ marginTop: 6, width: '100%' }}>
+                  <thead><tr><th>甲方</th><th>工单号</th><th>任务名</th><th>运营商</th><th>类型</th></tr></thead>
+                  <tbody>
+                    {(receiptResult.updated_list || []).map((e, i) => (
+                      <tr key={i}><td>{e.party}</td><td>{e.task_id}</td><td>{e.task_name}</td><td>{e.operator}</td><td>{e.channel}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {(receiptResult.errors || []).length > 0 && (
+                <div className="note" style={{ marginTop: 8, background: '#fef2f2', border: '1px solid #fecaca' }}>
+                  失败 {receiptResult.errors.length} 条
+                  <table style={{ marginTop: 6, width: '100%' }}>
+                    <thead><tr><th>任务名</th><th>原因</th></tr></thead>
+                    <tbody>
+                      {receiptResult.errors.map((e, i) => (
+                        <tr key={i}><td>{e.task_name}</td><td>{e.reason}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
           <div className="foot">

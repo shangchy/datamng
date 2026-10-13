@@ -333,9 +333,9 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
     if has_alert:
         alert_sub = db.query(Alert.task_name).filter(Alert.type == "停单提醒", Alert.status == "未处理").subquery()
         if has_alert in ("有", "是", "true", "1", "True", "yes", "YES"):
-            qy = qy.filter(Order.task_name.in_(alert_sub))
+            qy = qy.filter(Order.task_name.in_(alert_sub), Order.status.in_(["在执", "待停"]))
         elif has_alert in ("无", "否", "false", "0", "False", "no", "NO"):
-            qy = qy.filter(~Order.task_name.in_(alert_sub))
+            qy = qy.filter(or_(~Order.task_name.in_(alert_sub), Order.status.notin_(["在执", "待停"])))
     if plat_issue == "missing":
         # 平台不存在：platform 为空，或不在平台（品类管理）中
         all_plats = db.query(Platform.name).subquery()
@@ -595,6 +595,7 @@ def delete_order(oid: int, db: Session = Depends(get_db), _=Depends(get_current_
     if not o:
         raise HTTPException(status_code=404, detail="订单不存在")
     db.query(OrderUrl).filter(OrderUrl.order_id == oid).delete()
+    db.query(Alert).filter(Alert.order_id == oid).delete()
     db.delete(o)
     db.commit()
     return {"code": 0, "data": None, "msg": "已删除"}
@@ -612,7 +613,7 @@ def stop_order(oid: int, body: StopBody, db: Session = Depends(get_db), _=Depend
     o.status = "待停"
     o.stop_date = date.today()
     o.updated_at = datetime.now()
-    db.query(Alert).filter(Alert.type == "停单提醒", Alert.task_name == o.task_name, Alert.status == "未处理").delete()
+    db.query(Alert).filter(Alert.type == "停单提醒", Alert.order_id == o.id, Alert.status == "未处理").delete()
     db.commit()
     return {"code": 0, "data": None, "msg": "已提交停单（状态：待停）"}
 
@@ -623,16 +624,15 @@ def batch_stop(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(get
         if body.order_date > date.today():
             raise HTTPException(status_code=400, detail="更新日期不能是未来日期，请修改更新日期")
     rows = db.query(Order).filter(Order.id.in_(body.ids)).all()
-    task_names = []
+    ids = [o.id for o in rows]
     for o in rows:
         if body.order_date:
             o.order_date = body.order_date
         o.status = "待停"
         o.stop_date = date.today()
         o.updated_at = datetime.now()
-        task_names.append(o.task_name)
-    if task_names:
-        db.query(Alert).filter(Alert.type == "停单提醒", Alert.task_name.in_(task_names), Alert.status == "未处理").delete()
+    if ids:
+        db.query(Alert).filter(Alert.type == "停单提醒", Alert.order_id.in_(ids), Alert.status == "未处理").delete()
     db.commit()
     return {"code": 0, "data": {"stopped": len(rows)}, "msg": f"已提交停单 {len(rows)} 单（状态：待停）"}
 
@@ -691,6 +691,7 @@ def batch_delete(body: BatchStopBody, db: Session = Depends(get_db), user=Depend
     order_nos = [o.order_no for o in rows]
     if ids:
         db.query(OrderUrl).filter(OrderUrl.order_id.in_(ids)).delete(synchronize_session=False)
+        db.query(Alert).filter(Alert.order_id.in_(ids)).delete(synchronize_session=False)
         for o in rows:
             db.delete(o)
     _op_log(db, user, "batch_delete_orders", f"批量删除 {len(rows)} 单", None, {"order_nos": order_nos})
@@ -1200,7 +1201,7 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
         return -1
 
     name_col = _find("任务名")
-    id_col = _find("任务ID", "工单号", "甲方订单号", "订单号", "id")
+    id_col = _find("任务ID", "工单号", "id")
     op_col = _find("运营商")
     ch_col = _find("渠道", "类型")
     url_col = _find("url", "URL", "拓展码")
@@ -1213,9 +1214,10 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
     if ch_col < 0:
         raise HTTPException(status_code=422, detail="回执文件缺少「渠道/类型」列")
 
-    # 甲方（来自前端选择）
+    # 甲方（来自前端选择，兜底默认「牛」）
+    party = (party or "牛").strip()
     up = db.query(Customer).filter(Customer.ctype == "upstream",
-                                   or_(Customer.name == party, Customer.code == party)).first() if party else None
+                                   or_(Customer.name == party, Customer.code == party)).first()
     up_id = up.id if up else None
 
     updated = 0
@@ -1233,6 +1235,12 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
             continue
         op = db.query(Operator).filter(Operator.name == operator_val).first() if operator_val else None
         ch = db.query(Channel).filter(Channel.name == channel_val).first() if channel_val else None
+        if operator_val and not op:
+            errors.append({"task_name": task_name, "reason": f"运营商「{operator_val}」在系统中不存在"})
+            continue
+        if channel_val and not ch:
+            errors.append({"task_name": task_name, "reason": f"渠道「{channel_val}」在系统中不存在"})
+            continue
         orders = db.query(Order).filter(
             Order.task_name == task_name,
             Order.upstream_id == up_id,
@@ -1243,7 +1251,7 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
         ).all()
         # 有 url 时：按 URL 集合精确比对（拆行 -> 去空格 -> 排序，顺序无关）
         if url_val:
-            receipt_urls = sorted(u for u in re.split(r"[\n\r]+", url_val) if u.strip())
+            receipt_urls = sorted(u.strip() for u in re.split(r"[\n\r]+", url_val) if u.strip())
             matched = []
             for o in orders:
                 o_urls = sorted(u.url.strip() for u in db.query(OrderUrl).filter(OrderUrl.order_id == o.id).all()
@@ -1259,6 +1267,11 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
             continue
         if not new_task_id:
             errors.append({"task_name": task_name, "reason": "工单号为空"})
+            continue
+        dup = db.query(Order).filter(Order.task_id == new_task_id, Order.id != orders[0].id).first()
+        if dup:
+            errors.append({"task_name": task_name,
+                           "reason": f"工单号 {new_task_id} 已被其它订单占用（{dup.task_name or dup.order_no}）"})
             continue
         orders[0].task_id = new_task_id
         orders[0].updated_at = datetime.now()
