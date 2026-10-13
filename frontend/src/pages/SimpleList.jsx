@@ -1190,16 +1190,19 @@ export default function SimpleList({ kind }) {
           {checkResult && (
             <div className="table-scroll" style={{ maxHeight: 420 }}>
               <table>
-                <thead><tr><th>工单号</th><th>任务名</th><th className="num">数据量</th></tr></thead>
+                <thead><tr><th>工单号</th><th>任务名</th><th className="num">数据量</th><th>重复出现</th></tr></thead>
                 <tbody>
                   {checkResult.map((r, i) => (
                     <tr key={i}>
                       <td>{r.task_id || '—'}</td>
                       <td>{r.task_name || '—'}</td>
                       <td className="num">{r.count}</td>
+                      <td style={{ color: (r.repeat_dates || []).length ? 'var(--red)' : undefined }}>
+                        {(r.repeat_dates || []).length ? r.repeat_dates.join('、') : '无'}
+                      </td>
                     </tr>
                   ))}
-                  {checkResult.length === 0 && <tr><td colSpan={3} className="empty">无匹配的在执工单</td></tr>}
+                  {checkResult.length === 0 && <tr><td colSpan={4} className="empty">无匹配的在执工单</td></tr>}
                 </tbody>
               </table>
             </div>

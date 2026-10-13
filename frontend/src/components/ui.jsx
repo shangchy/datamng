@@ -92,7 +92,7 @@ export function Modal({ title, children, onClose, wide, z, style }) {
   )
 }
 
-export function ConfirmModal({ message, onConfirm, onCancel }) {
+export function ConfirmModal({ message, danger, onConfirm, onCancel }) {
   return (
     <div className="mask" style={{ zIndex: 200 }}>
       <div className="modal" style={{ width: 440 }}>
@@ -103,7 +103,7 @@ export function ConfirmModal({ message, onConfirm, onCancel }) {
           </button>
         </h3>
         <div className="modal-body">
-          <div style={{ marginBottom: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{message}</div>
+          <div style={{ marginBottom: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: danger ? 'var(--red)' : undefined }}>{message}</div>
           <div className="foot">
             <button className="btn" onClick={onCancel}>取消</button>
             <button className="btn primary" onClick={onConfirm}>确认</button>
@@ -116,12 +116,13 @@ export function ConfirmModal({ message, onConfirm, onCancel }) {
 
 export function useConfirm() {
   const [state, setState] = useState(null)
-  const confirm = useCallback((message) => new Promise((resolve) => {
-    setState({ message, resolve })
+  const confirm = useCallback((message, danger = false) => new Promise((resolve) => {
+    setState({ message, danger, resolve })
   }), [])
   const element = state ? (
     <ConfirmModal
       message={state.message}
+      danger={state.danger}
       onConfirm={() => { state.resolve(true); setState(null) }}
       onCancel={() => { state.resolve(false); setState(null) }}
     />

@@ -34,6 +34,9 @@ const IconCopy = (
 const IconReopen = (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
 )
+const IconUndo = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 14 4 9 9 4" /><path d="M20 20v-7a4 4 0 0 0-4-4H4" /></svg>
+)
 
 function IconBtn({ title, color, onClick, children }) {
   return (
@@ -101,6 +104,7 @@ export default function Orders({ variant = 'orders' }) {
   const [sort, setSort] = useState(null)
   const [modal, setModal] = useState(null) // null | 'create' | 'edit' | 'modify'
   const [form, setForm] = useState(emptyForm)
+  const origIdentity = useRef(null) // 编辑前的身份字段（customer_id/upstream_id/task_name）
   const [detail, setDetail] = useState(null)
   const [stopTarget, setStopTarget] = useState(null)
   const [stopDate, setStopDate] = useState('')
@@ -230,7 +234,7 @@ export default function Orders({ variant = 'orders' }) {
     return list
   }
 
-  function openCreate() { setForm({ ...emptyForm, order_date: todayStr() }); setModal('create') }
+  function openCreate() { origIdentity.current = null; setForm({ ...emptyForm, order_date: todayStr() }); setModal('create') }
 
   function toggleSelect(id) {
     setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
@@ -301,7 +305,16 @@ export default function Orders({ variant = 'orders' }) {
     } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
-  function openEdit(o) {
+  function openEdit(o, mode) {
+    const m = mode || 'edit'
+    origIdentity.current = {
+      customer_id: o.customer_id, upstream_id: o.upstream_id, task_name: o.task_name || '',
+      task_id: o.task_id || '', status: o.status || '未提',
+      url: (o.urls || []).join('\n'),
+      qty: o.qty ?? '', province: toComma(o.province), city: toComma(o.city),
+      excl_province: toComma(o.excl_province), excl_city: toComma(o.excl_city),
+      age_min: o.age_min ?? '', age_max: o.age_max ?? '', pv: o.pv ?? '',
+    }
     setForm({
       id: o.id,
       order_no: o.order_no || '',
@@ -310,17 +323,20 @@ export default function Orders({ variant = 'orders' }) {
       province: toComma(o.province), city: toComma(o.city), excl_province: toComma(o.excl_province),
       excl_city: toComma(o.excl_city), age_min: o.age_min ?? '', age_max: o.age_max ?? '', pv: o.pv ?? '',
       start_date: o.start_date || '', end_date: o.end_date || '',
-      order_date: o.status === '未提' ? (o.order_date || '') : todayStr(), price: o.price ?? '', secondary_agent: o.secondary_agent || '',
+      order_date: o.order_date || '', price: o.price ?? '', secondary_agent: o.secondary_agent || '',
       platform: o.platform || '', tpl_id: o.tpl_id ?? '', group_name: o.group_name || '',
       export_filename: o.export_filename || '', add_name: !!o.add_name, check_collision: !!o.check_collision,
       template_id: o.template_id ?? '', filename_rule: o.filename_rule || '', dist_config: o.dist_config || null,
-      status: o.status || '未提',
+      status: m === 'modify' ? '改单' : (o.status || '未提'),
       url: (o.urls || []).join('\n'),
     })
-    setModal(o.status === '未提' ? 'edit' : 'modify')
+    setModal(m)
   }
 
+  function openModify(o) { openEdit(o, 'modify') }
+
   function copyCreate(o) {
+    origIdentity.current = null
     setForm({
       ...emptyForm,
       customer_id: o.customer_id, upstream_id: o.upstream_id, channel_id: o.channel_id, operator_id: o.operator_id ?? '', task_name: o.task_name,
@@ -339,21 +355,46 @@ export default function Orders({ variant = 'orders' }) {
 
   async function save() {
     const missing = []
-    if (!form.order_date) missing.push('更新日期')
-    if (!(form.task_name || '').trim()) missing.push('任务名')
+    if (modal !== 'modify') {
+      if (!form.order_date) missing.push('更新日期')
+      if (!(form.task_name || '').trim()) missing.push('任务名')
+      if (!form.start_date) missing.push('开始日期')
+      if (!form.end_date) missing.push('截止日期')
+      if (!form.upstream_id) missing.push('上游')
+      if (!form.customer_id) missing.push('一级代理')
+    }
     if (form.qty === '' || form.qty == null) missing.push('数量')
-    if (!form.start_date) missing.push('开始日期')
-    if (!form.end_date) missing.push('截止日期')
-    if (!form.upstream_id) missing.push('上游')
-    if (!form.customer_id) missing.push('一级代理')
     if (!(form.url || '').trim()) missing.push('URL')
     if (missing.length) { showError('缺少必填字段：' + missing.join('、')); return }
+    // 变更字段红字提醒（状态/工单号/任务名/一级代理/甲方/改单涉及字段）
+    if (origIdentity.current) {
+      const o = origIdentity.current
+      const eq = (a, b) => (a == null ? '' : String(a)) === (b == null ? '' : String(b))
+      const changed = []
+      if (!eq(form.customer_id, o.customer_id)) changed.push('一级代理')
+      if (!eq(form.upstream_id, o.upstream_id)) changed.push('甲方')
+      if (!eq(form.task_name, o.task_name)) changed.push('任务名')
+      if (!eq(form.task_id, o.task_id)) changed.push('工单号')
+      if (!eq(form.status, o.status)) changed.push('状态')
+      if (!eq(form.url, o.url)) changed.push('url')
+      if (!eq(form.qty, o.qty)) changed.push('数量')
+      if (!eq(form.province, o.province)) changed.push('省份')
+      if (!eq(form.city, o.city)) changed.push('地市')
+      if (!eq(form.excl_province, o.excl_province)) changed.push('排除省')
+      if (!eq(form.excl_city, o.excl_city)) changed.push('排除地市')
+      if (!eq(form.age_min, o.age_min)) changed.push('年龄下限')
+      if (!eq(form.age_max, o.age_max)) changed.push('年龄上限')
+      if (!eq(form.pv, o.pv)) changed.push('pv')
+      if (changed.length) {
+        if (!(await confirm(`以下字段已发生变更：\n${changed.join('、')}\n\n请确认无误后保存。`, true))) return
+      }
+    }
     if (!(await confirm('确认保存该订单？'))) return
     setBusy(true); setBusyMsg('正在保存，请稍候…')
     try {
       const body = { ...form, qty: form.qty === '' ? null : Number(form.qty), age_min: form.age_min === '' ? null : Number(form.age_min), age_max: form.age_max === '' ? null : Number(form.age_max), pv: form.pv === '' ? null : Number(form.pv), customer_id: Number(form.customer_id), upstream_id: form.upstream_id ? Number(form.upstream_id) : null, channel_id: form.channel_id ? Number(form.channel_id) : null, operator_id: form.operator_id ? Number(form.operator_id) : null, template_id: form.template_id === '' || form.template_id == null ? null : Number(form.template_id), tpl_id: form.tpl_id === '' || form.tpl_id == null ? null : Number(form.tpl_id), price: form.price === '' || form.price == null ? null : Number(form.price), order_date: form.order_date || null, duration: computedDuration, urls: (form.url || '').split('\n').map(s => s.trim()).filter(Boolean).map(u => ({ url: u, level: '高' })) }
       const r = modal === 'create' ? await api.post('/api/orders', body) : await api.put(`/api/orders/${form.id}`, body)
-      toast(modal === 'modify' ? '改单已保存（状态：改单）' : '已保存（状态：未提）'); setModal(null); load()
+      toast(r.msg || '已保存'); setModal(null); load()
       if (r.warning) showError(r.warning)
     } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
@@ -372,6 +413,15 @@ export default function Orders({ variant = 'orders' }) {
         toast('已停')
       }
       setStopTarget(null); setStopDate(''); load(); window.dispatchEvent(new Event('alert-count-refresh'))
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
+  }
+
+  async function cancelStop(o) {
+    if (!(await confirm(`确认取消停单「${o.task_name || o.order_no}」？状态将恢复为「在执」。`))) return
+    setBusy(true); setBusyMsg('正在取消停单，请稍候…')
+    try {
+      await api.post(`/api/orders/${o.id}/cancel-stop`)
+      toast('已取消停单'); load(); window.dispatchEvent(new Event('alert-count-refresh'))
     } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
@@ -586,9 +636,10 @@ export default function Orders({ variant = 'orders' }) {
                 {!isStop && <td><input type="checkbox" checked={selected.includes(o.id)} onChange={() => toggleSelect(o.id)} onClick={e => e.stopPropagation()} /></td>}
                 {!isStop && (
                 <td className="ops">
-                  {o.status === '未提' && <IconBtn title="编辑" color="#2563eb" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconEdit}</IconBtn>}
-                  {['在执', '待停', '已停', '改单'].includes(o.status) && <IconBtn title="改单" color="#7c3aed" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconModify}</IconBtn>}
+                  <IconBtn title="编辑" color="#2563eb" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconEdit}</IconBtn>
+                  {['在执', '待停', '已停', '改单'].includes(o.status) && <IconBtn title="改单" color="#7c3aed" onClick={e => { e.stopPropagation(); openModify(o) }}>{IconModify}</IconBtn>}
                   {o.status === '已停' && o.upstream === '牛' && <IconBtn title="复提" color="#059669" onClick={e => { e.stopPropagation(); openReopen(o) }}>{IconReopen}</IconBtn>}
+                  {o.status === '待停' && <IconBtn title="取消停单" color="#059669" onClick={e => { e.stopPropagation(); cancelStop(o) }}>{IconUndo}</IconBtn>}
                   {['在执', '改单'].includes(o.status) && <IconBtn title="停单" color="#d97706" onClick={e => { e.stopPropagation(); const d = new Date(); setStopDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); setStopReason('业务调整'); setStopTarget(o) }}>{IconStop}</IconBtn>}
                   <IconBtn title="复制新增" color="#0891b2" onClick={e => { e.stopPropagation(); copyCreate(o) }}>{IconCopy}</IconBtn>
                   <IconBtn title="删除" color="#dc2626" onClick={e => { e.stopPropagation(); delOrder(o) }}>{IconDelete}</IconBtn>
@@ -605,7 +656,8 @@ export default function Orders({ variant = 'orders' }) {
       </div>
 
       {modal && (
-        <Modal title={modal === 'create' ? '新建提单' : (modal === 'edit' ? '编辑提单' : '改单')} onClose={() => setModal(null)} wide>
+        <Modal title={modal === 'create' ? '新建提单' : (modal === 'modify' ? '改单' : '编辑订单')} onClose={() => setModal(null)} wide>
+          {modal !== 'modify' && (<>
           <div className="row">
             <div className="field"><label>订单编号</label><input value={form.order_no} disabled placeholder="自动生成" /></div>
             <div className="field"><label>工单号</label><ClearableInput value={form.task_id} onChange={e => setForm({ ...form, task_id: e.target.value })} placeholder="自动生成" /></div>
@@ -618,7 +670,9 @@ export default function Orders({ variant = 'orders' }) {
           <div className="row">
             <div className="field"><label className="required">更新日期</label><input type="date" value={form.order_date} onChange={e => setForm({ ...form, order_date: e.target.value })} /></div>
             <div className="field"><label>状态</label>
-              <div className="readonly">{modal === 'modify' ? '改单' : '未提'}</div>
+              <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+                {['未提', '在执', '待停', '已停', '改单'].map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
             </div>
             <div className="field"><label className="required">一级代理</label>
               <select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}>
@@ -657,6 +711,7 @@ export default function Orders({ variant = 'orders' }) {
               </select></div>
             <div className="field"><label>定价</label><input type="number" step="0.0001" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} placeholder="元/条" /></div>
           </div>
+          </>)}
           <div className="row">
             <div className="field"><label className="required">数量</label><input type="number" value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })} /></div>
             <div className="field"><label>PV</label><input type="number" value={form.pv} onChange={e => setForm({ ...form, pv: e.target.value })} /></div>
@@ -675,11 +730,13 @@ export default function Orders({ variant = 'orders' }) {
             <div className="field"><label>排除省（仅全国）</label><MultiSelect full searchable disabled={!isNational} options={geo.provinces} value={form.excl_province} onChange={v => setForm({ ...form, excl_province: v })} placeholder={isNational ? '选择排除省' : '省份非全国不可选'} /></div>
             <div className="field"><label>排除市（随省份联动）</label><MultiSelect full searchable disabled={!exclCityOptions.length} options={exclCityOptions} value={form.excl_city} onChange={v => setForm({ ...form, excl_city: v })} placeholder={exclCityOptions.length ? '选择排除市' : '请先选择省份'} /></div>
           </div>
+          {modal !== 'modify' && (
           <div className="row">
             <div className="field"><label className="required">开始日期</label><input type="date" value={form.start_date} onChange={e => setForm({ ...form, start_date: e.target.value })} /></div>
             <div className="field"><label className="required">截止日期</label><input type="date" value={form.end_date} onChange={e => setForm({ ...form, end_date: e.target.value })} /></div>
             <div className="field"><label>时长（自动）</label><input value={computedDuration} disabled placeholder="自动计算" /></div>
           </div>
+          )}
           <div className="field" style={{ marginBottom: 12 }}><label className="required">URL（多行，一行一个）</label>
             <textarea rows={3} value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} placeholder="https://..." /></div>
           <div className="foot">
@@ -797,9 +854,17 @@ export default function Orders({ variant = 'orders' }) {
           <div className="note">支持 csv / xlsx。表头参考【模版】提单表.xlsx：提单日、甲方、一级代理、二级代理、订单号、定价、分组、平台、任务名、类型/渠道、url、数量、开始日期、截止日期、时长、年龄上下限、PV、省份、排除省、地市、排除地等。</div>
           <input type="file" accept=".csv,.xlsx,.xls" ref={importFileRef} />
           {importResult && (
-            <div className="note" style={{ background: importResult.errors.length ? '#fef2f2' : '#ecfdf5', border: '1px solid ' + (importResult.errors.length ? '#fecaca' : '#a7f3d0') }}>
-              导入 {importResult.imported} 条，更新 {importResult.updated || 0} 条，失败 {importResult.errors.length} 条
-              {importResult.errors.slice(0, 10).map((e, i) => <div key={i}>第 {e.row} 行：{e.reason}</div>)}
+            <div>
+              <div className="note" style={{ background: importResult.errors.length ? '#fef2f2' : '#ecfdf5', border: '1px solid ' + (importResult.errors.length ? '#fecaca' : '#a7f3d0') }}>
+                导入 {importResult.imported} 条，更新 {importResult.updated || 0} 条，失败 {importResult.errors.length} 条
+                {importResult.errors.slice(0, 10).map((e, i) => <div key={i}>第 {e.row} 行：{e.reason}</div>)}
+              </div>
+              {(importResult.warnings || []).length > 0 && (
+                <div className="note" style={{ marginTop: 8, background: '#fffbeb', border: '1px solid #fde68a' }}>
+                  身份字段提醒 {importResult.warnings.length} 条
+                  {importResult.warnings.slice(0, 10).map((w, i) => <div key={i}>第 {w.row} 行：{w.reason}</div>)}
+                </div>
+              )}
             </div>
           )}
           <div className="foot">

@@ -4,6 +4,7 @@ import io
 import re
 import threading
 import uuid
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import List
 
@@ -954,24 +955,47 @@ def wash_stats(date: str = "", db: Session = Depends(get_db), _=Depends(get_curr
     return {"code": 0, "data": {"total": total, "matched": matched, "need_wash": need_wash}, "msg": "ok"}
 
 
+def _check_repeat_days(db):
+    """工单检查重复天数（配置中心可配置，默认 30）"""
+    cfg = db.query(SysConfig).filter(SysConfig.key == "check_repeat_days").first()
+    try:
+        return int(cfg.value) if cfg and cfg.value else 30
+    except (TypeError, ValueError):
+        return 30
+
+
 def _check_daily_result(db, date_obj):
     """工单检查：统计所有在执工单在所选日期的数据量（按数据量降序），未到出数日(T+2)的工单不检查"""
     orders = db.query(Order).filter(Order.status == "在执").all()
+    chans = {c.id: c.name for c in db.query(Channel).all()}
+    ops = {o.id: o.name for o in db.query(Operator).all()}
     counts = {}
     for tid, cnt in db.query(DailyData.task_id, func.count(DailyData.id)) \
             .filter(DailyData.biz_date == date_obj, DailyData.task_id.isnot(None)) \
             .group_by(DailyData.task_id).all():
         counts[tid] = int(cnt)
+    # 重复出现检查：最近 N 天内同工单号出现的数据日期
+    repeat_days = _check_repeat_days(db)
+    start = date_obj - timedelta(days=repeat_days)
+    repeat_map = defaultdict(list)
+    for tid, bd in db.query(DailyData.task_id, DailyData.biz_date) \
+            .filter(DailyData.biz_date >= start, DailyData.biz_date < date_obj,
+                    DailyData.task_id.isnot(None), DailyData.task_id != "").distinct().all():
+        repeat_map[tid].append(str(bd))
     result = []
     for o in orders:
         # 未到达出数日（提单日+2天）的工单不检查
         if o.order_date and date_obj < o.order_date + timedelta(days=2):
             continue
+        tid = o.task_id or ""
         result.append({
-            "task_id": o.task_id or "",
+            "task_id": tid,
             "task_name": o.task_name or "",
             "order_no": o.order_no or "",
+            "channel": chans.get(o.channel_id, ""),
+            "operator": ops.get(o.operator_id, ""),
             "count": counts.get(o.task_id, 0),
+            "repeat_dates": sorted(repeat_map.get(tid, [])),
         })
     result.sort(key=lambda x: (-x["count"], x["task_id"]))
     return result
@@ -988,14 +1012,55 @@ def check_daily(date: str = "", db: Session = Depends(get_db), _=Depends(get_cur
 
 @router.get("/daily-data/check-export")
 def check_export(date: str = "", db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """工单检查结果导出（Excel）"""
+    """工单检查结果导出（Excel，带样式）"""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from urllib.parse import quote
+    from fastapi.responses import Response
+
     date_obj = _parse_biz_date(date)
     if not date_obj:
         raise HTTPException(status_code=422, detail="请选择数据日期")
     result = _check_daily_result(db, date_obj)
-    headers = ["工单号", "任务名", "订单编号", "数据量"]
-    rows = [[r["task_id"], r["task_name"], r["order_no"], r["count"]] for r in result]
-    return xlsx_response(headers, rows, f"工单检查-{date}.xlsx", "工单检查")
+    headers = ["工单号", "任务名", "渠道", "运营商", "数据量", "重复日期"]
+    rows = [[r["task_id"], r["task_name"], r["channel"], r["operator"], r["count"],
+             ("、".join(r["repeat_dates"]) if r["repeat_dates"] else "无")] for r in result]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "工单检查"
+    header_font = Font(bold=True, size=11, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="4472C4")
+    center = Alignment(horizontal="center", vertical="center")
+    right = Alignment(horizontal="right", vertical="center")
+    thin = Side(style="thin", color="D9D9D9")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for j, h in enumerate(headers, 1):
+        c = ws.cell(row=1, column=j, value=h)
+        c.font = header_font; c.fill = header_fill; c.alignment = center; c.border = border
+    for i, row in enumerate(rows, 2):
+        for j, v in enumerate(row, 1):
+            c = ws.cell(row=i, column=j, value=v)
+            c.border = border
+            c.alignment = right if j == 5 else center
+
+    def disp_len(v):
+        s = str(v) if v is not None else ""
+        return sum(2 if ord(ch) > 127 else 1 for ch in s)
+    for j, h in enumerate(headers, 1):
+        max_len = disp_len(h)
+        for row in rows:
+            max_len = max(max_len, disp_len(row[j - 1]))
+        ws.column_dimensions[openpyxl.utils.get_column_letter(j)].width = max_len + 4
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    filename = f"工单检查-{date}.xlsx"
+    return Response(content=bio.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
 
 
 def _parse_wash_file(fn, content):
@@ -2392,8 +2457,10 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
         up_name, ch_name = order_task_map.get(tid, ("", ""))
         up_agg[up_name or ""][ch_name or ""] += 1
 
-    # 下游账单
-    down_bills = db.query(Bill).filter(Bill.biz_date == date_obj).order_by(Bill.customer_id).all()
+    # 下游账单：全部有效下游客户（含当天未出数的）
+    down_customers = db.query(Customer).filter(Customer.ctype == "downstream", Customer.status == 1) \
+        .order_by(Customer.code).all()
+    down_bills = {b.customer_id: b for b in db.query(Bill).filter(Bill.biz_date == date_obj).all()}
     cust_map = {c.id: c for c in db.query(Customer).all()}
 
     wb = openpyxl.Workbook()
@@ -2473,12 +2540,19 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
         c.font = header_font; c.fill = header_fill; c.border = border; c.alignment = center
     r = 3
     d_qty = d_sales = d_profit = d_bal = 0
-    for b in down_bills:
-        c = cust_map.get(b.customer_id)
-        vals = [c.code if c else "", c.name if c else "", b.purchase_qty or 0,
-                float(b.sales) if b.sales is not None else 0,
-                float(b.profit) if b.profit is not None else 0,
-                float(b.balance) if b.balance is not None else 0]
+    for c in down_customers:
+        b = down_bills.get(c.id)
+        if b:
+            qty = b.purchase_qty or 0
+            sales = float(b.sales) if b.sales is not None else 0
+            profit = float(b.profit) if b.profit is not None else 0
+            balance = float(b.balance) if b.balance is not None else 0
+        else:
+            qty = 0
+            sales = 0.0
+            profit = 0.0
+            balance = float(c.balance) if c.balance is not None else 0
+        vals = [c.code if c else "", c.name if c else "", qty, sales, profit, balance]
         d_qty += vals[2]; d_sales = round(d_sales + vals[3], 2)
         d_profit = round(d_profit + vals[4], 2); d_bal = round(d_bal + vals[5], 2)
         for j, v in enumerate(vals, 1):

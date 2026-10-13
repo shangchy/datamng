@@ -18,6 +18,7 @@ from ..schemas import OrderBody, StopBody, BatchStopBody, OrderDistConfigBody, G
 from ..pagination import paginate, ok_page
 from ..utils import fmt_dt, norm_region
 from ..tidabiao import _order_type, _region_mode
+from ..regions import CITIES
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -486,7 +487,8 @@ def create_order(body: OrderBody, db: Session = Depends(get_db), user=Depends(ge
               qty=body.qty, duration=body.duration,
               province=province, city=body.city, excl_province=body.excl_province,
               excl_city=body.excl_city, age_min=body.age_min, age_max=body.age_max, pv=body.pv,
-              start_date=body.start_date, end_date=body.end_date, status="未提",
+              start_date=body.start_date, end_date=body.end_date,
+              status=body.status if body.status in ("未提", "在执", "待停", "已停", "改单") else "未提",
               filename_rule=body.filename_rule,
               order_date=body.order_date, price=body.price,
               secondary_agent=body.secondary_agent, platform=body.platform, tpl_id=body.tpl_id,
@@ -515,18 +517,33 @@ def update_order(oid: int, body: OrderBody, db: Session = Depends(get_db), user=
     _validate_region(body)
     is_edit = o.status == "未提"
 
+    # 身份字段变更检测（一级代理/甲方/任务名）
+    identity_changed = []
+    if (o.customer_id or None) != (body.customer_id or None):
+        identity_changed.append("一级代理")
+    if (o.upstream_id or None) != (body.upstream_id or None):
+        identity_changed.append("甲方")
+    if (o.task_name or "").strip() != (body.task_name or "").strip():
+        identity_changed.append("任务名")
+
+    # 业务字段变化追踪（改单涉及字段）
     changed_fields = []
-    if is_edit:
+    before_urls = sorted(before.get("urls") or [])
+    new_urls = sorted((u.get("url") or "").strip() for u in (body.urls or []))
+    if before_urls != new_urls:
+        changed_fields.append("url")
+    for f in ("qty", "province", "city", "excl_province", "excl_city", "age_min", "age_max", "pv"):
+        if _norm(getattr(body, f)) != _norm(before.get(f)):
+            changed_fields.append(f)
+
+    # 状态：优先用表单传入的状态（允许手动修改），否则兜底
+    _VALID_STATUS = ("未提", "在执", "待停", "已停", "改单")
+    req_status = (body.status or "").strip()
+    if req_status in _VALID_STATUS:
+        new_status = req_status
+    elif is_edit:
         new_status = "未提"
     else:
-        # 只有 Url/数量/地区/年龄上下限/pv 变化才算改单
-        before_urls = sorted(before.get("urls") or [])
-        new_urls = sorted((u.get("url") or "").strip() for u in (body.urls or []))
-        if before_urls != new_urls:
-            changed_fields.append("url")
-        for f in ("qty", "province", "city", "excl_province", "excl_city", "age_min", "age_max", "pv"):
-            if _norm(getattr(body, f)) != _norm(before.get(f)):
-                changed_fields.append(f)
         new_status = "改单" if changed_fields else o.status
 
     # 甲方=新 且 工单号为空 时自动生成工单号
@@ -553,8 +570,9 @@ def update_order(oid: int, body: OrderBody, db: Session = Depends(get_db), user=
     o.dist_config_json = json.dumps(body.dist_config, ensure_ascii=False) if body.dist_config else None
     o.template_id = body.template_id if body.template_id is not None else match_template(db, o)
     o.status = new_status
-    o.change_fields_json = json.dumps(changed_fields, ensure_ascii=False) if changed_fields else None
-    o.stop_date = date.today() if o.status in ("已停", "待停") else o.stop_date
+    # 改单：记录变更字段（与原改单处理一致）；非改单状态清空
+    o.change_fields_json = json.dumps(changed_fields, ensure_ascii=False) if (new_status == "改单" and changed_fields) else None
+    o.stop_date = date.today() if new_status in ("已停", "待停") else None
     o.updated_at = datetime.now()
     db.query(OrderUrl).filter(OrderUrl.order_id == oid).delete()
     url_list = []
@@ -565,14 +583,21 @@ def update_order(oid: int, body: OrderBody, db: Session = Depends(get_db), user=
     # 截止时间/状态变化时同步停单提醒（预警）状态
     from ..routers.data import _sync_order_stop_alert
     _sync_order_stop_alert(db, o)
+    # 身份字段变更：任务名同步到预警；非未提订单返回提醒
+    identity_warning = ""
+    if identity_changed:
+        if "任务名" in identity_changed:
+            db.query(Alert).filter(Alert.type == "停单提醒", Alert.order_id == oid).update(
+                {"task_name": o.task_name}, synchronize_session=False)
+        if not is_edit:
+            identity_warning = f"已变更身份字段：{'、'.join(identity_changed)}，请核对历史账单、预警归属与成本口径"
+    if warning and identity_warning:
+        warning = f"{warning}；{identity_warning}"
+    elif identity_warning:
+        warning = identity_warning
     _op_log(db, user, "update_order", o.order_no or str(oid), before, _snapshot(db, o, urls=url_list))
     db.commit()
-    if is_edit:
-        msg = "已保存（状态：未提）"
-    elif changed_fields:
-        msg = "改单已保存（状态：改单）"
-    else:
-        msg = "已保存（状态不变）"
+    msg = f"已保存（状态：{new_status}）"
     return {"code": 0, "data": None, "msg": msg, "warning": warning}
 
 
@@ -616,6 +641,21 @@ def stop_order(oid: int, body: StopBody, db: Session = Depends(get_db), _=Depend
     db.query(Alert).filter(Alert.type == "停单提醒", Alert.order_id == o.id, Alert.status == "未处理").delete()
     db.commit()
     return {"code": 0, "data": None, "msg": "已提交停单（状态：待停）"}
+
+
+@router.post("/{oid}/cancel-stop")
+def cancel_stop(oid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """取消停单：待停订单恢复为在执（仅状态与更新时间变化）"""
+    o = db.query(Order).filter(Order.id == oid).first()
+    if not o:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    if o.status != "待停":
+        raise HTTPException(status_code=400, detail="仅「待停」订单可取消停单")
+    o.status = "在执"
+    o.stop_date = None
+    o.updated_at = datetime.now()
+    db.commit()
+    return {"code": 0, "data": None, "msg": "已取消停单（状态：在执）"}
 
 
 @router.post("/batch-stop")
@@ -997,6 +1037,7 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
     imported_nos = []
     updated_nos = []
     errors = []
+    warnings = []
     tpl_code_map = {t.id: t.code for t in db.query(Template).all()}
     cust_code_map = {c.id: c.code for c in db.query(Customer).all()}
     group_consistency = {}
@@ -1021,7 +1062,19 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
             end_date = _date(r.get("end_date"))
             order_date = _date(r.get("order_date"))
             qty = _int(r.get("qty"))
-            province = r.get("province") or ("全国" if not r.get("city") else "")
+            province = r.get("province") or ("" if (r.get("city") or r.get("excl_city")) else "全国")
+            excl_city_raw = str(r.get("excl_city") or "").strip()
+            # 省份与排除地市冲突校验（省份非全国且排除地市不属于该省）
+            if province and "全国" not in province and excl_city_raw:
+                provs = [p for p in re.split(r"[,，]", province) if p.strip()]
+                excl_cities = [c for c in re.split(r"[|｜,，;；]", excl_city_raw) if c.strip()]
+                all_cities = set()
+                for p in provs:
+                    all_cities.update(CITIES.get(p, []))
+                conflict = [c for c in excl_cities if c not in all_cities]
+                if conflict:
+                    errors.append({"row": idx + 2, "reason": f"排除地市「{'、'.join(conflict)}」不属于所选省份，请修改订单后重新导入"})
+                    continue
             # 必填字段校验
             missing = []
             if not order_date:
@@ -1070,6 +1123,17 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
             existing = existing_order_no.get(order_no) if order_no else None
 
             if existing:
+                # 身份字段不一致检测：一级代理/甲方/任务名 不随导入覆盖，仅提示
+                identity_mismatch = []
+                if (existing.customer_id or None) != (cust.id if cust else None):
+                    identity_mismatch.append("一级代理")
+                if (existing.upstream_id or None) != (up.id if up else None):
+                    identity_mismatch.append("甲方")
+                if (existing.task_name or "").strip() != (task_name or "").strip():
+                    identity_mismatch.append("任务名")
+                if identity_mismatch:
+                    warnings.append({"row": idx + 2, "order_no": existing.order_no,
+                                     "reason": f"身份字段与文件不一致（{'、'.join(identity_mismatch)}），已保留库中原值，如需修改请手动编辑"})
                 before_urls = sorted((u.url or "").strip() for u in db.query(OrderUrl).filter(OrderUrl.order_id == existing.id).all())
                 before_vals = {"qty": existing.qty, "province": existing.province, "city": existing.city,
                                "excl_province": existing.excl_province, "excl_city": existing.excl_city,
@@ -1168,7 +1232,7 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
     _op_log(db, user, "import_orders", f"导入 {imported} 条，更新 {updated} 条，失败 {len(errors)} 条",
             None, {"imported": imported, "updated": updated, "failed": len(errors), "order_nos": imported_nos, "updated_nos": updated_nos})
     db.commit()
-    return {"code": 0, "data": {"imported": imported, "updated": updated, "errors": errors},
+    return {"code": 0, "data": {"imported": imported, "updated": updated, "errors": errors, "warnings": warnings},
             "msg": f"导入 {imported} 条，更新 {updated} 条，失败 {len(errors)} 条"}
 
 
@@ -1241,40 +1305,39 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
         if channel_val and not ch:
             errors.append({"task_name": task_name, "reason": f"渠道「{channel_val}」在系统中不存在"})
             continue
-        orders = db.query(Order).filter(
+        base = db.query(Order).filter(
             Order.task_name == task_name,
             Order.upstream_id == up_id,
             Order.operator_id == (op.id if op else None),
             Order.channel_id == (ch.id if ch else None),
             Order.status != "已停",
-            or_(Order.task_id.is_(None), Order.task_id == ""),
         ).all()
         # 有 url 时：按 URL 集合精确比对（拆行 -> 去空格 -> 排序，顺序无关）
         if url_val:
             receipt_urls = sorted(u.strip() for u in re.split(r"[\n\r]+", url_val) if u.strip())
-            matched = []
-            for o in orders:
-                o_urls = sorted(u.url.strip() for u in db.query(OrderUrl).filter(OrderUrl.order_id == o.id).all()
-                                if u.url and u.url.strip())
-                if o_urls == receipt_urls:
-                    matched.append(o)
-            orders = matched
-        if len(orders) == 0:
-            errors.append({"task_name": task_name, "reason": "未找到匹配订单（甲方+任务名+运营商+渠道+url 且工单号为空、非已停）"})
+            base = [o for o in base
+                    if sorted(u.url.strip() for u in db.query(OrderUrl).filter(OrderUrl.order_id == o.id).all()
+                              if u.url and u.url.strip()) == receipt_urls]
+        if not base:
+            errors.append({"task_name": task_name, "reason": "未找到匹配订单（甲方+任务名+运营商+渠道+url 且非已停）"})
             continue
-        if len(orders) > 1:
-            errors.append({"task_name": task_name, "reason": f"匹配到 {len(orders)} 个订单"})
+        # 已有工单号的无需更新，静默跳过
+        pending = [o for o in base if not o.task_id]
+        if not pending:
+            continue
+        if len(pending) > 1:
+            errors.append({"task_name": task_name, "reason": f"匹配到 {len(pending)} 个订单"})
             continue
         if not new_task_id:
             errors.append({"task_name": task_name, "reason": "工单号为空"})
             continue
-        dup = db.query(Order).filter(Order.task_id == new_task_id, Order.id != orders[0].id).first()
+        dup = db.query(Order).filter(Order.task_id == new_task_id, Order.id != pending[0].id).first()
         if dup:
             errors.append({"task_name": task_name,
                            "reason": f"工单号 {new_task_id} 已被其它订单占用（{dup.task_name or dup.order_no}）"})
             continue
-        orders[0].task_id = new_task_id
-        orders[0].updated_at = datetime.now()
+        pending[0].task_id = new_task_id
+        pending[0].updated_at = datetime.now()
         updated += 1
         updated_list.append({
             "party": party or "",

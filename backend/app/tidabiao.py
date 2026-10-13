@@ -88,24 +88,25 @@ def _split_list(v):
 
 
 def _city_value(o):
-    """地市列内容：有选中地市则用选中地市；否则该省排除地市以外的所有地市"""
+    """地市列内容：有选中地市则用选中地市；否则排除地市所在省的其它地市（反查省份）"""
     if o.city:
         return o.city
     excl = _split_list(o.excl_city)
     if not excl:
         return o.city or ""
     provs = _split_list(o.province)
+    # 省份为空/全国时，从排除地市反查所在省
+    if not provs or "全国" in provs:
+        provs = []
+        for ex in excl:
+            for p, cities in CITIES.items():
+                if ex in cities and p not in provs:
+                    provs.append(p)
     result = []
     for p in provs:
-        if p == "全国":
-            for cl in CITIES.values():
-                for c in cl:
-                    if c not in excl and c not in result:
-                        result.append(c)
-        else:
-            for c in CITIES.get(p, []):
-                if c not in excl and c not in result:
-                    result.append(c)
+        for c in CITIES.get(p, []):
+            if c not in excl and c not in result:
+                result.append(c)
     return "|".join(result)
 
 
@@ -136,6 +137,15 @@ def _order_values(db, o):
             elif not name:
                 name = u
         urls = ["|".join(x for x in (name, ghid) if x)] if (name or ghid) else urls
+    # 牛有排除市时：只保留排除市，不填省份/地市；否则按省份填地市（排除市所在省其它地市）
+    is_niu = (up.name == "牛") if up else False
+    has_excl_city = bool(_split_list(o.excl_city))
+    if is_niu and has_excl_city:
+        province_val = ""
+        city_val = ""
+    else:
+        province_val = "" if ("全国" in (o.province or "")) else norm_region(o.province)
+        city_val = norm_region(_city_value(o))
     return {
         "party": up.name if up else "",
         "task_id": o.task_id or o.order_no or "",
@@ -151,9 +161,9 @@ def _order_values(db, o):
         "age_max": o.age_max,
         "pv": o.pv,
         "region": norm_region(_region_value(o)),
-        "province": "" if ("全国" in (o.province or "")) else norm_region(o.province),
+        "province": province_val,
         "excl_province": norm_region(o.excl_province),
-        "city": norm_region(_city_value(o)),
+        "city": city_val,
         "excl_city": norm_region(o.excl_city),
         "order_no": o.order_no or "",
         "order_date": o.order_date.strftime("%Y-%m-%d") if o.order_date else "",
