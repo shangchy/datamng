@@ -974,20 +974,32 @@ def _check_daily_result(db, date_obj):
             .filter(DailyData.biz_date == date_obj, DailyData.task_id.isnot(None)) \
             .group_by(DailyData.task_id).all():
         counts[tid] = int(cnt)
-    # 重复出现检查：最近 N 天内同工单号出现的数据日期
+    # 重复出现检查：该工单号在指定日期出现的手机号，在前 N 天内是否重复出现（按手机号比对，非只查工单号）
     repeat_days = _check_repeat_days(db)
     start = date_obj - timedelta(days=repeat_days)
-    repeat_map = defaultdict(list)
-    for tid, bd in db.query(DailyData.task_id, DailyData.biz_date) \
-            .filter(DailyData.biz_date >= start, DailyData.biz_date < date_obj,
-                    DailyData.task_id.isnot(None), DailyData.task_id != "").distinct().all():
-        repeat_map[tid].append(str(bd))
+    today_phones = defaultdict(set)
+    for tid, phone in db.query(DailyData.task_id, DailyData.phone) \
+            .filter(DailyData.biz_date == date_obj, DailyData.task_id.isnot(None),
+                    DailyData.task_id != "", DailyData.phone.isnot(None), DailyData.phone != "").all():
+        today_phones[tid].add(phone)
+    all_phones = {p for phones in today_phones.values() for p in phones}
+    history_map = defaultdict(set)
+    if all_phones:
+        for phone, bd in db.query(DailyData.phone, DailyData.biz_date) \
+                .filter(DailyData.biz_date >= start, DailyData.biz_date < date_obj,
+                        DailyData.phone.isnot(None), DailyData.phone != "").all():
+            if phone in all_phones:
+                history_map[phone].add(str(bd))
     result = []
     for o in orders:
         # 未到达出数日（提单日+2天）的工单不检查
         if o.order_date and date_obj < o.order_date + timedelta(days=2):
             continue
         tid = o.task_id or ""
+        phones = today_phones.get(tid, set())
+        dup_phones = {p for p in phones if p in history_map}
+        repeat_dates = sorted({bd for p in dup_phones for bd in history_map.get(p, set())})
+        repeat_detail = [{"phone": p, "dates": sorted(history_map.get(p, set()))} for p in sorted(dup_phones)]
         result.append({
             "task_id": tid,
             "task_name": o.task_name or "",
@@ -995,7 +1007,9 @@ def _check_daily_result(db, date_obj):
             "channel": chans.get(o.channel_id, ""),
             "operator": ops.get(o.operator_id, ""),
             "count": counts.get(o.task_id, 0),
-            "repeat_dates": sorted(repeat_map.get(tid, [])),
+            "repeat_count": len(dup_phones),
+            "repeat_dates": repeat_dates,
+            "repeat_detail": repeat_detail,
         })
     result.sort(key=lambda x: (-x["count"], x["task_id"]))
     return result
@@ -1022,9 +1036,10 @@ def check_export(date: str = "", db: Session = Depends(get_db), _=Depends(get_cu
     if not date_obj:
         raise HTTPException(status_code=422, detail="请选择数据日期")
     result = _check_daily_result(db, date_obj)
-    headers = ["工单号", "任务名", "渠道", "运营商", "数据量", "重复日期"]
+    headers = ["工单号", "任务名", "渠道", "运营商", "数据量", "重复数量", "重复手机号与日期"]
     rows = [[r["task_id"], r["task_name"], r["channel"], r["operator"], r["count"],
-             ("、".join(r["repeat_dates"]) if r["repeat_dates"] else "无")] for r in result]
+             r["repeat_count"],
+             ("；".join(f"{d['phone']}（{'、'.join(d['dates'])}）" for d in r["repeat_detail"]) if r["repeat_detail"] else "无")] for r in result]
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -1043,7 +1058,7 @@ def check_export(date: str = "", db: Session = Depends(get_db), _=Depends(get_cu
         for j, v in enumerate(row, 1):
             c = ws.cell(row=i, column=j, value=v)
             c.border = border
-            c.alignment = right if j == 5 else center
+            c.alignment = right if j in (5, 6) else center
 
     def disp_len(v):
         s = str(v) if v is not None else ""

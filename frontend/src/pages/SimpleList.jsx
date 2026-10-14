@@ -160,6 +160,7 @@ export default function SimpleList({ kind }) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
   const [checkResult, setCheckResult] = useState(null)
+  const [repeatDetailModal, setRepeatDetailModal] = useState(null)
   const [exportModal, setExportModal] = useState(false)
   const [exportType, setExportType] = useState('excel')
   const [batchDelModal, setBatchDelModal] = useState(false)
@@ -1196,8 +1197,10 @@ export default function SimpleList({ kind }) {
                       <td>{r.task_id || '—'}</td>
                       <td>{r.task_name || '—'}</td>
                       <td className="num">{r.count}</td>
-                      <td style={{ color: (r.repeat_dates || []).length ? 'var(--red)' : undefined }}>
-                        {(r.repeat_dates || []).length ? r.repeat_dates.join('、') : '无'}
+                      <td>
+                        {(r.repeat_dates || []).length
+                          ? <a className="link" style={{ color: 'var(--red)' }} onClick={() => setRepeatDetailModal({ task_id: r.task_id, task_name: r.task_name, detail: r.repeat_detail || [] })}>有</a>
+                          : '无'}
                       </td>
                     </tr>
                   ))}
@@ -1212,6 +1215,34 @@ export default function SimpleList({ kind }) {
           </div>
         </Modal>
       )}
+
+      {repeatDetailModal && (() => {
+        const rows = (repeatDetailModal.detail || []).map(d => ({
+          phone: d.phone,
+          dates: [...(d.dates || [])].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0)),
+        }))
+        return (
+          <Modal title={`重复手机号详情 · ${repeatDetailModal.task_id || ''}`} onClose={() => setRepeatDetailModal(null)} wide>
+            <div className="table-scroll" style={{ maxHeight: 440 }}>
+              <table>
+                <thead><tr><th style={{ width: 60 }}>序号</th><th>工单号</th><th>手机号</th><th>日期</th></tr></thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={i}>
+                      <td className="num">{i + 1}</td>
+                      <td>{repeatDetailModal.task_id || '—'}</td>
+                      <td>{r.phone}</td>
+                      <td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{r.dates.join('、')}</td>
+                    </tr>
+                  ))}
+                  {rows.length === 0 && <tr><td colSpan={4} className="empty">暂无重复数据</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <div className="foot"><button className="btn primary" onClick={() => setRepeatDetailModal(null)}>关闭</button></div>
+          </Modal>
+        )
+      })()}
 
       {billDetail && (
         <Modal title="账单详情" onClose={() => setBillDetail(null)} wide>
