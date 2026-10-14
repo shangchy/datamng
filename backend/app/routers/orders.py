@@ -118,7 +118,7 @@ def _operator_name(db, o: Order) -> str:
     return ""
 
 
-def _order_dict(db, o: Order, alert_tasks=None) -> dict:
+def _order_dict(db, o: Order, alert_order_ids=None) -> dict:
     ch = db.query(Channel).filter(Channel.id == o.channel_id).first()
     c = db.query(Customer).filter(Customer.id == o.customer_id).first()
     up = db.query(Customer).filter(Customer.id == o.upstream_id).first()
@@ -173,7 +173,7 @@ def _order_dict(db, o: Order, alert_tasks=None) -> dict:
         "excl_province": norm_region(o.excl_province), "excl_city": norm_region(o.excl_city),
         "qty": o.qty, "age_min": o.age_min, "age_max": o.age_max, "pv": o.pv,
         "created_at": fmt_dt(o.created_at), "stop_date": str(o.stop_date) if o.stop_date else None,
-        "has_alert": (o.task_name in alert_tasks and o.status in ("在执", "待停")) if alert_tasks is not None else False,
+        "has_alert": (o.id in alert_order_ids and o.status in ("在执", "待停")) if alert_order_ids is not None else False,
     }
 
 
@@ -332,11 +332,12 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
     if secondary_agent:
         qy = qy.filter(Order.secondary_agent.like(f"%{secondary_agent}%"))
     if has_alert:
-        alert_sub = db.query(Alert.task_name).filter(Alert.type == "停单提醒", Alert.status == "未处理").subquery()
+        alert_sub = db.query(Alert.order_id).filter(Alert.type == "停单提醒", Alert.status == "未处理",
+                                                     Alert.order_id.isnot(None)).subquery()
         if has_alert in ("有", "是", "true", "1", "True", "yes", "YES"):
-            qy = qy.filter(Order.task_name.in_(alert_sub), Order.status.in_(["在执", "待停"]))
+            qy = qy.filter(Order.id.in_(alert_sub), Order.status.in_(["在执", "待停"]))
         elif has_alert in ("无", "否", "false", "0", "False", "no", "NO"):
-            qy = qy.filter(or_(~Order.task_name.in_(alert_sub), Order.status.notin_(["在执", "待停"])))
+            qy = qy.filter(or_(~Order.id.in_(alert_sub), Order.status.notin_(["在执", "待停"])))
     if plat_issue == "missing":
         # 平台不存在：platform 为空，或不在平台（品类管理）中
         all_plats = db.query(Platform.name).subquery()
@@ -348,8 +349,9 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
             .filter(or_(Platform.cat_id.is_(None), Category.id.is_(None), Category.level != 2)).subquery()
         qy = qy.filter(Order.platform.in_(bad_plats))
     total, rows = paginate(qy.order_by(Order.id.desc()), page, per_page)
-    alert_tasks = {r[0] for r in db.query(Alert.task_name).filter(Alert.type == "停单提醒", Alert.status == "未处理").all() if r[0]}
-    return ok_page([_order_dict(db, o, alert_tasks) for o in rows], total)
+    alert_order_ids = {r[0] for r in db.query(Alert.order_id).filter(Alert.type == "停单提醒", Alert.status == "未处理",
+                                                                      Alert.order_id.isnot(None)).all()}
+    return ok_page([_order_dict(db, o, alert_order_ids) for o in rows], total)
 
 
 def _num(v):
