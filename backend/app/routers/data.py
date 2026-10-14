@@ -974,7 +974,7 @@ def _check_daily_result(db, date_obj):
             .filter(DailyData.biz_date == date_obj, DailyData.task_id.isnot(None)) \
             .group_by(DailyData.task_id).all():
         counts[tid] = int(cnt)
-    # 重复出现检查：该工单号在指定日期出现的手机号，在前 N 天内是否重复出现（按手机号比对，非只查工单号）
+    # 重复出现检查：同一工单号下，指定日期的手机号在前 N 天内是否重复出现（按手机号、同工单号比对）
     repeat_days = _check_repeat_days(db)
     start = date_obj - timedelta(days=repeat_days)
     today_phones = defaultdict(set)
@@ -982,14 +982,13 @@ def _check_daily_result(db, date_obj):
             .filter(DailyData.biz_date == date_obj, DailyData.task_id.isnot(None),
                     DailyData.task_id != "", DailyData.phone.isnot(None), DailyData.phone != "").all():
         today_phones[tid].add(phone)
-    all_phones = {p for phones in today_phones.values() for p in phones}
-    history_map = defaultdict(set)
-    if all_phones:
-        for phone, bd in db.query(DailyData.phone, DailyData.biz_date) \
-                .filter(DailyData.biz_date >= start, DailyData.biz_date < date_obj,
-                        DailyData.phone.isnot(None), DailyData.phone != "").all():
-            if phone in all_phones:
-                history_map[phone].add(str(bd))
+    # 前 N 天内：工单号 -> 手机号 -> 出现日期集合
+    history_map = defaultdict(lambda: defaultdict(set))
+    for tid, phone, bd in db.query(DailyData.task_id, DailyData.phone, DailyData.biz_date) \
+            .filter(DailyData.biz_date >= start, DailyData.biz_date < date_obj,
+                    DailyData.task_id.isnot(None), DailyData.task_id != "",
+                    DailyData.phone.isnot(None), DailyData.phone != "").all():
+        history_map[tid][phone].add(str(bd))
     result = []
     for o in orders:
         # 未到达出数日（提单日+2天）的工单不检查
@@ -997,9 +996,10 @@ def _check_daily_result(db, date_obj):
             continue
         tid = o.task_id or ""
         phones = today_phones.get(tid, set())
-        dup_phones = {p for p in phones if p in history_map}
-        repeat_dates = sorted({bd for p in dup_phones for bd in history_map.get(p, set())})
-        repeat_detail = [{"phone": p, "dates": sorted(history_map.get(p, set()))} for p in sorted(dup_phones)]
+        hist = history_map.get(tid, {})
+        dup_phones = {p for p in phones if p in hist}
+        repeat_dates = sorted({bd for p in dup_phones for bd in hist.get(p, set())})
+        repeat_detail = [{"phone": p, "dates": sorted(hist.get(p, set()))} for p in sorted(dup_phones)]
         result.append({
             "task_id": tid,
             "task_name": o.task_name or "",
