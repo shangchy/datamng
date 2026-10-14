@@ -898,6 +898,7 @@ def export_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
                   add_name: str = "", url: str = "", operator: str = "", price: str = "",
                   dup: str = "", dup_order_no: str = "",
                   check_collision: str = "",
+                  has_alert: str = "", plat_issue: str = "",
                   qty: str = "", age_min: str = "", age_max: str = "", pv: str = ""):
     """按 MB-019 模版结构导出订单，文件名固定 订单表.xlsx"""
     import openpyxl
@@ -985,6 +986,21 @@ def export_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(Order.age_max == _num(age_max))
     if pv:
         qy = qy.filter(Order.pv == _num(pv))
+    if has_alert:
+        alert_sub = db.query(Alert.order_id).filter(Alert.type == "停单提醒", Alert.status == "未处理",
+                                                     Alert.order_id.isnot(None)).subquery()
+        if has_alert in ("有", "是", "true", "1", "True", "yes", "YES"):
+            qy = qy.filter(Order.id.in_(alert_sub), Order.status.in_(["在执", "待停"]))
+        elif has_alert in ("无", "否", "false", "0", "False", "no", "NO"):
+            qy = qy.filter(or_(~Order.id.in_(alert_sub), Order.status.notin_(["在执", "待停"])))
+    if plat_issue == "missing":
+        all_plats = db.query(Platform.name).subquery()
+        qy = qy.filter(or_(Order.platform.is_(None), Order.platform == "",
+                           ~Order.platform.in_(all_plats)))
+    elif plat_issue == "no_cat2":
+        bad_plats = db.query(Platform.name).outerjoin(Category, Category.id == Platform.cat_id) \
+            .filter(or_(Platform.cat_id.is_(None), Category.id.is_(None), Category.level != 2)).subquery()
+        qy = qy.filter(Order.platform.in_(bad_plats))
 
     rows = qy.order_by(Order.id.desc()).all()
     wb = _fill_mb019_export(db, rows)

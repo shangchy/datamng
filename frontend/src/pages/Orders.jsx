@@ -572,6 +572,11 @@ export default function Orders({ variant = 'orders' }) {
     })
     if (filters.start_date) parts.push(`开始日期：${filters.start_date.split(',').filter(Boolean).join('、')}`)
     if (filters.end_date) parts.push(`截止日期：${filters.end_date.split(',').filter(Boolean).join('、')}`)
+    if (filters.has_alert === '有') parts.push('预警：有')
+    else if (filters.has_alert === '无') parts.push('预警：无')
+    if (filters.plat_issue === 'missing') parts.push('品类检查：平台不存在')
+    else if (filters.plat_issue === 'no_cat2') parts.push('品类检查：平台无二级品类')
+    if (filters.dup === '有') parts.push('重复订单：有')
     return parts.length ? parts.join('\n') : '无筛选条件（导出全部订单）'
   }
 
