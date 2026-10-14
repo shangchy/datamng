@@ -10,7 +10,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from .models import Channel, Customer, Operator, OrderTemplate, Template
-from .regions import CITIES
+from .regions import CITIES, PROVINCES
 from .utils import norm_region
 
 
@@ -110,6 +110,16 @@ def _city_value(o):
     return "|".join(result)
 
 
+def _province_value(o):
+    """省份列内容：有选中省份(非全国)则用选中省份；全国且有排除省份则填排除省份以外的所有省份；全国则填全国"""
+    if o.province and "全国" not in o.province:
+        return o.province
+    excl = _split_list(o.excl_province)
+    if excl:
+        return "|".join(p for p in PROVINCES if p not in excl)
+    return "全国" if ("全国" in (o.province or "")) else (o.province or "")
+
+
 def _order_values(db, o):
     up = db.query(Customer).filter(Customer.id == o.upstream_id).first()
     cust = db.query(Customer).filter(Customer.id == o.customer_id).first()
@@ -137,15 +147,28 @@ def _order_values(db, o):
             elif not name:
                 name = u
         urls = ["|".join(x for x in (name, ghid) if x)] if (name or ghid) else urls
-    # 牛有排除市时：只保留排除市，不填省份/地市；否则按省份填地市（排除市所在省其它地市）
+    # 地区字段：牛按「地市/排除地市/排除省」互斥；新按省份+排除处理
     is_niu = (up.name == "牛") if up else False
+    has_city = bool((o.city or "").strip())
     has_excl_city = bool(_split_list(o.excl_city))
-    if is_niu and has_excl_city:
-        province_val = ""
-        city_val = ""
-    else:
-        province_val = "" if ("全国" in (o.province or "")) else norm_region(o.province)
-        city_val = norm_region(_city_value(o))
+    has_excl_province = bool(_split_list(o.excl_province))
+    province_val = norm_region(_province_value(o))
+    excl_province_val = norm_region(o.excl_province)
+    city_val = norm_region(_city_value(o))
+    excl_city_val = norm_region(o.excl_city)
+    if is_niu:
+        if has_city:
+            province_val = ""
+            excl_province_val = ""
+            excl_city_val = ""
+        elif has_excl_city:
+            province_val = ""
+            excl_province_val = ""
+            city_val = ""
+        elif has_excl_province:
+            province_val = ""
+            city_val = ""
+            excl_city_val = ""
     return {
         "party": up.name if up else "",
         "task_id": o.task_id or o.order_no or "",
@@ -162,9 +185,9 @@ def _order_values(db, o):
         "pv": o.pv,
         "region": norm_region(_region_value(o)),
         "province": province_val,
-        "excl_province": norm_region(o.excl_province),
+        "excl_province": excl_province_val,
         "city": city_val,
-        "excl_city": norm_region(o.excl_city),
+        "excl_city": excl_city_val,
         "order_no": o.order_no or "",
         "order_date": o.order_date.strftime("%Y-%m-%d") if o.order_date else "",
         "start_date": o.start_date.strftime("%Y-%m-%d") if o.start_date else "",

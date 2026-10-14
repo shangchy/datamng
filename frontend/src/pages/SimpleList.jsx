@@ -839,8 +839,7 @@ export default function SimpleList({ kind }) {
         {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
         {cfg.export && <button className="btn green" onClick={() => setExportModal(true)}>导出数据</button>}
         {kind === 'daily' && isAdmin && <button className="btn danger" onClick={() => setBatchDelModal(true)}>批量删除</button>}
-        {cfg.billExp && <button className="btn green" onClick={() => setBillExpModal(true)}>导出账单</button>}
-        {cfg.billExp && <button className="btn" onClick={() => setBillSummaryModal(true)}>导出账单汇总</button>}
+        {cfg.billExp && <button className="btn green" onClick={() => setBillSummaryModal(true)}>导出账单</button>}
         {cfg.simple && <button className="btn primary" onClick={() => setSimpleModal({ name: '', status: 1 })}>+ 新增</button>}
         {cfg.addUrl && <button className="btn primary" onClick={openAddUrl}>+ 新增 URL</button>}
         {cfg.clear && <button className="btn danger" onClick={clearData}>清空数据</button>}

@@ -720,9 +720,10 @@ export default function Orders({ variant = 'orders' }) {
           </div>
           <div className="row">
             <div className="field"><label>省份（含全国）</label><MultiSelect full searchable options={provinceOptions} value={form.province} onChange={v => {
-              const provs = v.split(',').filter(Boolean)
+              let provs = v.split(',').filter(Boolean)
               const national = provs.includes('全国')
-              setForm({ ...form, province: v, city: '', excl_city: '', excl_province: national ? form.excl_province : '' })
+              if (national) provs = ['全国']
+              setForm({ ...form, province: provs.join(','), city: '', excl_city: '', excl_province: national ? form.excl_province : '' })
             }} placeholder="选择省份" /></div>
             <div className="field"><label>地市（随省份联动）</label><MultiSelect full searchable disabled={isNational} options={cityOptions} value={form.city} onChange={v => setForm({ ...form, city: v })} placeholder={isNational ? '省份为全国不可选' : (cityOptions.length ? '选择地市' : '请先选择省份')} /></div>
           </div>
