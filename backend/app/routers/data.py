@@ -2204,10 +2204,20 @@ def list_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
     return ok_page(data, total)
 
 
+def _restore_bill_balance(db, bill):
+    """删除账单时恢复客户余额：加回该账单扣减的销售金额"""
+    if not bill.customer_id:
+        return
+    cust = db.query(Customer).filter(Customer.id == bill.customer_id).first()
+    if cust and bill.sales is not None:
+        cust.balance = round(float(cust.balance or 0) + float(bill.sales), 2)
+
+
 @router.post("/bills/batch-delete")
 def batch_delete_bills(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(require_admin)):
     rows = db.query(Bill).filter(Bill.id.in_(body.ids)).all()
     for r in rows:
+        _restore_bill_balance(db, r)
         db.delete(r)
     db.commit()
     return {"code": 0, "data": {"deleted": len(rows)}, "msg": f"已删除 {len(rows)} 条账单"}
@@ -2215,10 +2225,12 @@ def batch_delete_bills(body: BatchStopBody, db: Session = Depends(get_db), _=Dep
 
 @router.delete("/bills")
 def clear_bills(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    n = db.query(Bill).count()
+    rows = db.query(Bill).all()
+    for r in rows:
+        _restore_bill_balance(db, r)
     db.query(Bill).delete()
     db.commit()
-    return {"code": 0, "data": {"cleared": n}, "msg": f"已清空 {n} 条账单"}
+    return {"code": 0, "data": {"cleared": len(rows)}, "msg": f"已清空 {len(rows)} 条账单"}
 
 
 @router.post("/bills/import")
