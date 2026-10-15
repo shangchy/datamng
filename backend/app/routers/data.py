@@ -2448,29 +2448,28 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
 
     # 上游客户（牛/新）
     up_customers = {c.id: c for c in db.query(Customer).filter(Customer.ctype == "upstream").all()}
-    up_id_by_name = {c.name: c.id for c in up_customers.values()}
     up_name_by_id = {c.id: c.name for c in up_customers.values()}
     ch_by_id = {ch.id: ch.name for ch in db.query(Channel).all()}
-    ch_id_by_name = {ch.name: ch.id for ch in db.query(Channel).all()}
 
-    # 上游单价：customer_id -> channel_id -> price（取渠道级，operator 为空）
+    # 上游单价：customer_id -> (channel_id, operator_id) -> price（渠道+运营商组合）
     price_map = defaultdict(dict)
     for p in db.query(CustomerPrice).filter(CustomerPrice.customer_id.in_(up_customers.keys())).all():
-        if p.operator_id is None:
-            price_map[p.customer_id][p.channel_id] = float(p.price)
+        price_map[p.customer_id][(p.channel_id, p.operator_id)] = float(p.price)
 
-    # 上游汇总：日活数据按 task_id（工单号）关联订单 -> 上游(牛/新) + 渠道，统计数量
+    # 上游汇总：日活数据按 task_id 关联订单 -> (上游, 渠道, 运营商)，统计数量
     task_ids = [r[0] for r in db.query(DailyData.task_id)
                 .filter(DailyData.biz_date == date_obj, DailyData.task_id.isnot(None))
                 .distinct().all()]
     order_task_map = {}
     for o in db.query(Order).filter(Order.task_id.in_(task_ids)).all():
-        order_task_map[o.task_id] = (up_name_by_id.get(o.upstream_id, ""),
-                                     ch_by_id.get(o.channel_id, ""))
+        order_task_map[o.task_id] = (o.upstream_id, o.channel_id, o.operator_id)
+    op_by_id = {op.id: op.name for op in db.query(Operator).all()}
     up_agg = defaultdict(lambda: defaultdict(int))
     for tid, in db.query(DailyData.task_id).filter(DailyData.biz_date == date_obj).all():
-        up_name, ch_name = order_task_map.get(tid, ("", ""))
-        up_agg[up_name or ""][ch_name or ""] += 1
+        if tid not in order_task_map:
+            continue
+        up_id, ch_id, op_id = order_task_map[tid]
+        up_agg[up_id][(ch_id, op_id)] += 1
 
     # 下游账单：全部有效下游客户（含当天未出数的）
     down_customers = db.query(Customer).filter(Customer.ctype == "downstream", Customer.status == 1) \
@@ -2503,18 +2502,23 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
         c.font = header_font; c.fill = header_fill; c.border = border; c.alignment = center
     r = 3
     total_qty = total_amt = 0
-    for up_name in sorted(up_agg.keys()):
-        channels = up_agg[up_name]
-        sub_qty = sum(channels.values())
+    for up_id in sorted(up_agg.keys()):
+        up_name = up_name_by_id.get(up_id, "")
+        combos = up_agg[up_id]
+        sub_qty = sum(combos.values())
         sub_amt = 0.0
-        for ch_name in sorted(channels.keys()):
-            cnt = channels[ch_name]
-            up_id = up_id_by_name.get(up_name)
-            ch_id = ch_id_by_name.get(ch_name)
-            price = price_map.get(up_id, {}).get(ch_id, 0.0) if up_id and ch_id else 0.0
+        for (ch_id, op_id) in sorted(combos.keys(), key=lambda x: (x[0] or 0, x[1] or 0)):
+            cnt = combos[(ch_id, op_id)]
+            ch_name = ch_by_id.get(ch_id, "")
+            op_name = op_by_id.get(op_id, "")
+            # 渠道显示：dpi 渠道用「渠道-运营商」，其余用渠道名
+            label = f"{ch_name}-{op_name}" if ("dpi" in (ch_name or "").lower() and op_name) else (ch_name or "未知")
+            price = price_map.get(up_id, {}).get((ch_id, op_id))
+            if price is None:
+                price = price_map.get(up_id, {}).get((ch_id, None), 0.0)
             amt = round(cnt * price, 2)
             sub_amt = round(sub_amt + amt, 2)
-            vals = [up_name, ch_name, cnt, price, amt]
+            vals = [up_name, label, cnt, price, amt]
             for j, v in enumerate(vals, 1):
                 cell = ws1.cell(row=r, column=j, value=v)
                 cell.border = border

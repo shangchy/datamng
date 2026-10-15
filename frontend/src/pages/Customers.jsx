@@ -13,6 +13,11 @@ const CUST_COLS = [
   { k: 'note', l: '备注' },
 ]
 
+function tabsFor(ctype, isCreate) {
+  if (ctype === 'upstream') return isCreate ? ['prices'] : ['recharges', 'prices']
+  return isCreate ? [] : ['recharges']
+}
+
 export default function Customers() {
   const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
@@ -201,7 +206,7 @@ export default function Customers() {
             </tbody></table>
           </div>
           <div className="tabs">
-            {['recharges', 'prices'].map(t => (
+            {tabsFor(detail.ctype, false).map(t => (
               <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
                 {t === 'recharges' ? '充值管理' : '单价管理'}
               </div>
@@ -262,7 +267,7 @@ export default function Customers() {
               <div className="field"><label>客户名称</label><ClearableInput value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
             </div>
             <div className="row">
-              <div className="field"><label>类型</label><select value={form.ctype} onChange={e => setForm({ ...form, ctype: e.target.value })}><option value="downstream">下游</option><option value="upstream">上游</option></select></div>
+              <div className="field"><label>类型</label><select value={form.ctype} onChange={e => { const ctype = e.target.value; setForm({ ...form, ctype }); setFormTab(ctype === 'upstream' ? 'prices' : 'recharges') }}><option value="downstream">下游</option><option value="upstream">上游</option></select></div>
               <div className="field"><label>飞机账号ID</label><ClearableInput value={form.tg_id} onChange={e => setForm({ ...form, tg_id: e.target.value })} /></div>
             </div>
             <div className="row">
@@ -286,17 +291,21 @@ export default function Customers() {
               <div className="field"><label>备注</label><textarea rows={3} value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} /></div>
             </div>
           </div>
-          <div className="tabs">
-            {(modal === 'create' ? ['prices'] : ['recharges', 'prices']).map(t => (
-              <div key={t} className={`tab ${formTab === t ? 'active' : ''}`} onClick={() => setFormTab(t)}>
-                {t === 'recharges' ? '充值管理' : '单价管理'}
-              </div>
-            ))}
-          </div>
-          {formTab === 'prices' && !form.id ? (
-            <div className="note">保存客户后即可设定渠道单价。</div>
-          ) : (
-            <TabContent tab={formTab} customerId={form.id} refreshKey={rechargeRefresh} onEditRecharge={(r) => editRecharge(form.id, r, false)} />
+          {tabsFor(form.ctype, modal === 'create').length > 0 && (
+            <div className="tabs">
+              {tabsFor(form.ctype, modal === 'create').map(t => (
+                <div key={t} className={`tab ${formTab === t ? 'active' : ''}`} onClick={() => setFormTab(t)}>
+                  {t === 'recharges' ? '充值管理' : '单价管理'}
+                </div>
+              ))}
+            </div>
+          )}
+          {tabsFor(form.ctype, modal === 'create').length > 0 && (
+            formTab === 'prices' && !form.id ? (
+              <div className="note">保存客户后即可设定渠道单价。</div>
+            ) : (
+              <TabContent tab={formTab} customerId={form.id} refreshKey={rechargeRefresh} onEditRecharge={(r) => editRecharge(form.id, r, false)} />
+            )
           )}
           <div className="foot">
             <button className="btn" onClick={() => setModal(null)}>取消</button>

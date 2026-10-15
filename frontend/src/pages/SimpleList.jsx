@@ -184,14 +184,26 @@ export default function SimpleList({ kind }) {
       api.get('/api/customers/recharge-rate').then(r => setRechargeRate(r.data.rate)).catch(() => {})
     }
   }, [kind])
+  async function withBusy(fn, msg = '处理中，请稍候…') {
+    setBusy(true); setBusyMsg(msg); setBusyProgress(null)
+    try {
+      return await fn()
+    } finally {
+      setBusy(false); setBusyProgress(null)
+    }
+  }
   async function saveAlertConfig() {
-    await api.put('/api/alert-config', { trigger_time: alertTrigger, alert_days: Number(alertDays) || 0 })
-    toast('预警配置已保存')
+    await withBusy(async () => {
+      await api.put('/api/alert-config', { trigger_time: alertTrigger, alert_days: Number(alertDays) || 0 })
+      toast('预警配置已保存')
+    }, '正在保存…')
   }
   async function manualScan() {
     if (!(await confirm('确认立即执行预警扫描？'))) return
-    const r = await api.post('/api/alerts/scan')
-    toast(`扫描完成，未处理预警 ${r.data.unhandled} 条`); load()
+    await withBusy(async () => {
+      const r = await api.post('/api/alerts/scan')
+      toast(`扫描完成，未处理预警 ${r.data.unhandled} 条`); load()
+    }, '正在执行预警扫描…')
   }
 
   function toggleSort(k) {
@@ -242,9 +254,9 @@ export default function SimpleList({ kind }) {
     const r = await api.get(`${cfg.endpoint}?${params}`)
     setRows(r.data.rows); setTotal(r.data.total)
   }
-  function search(f) { setPage(1); load(1, perPage, f) }
+  function search(f) { setPage(1); withBusy(() => load(1, perPage, f), '正在查询…') }
   function goPage(p) { setPage(p); load(p, perPage) }
-  function changePerPage(pp) { setPerPage(pp); setPage(1); load(1, pp) }
+  function changePerPage(pp) { setPerPage(pp); setPage(1); withBusy(() => load(1, pp), '正在查询…') }
   function dateNDaysAgo(n) {
     const d = new Date()
     d.setDate(d.getDate() - (n || 0))
@@ -336,8 +348,10 @@ export default function SimpleList({ kind }) {
 
   async function addSimple() {
     if (await confirm('确认新增该记录？')) {
-      await api.post(cfg.endpoint, { name: simpleModal.name, status: 1 })
-      toast('已新增'); setSimpleModal(null); load()
+      await withBusy(async () => {
+        await api.post(cfg.endpoint, { name: simpleModal.name, status: 1 })
+        toast('已新增'); setSimpleModal(null); load()
+      }, '正在新增…')
     }
   }
   function openDailyEdit(r) {
@@ -352,12 +366,18 @@ export default function SimpleList({ kind }) {
   async function saveDailyEdit() {
     if (!(dailyEdit.phone || '').trim()) { showError('手机号不能为空'); return }
     try {
-      await api.put(`/api/daily-data/${dailyEdit.id}`, dailyEdit)
-      toast('已更新'); setDailyEdit(null); load()
+      await withBusy(async () => {
+        await api.put(`/api/daily-data/${dailyEdit.id}`, dailyEdit)
+        toast('已更新'); setDailyEdit(null); load()
+      }, '正在保存…')
     } catch (e) { showError(e.message) }
   }
   async function del(id) {
-    if (await confirm('确认删除该记录？')) { await api.del(`${cfg.endpoint}/${id}`); toast('已删除'); load() }
+    if (await confirm('确认删除该记录？')) {
+      await withBusy(async () => {
+        await api.del(`${cfg.endpoint}/${id}`); toast('已删除'); load()
+      }, '正在删除…')
+    }
   }
   function toggleSelect(id) {
     setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
@@ -370,23 +390,29 @@ export default function SimpleList({ kind }) {
     if (!selected.length) { showError('请先勾选要删除的数据'); return }
     if (!(await confirm(`确认删除选中的 ${selected.length} 条数据？此操作不可恢复。`))) return
     try {
-      await api.post(`${cfg.endpoint}/batch-delete`, { ids: selected })
-      toast('已删除'); setSelected([]); load()
+      await withBusy(async () => {
+        await api.post(`${cfg.endpoint}/batch-delete`, { ids: selected })
+        toast('已删除'); setSelected([]); load()
+      }, '正在删除…')
     } catch (e) { showError(e.message) }
   }
   async function doDeleteByDate() {
     if (!delByDate) { showError('请选择数据日期'); return }
     if (!(await confirm(`确认删除数据日期为 ${delByDate} 的全部日活数据？此操作不可恢复。`))) return
     try {
-      const r = await api.post('/api/daily-data/delete-by-date', { date: delByDate })
-      toast(r.msg); setDelByDateModal(false); load()
+      await withBusy(async () => {
+        const r = await api.post('/api/daily-data/delete-by-date', { date: delByDate })
+        toast(r.msg); setDelByDateModal(false); load()
+      }, '正在删除…')
     } catch (e) { showError(e.message) }
   }
   async function backfillCategory() {
     if (!(await confirm('按平台重新补充缺失的一级/二级品类信息？（需先在品类管理中维护好平台与品类映射）'))) return
     try {
-      const r = await api.post('/api/daily-data/backfill-category')
-      toast(r.msg); load()
+      await withBusy(async () => {
+        const r = await api.post('/api/daily-data/backfill-category')
+        toast(r.msg); load()
+      }, '正在补充品类…')
     } catch (e) { showError(e.message) }
   }
   function openAddUrl() {
@@ -411,9 +437,11 @@ export default function SimpleList({ kind }) {
       channel_id: m.channel_id ? Number(m.channel_id) : null,
       urls: [{ url, level: m.level }],
     }
-    if (m.mode === 'edit') await api.put(`/api/urls/${m.id}`, payload)
-    else await api.post(cfg.endpoint, payload)
-    toast(m.mode === 'edit' ? '已保存' : '已新增'); setUrlModal(null); load()
+    await withBusy(async () => {
+      if (m.mode === 'edit') await api.put(`/api/urls/${m.id}`, payload)
+      else await api.post(cfg.endpoint, payload)
+      toast(m.mode === 'edit' ? '已保存' : '已新增'); setUrlModal(null); load()
+    }, '正在保存…')
   }
   function openRecharge(r) {
     const d = new Date()
@@ -429,13 +457,15 @@ export default function SimpleList({ kind }) {
     const hasRmb = a.amount_rmb !== '' && a.amount_rmb != null && Number(a.amount_rmb) !== 0
     if ((!hasU && !hasRmb) || !a.recharge_date) { showError('请填写充值金额和日期'); return }
     try {
-      await api.post(`/api/customers/${a.customer_id}/recharges`, {
-        amount_u: hasU ? Number(a.amount_u) : null,
-        amount_rmb: hasRmb ? Number(a.amount_rmb) : null,
-        recharge_date: a.recharge_date, note: a.note || '',
-      })
-      toast('充值成功'); setRechargeAlert(null); load()
-      window.dispatchEvent(new Event('alert-count-refresh'))
+      await withBusy(async () => {
+        await api.post(`/api/customers/${a.customer_id}/recharges`, {
+          amount_u: hasU ? Number(a.amount_u) : null,
+          amount_rmb: hasRmb ? Number(a.amount_rmb) : null,
+          recharge_date: a.recharge_date, note: a.note || '',
+        })
+        toast('充值成功'); setRechargeAlert(null); load()
+        window.dispatchEvent(new Event('alert-count-refresh'))
+      }, '正在充值…')
     } catch (e) { showError(e.message) }
   }
   function openStop(r) {
@@ -445,20 +475,28 @@ export default function SimpleList({ kind }) {
     if (!stopAlert || !stopAlert.order_id) { showError('订单不存在'); return }
     if (!(await confirm(`确认停单「${stopAlert.task_name || stopAlert.order_no}」？`))) return
     try {
-      await api.post(`/api/orders/${stopAlert.order_id}/stop`, { reason: '业务调整', note: '', order_date: null })
-      toast('已停单'); setStopAlert(null); load()
-      window.dispatchEvent(new Event('alert-count-refresh'))
+      await withBusy(async () => {
+        await api.post(`/api/orders/${stopAlert.order_id}/stop`, { reason: '业务调整', note: '', order_date: null })
+        toast('已停单'); setStopAlert(null); load()
+        window.dispatchEvent(new Event('alert-count-refresh'))
+      }, '正在停单…')
     } catch (e) { showError(e.message) }
   }
   async function resetPwd(id) {
-    if (await confirm('确认重置该账户密码？')) { await api.post(`/api/users/${id}/reset-password`); toast('密码已重置') }
+    if (await confirm('确认重置该账户密码？')) {
+      await withBusy(async () => {
+        await api.post(`/api/users/${id}/reset-password`); toast('密码已重置')
+      }, '正在重置密码…')
+    }
   }
   async function savePwd() {
     if (!pwdModal.password || pwdModal.password.length < 6) { showError('密码长度至少 6 位'); return }
     if (pwdModal.password !== pwdModal.confirm) { showError('两次输入的新密码不一致'); return }
     try {
-      await api.post(`/api/users/${pwdModal.id}/set-password`, { password: pwdModal.password })
-      toast('密码已修改'); setPwdModal(null)
+      await withBusy(async () => {
+        await api.post(`/api/users/${pwdModal.id}/set-password`, { password: pwdModal.password })
+        toast('密码已修改'); setPwdModal(null)
+      }, '正在保存…')
     } catch (e) { showError(e.message) }
   }
 
@@ -486,8 +524,10 @@ export default function SimpleList({ kind }) {
   }
   async function saveRolePerms() {
     try {
-      await api.put(`/api/roles/${rolePermModal.rid}/permissions`, { codes: rolePermModal.codes })
-      toast('权限已保存'); setRolePermModal(null)
+      await withBusy(async () => {
+        await api.put(`/api/roles/${rolePermModal.rid}/permissions`, { codes: rolePermModal.codes })
+        toast('权限已保存'); setRolePermModal(null)
+      }, '正在保存…')
     } catch (e) { showError(e.message) }
   }
 
@@ -560,25 +600,27 @@ export default function SimpleList({ kind }) {
       note: extractForm.note || '',
     }
     try {
-      const res = await fetch('/api/daily-data/extract', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getToken() },
-        body: JSON.stringify(body),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        throw new Error(d.msg || d.detail || '抽取失败')
-      }
-      const blob = await res.blob()
-      const cd = res.headers.get('Content-Disposition') || ''
-      const m = cd.match(/filename\*=UTF-8''(.+)/)
-      const filename = m ? decodeURIComponent(m[1]) : '单独抽取.zip'
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
-      a.download = filename
-      a.click()
-      URL.revokeObjectURL(a.href)
-      toast('抽取完成，已下载数据与账单'); setExtractModal(false)
+      await withBusy(async () => {
+        const res = await fetch('/api/daily-data/extract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getToken() },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}))
+          throw new Error(d.msg || d.detail || '抽取失败')
+        }
+        const blob = await res.blob()
+        const cd = res.headers.get('Content-Disposition') || ''
+        const m = cd.match(/filename\*=UTF-8''(.+)/)
+        const filename = m ? decodeURIComponent(m[1]) : '单独抽取.zip'
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = filename
+        a.click()
+        URL.revokeObjectURL(a.href)
+        toast('抽取完成，已下载数据与账单'); setExtractModal(false)
+      }, '正在抽取数据…')
     } catch (e) { showError(e.message) }
   }
 
@@ -688,10 +730,12 @@ export default function SimpleList({ kind }) {
     if (!washDate) { showError('请选择数据日期'); return }
     setWashModal(false)
     try {
-      const r = await api.get(`/api/daily-data/wash-stats?date=${encodeURIComponent(washDate)}`)
-      const s = r.data || {}
-      await downloadFile(`/api/daily-data/wash-export?date=${encodeURIComponent(washDate)}`)
-      showError(`洗名导出完成\n\n一共要导出：${s.total ?? 0} 条\n已匹配洗名库：${s.matched ?? 0} 条\n需要去小逸洗名：${s.need_wash ?? 0} 条`)
+      await withBusy(async () => {
+        const r = await api.get(`/api/daily-data/wash-stats?date=${encodeURIComponent(washDate)}`)
+        const s = r.data || {}
+        await downloadFile(`/api/daily-data/wash-export?date=${encodeURIComponent(washDate)}`)
+        showError(`洗名导出完成\n\n一共要导出：${s.total ?? 0} 条\n已匹配洗名库：${s.matched ?? 0} 条\n需要去小逸洗名：${s.need_wash ?? 0} 条`)
+      }, '正在导出洗名…')
     } catch (e) { showError(e.message) }
   }
 
@@ -699,12 +743,14 @@ export default function SimpleList({ kind }) {
     if (!billExpStart || !billExpEnd) { showError('请选择开始和结束日期'); return }
     setBillExpModal(false)
     try {
-      const p = new URLSearchParams()
-      p.set('start_date', billExpStart)
-      p.set('end_date', billExpEnd)
-      if (billExpCustId) p.set('customer_id', billExpCustId)
-      await downloadFile(`/api/bills/export?${p.toString()}`)
-      toast('账单已导出')
+      await withBusy(async () => {
+        const p = new URLSearchParams()
+        p.set('start_date', billExpStart)
+        p.set('end_date', billExpEnd)
+        if (billExpCustId) p.set('customer_id', billExpCustId)
+        await downloadFile(`/api/bills/export?${p.toString()}`)
+        toast('账单已导出')
+      }, '正在导出账单…')
     } catch (e) { showError(e.message) }
   }
 
@@ -712,24 +758,30 @@ export default function SimpleList({ kind }) {
     if (!billSummaryDate) { showError('请选择日期'); return }
     setBillSummaryModal(false)
     try {
-      await downloadFile(`/api/bills/summary-export?date=${billSummaryDate}`)
-      toast('账单汇总已导出')
+      await withBusy(async () => {
+        await downloadFile(`/api/bills/summary-export?date=${billSummaryDate}`)
+        toast('账单汇总已导出')
+      }, '正在导出账单汇总…')
     } catch (e) { showError(e.message) }
   }
 
   async function doCheck() {
     if (!checkDate) { showError('请选择数据日期'); return }
     try {
-      const r = await api.get(`/api/daily-data/check?date=${encodeURIComponent(checkDate)}`)
-      setCheckResult(r.data || [])
+      await withBusy(async () => {
+        const r = await api.get(`/api/daily-data/check?date=${encodeURIComponent(checkDate)}`)
+        setCheckResult(r.data || [])
+      }, '正在检查…')
     } catch (e) { showError(e.message) }
   }
 
   async function doCheckExport() {
     if (!checkDate) { showError('请选择数据日期'); return }
     try {
-      await downloadFile(`/api/daily-data/check-export?date=${encodeURIComponent(checkDate)}`)
-      toast('检查结果已导出')
+      await withBusy(async () => {
+        await downloadFile(`/api/daily-data/check-export?date=${encodeURIComponent(checkDate)}`)
+        toast('检查结果已导出')
+      }, '正在导出…')
     } catch (e) { showError(e.message) }
   }
 
@@ -751,8 +803,10 @@ export default function SimpleList({ kind }) {
 
   async function viewBillDetail(id) {
     try {
-      const r = await api.get(`/api/bills/${id}`)
-      setBillDetail(r.data)
+      await withBusy(async () => {
+        const r = await api.get(`/api/bills/${id}`)
+        setBillDetail(r.data)
+      }, '正在加载…')
     } catch (e) { showError(e.message) }
   }
 
@@ -762,10 +816,12 @@ export default function SimpleList({ kind }) {
 
   async function saveBalance() {
     try {
-      await api.put(`/api/bills/${billDetail.id}/balance`, { balance: Number(balanceEdit.balance) })
-      toast('余额已更新'); setBalanceEdit(null)
-      const r = await api.get(`/api/bills/${billDetail.id}`)
-      setBillDetail(r.data); load()
+      await withBusy(async () => {
+        await api.put(`/api/bills/${billDetail.id}/balance`, { balance: Number(balanceEdit.balance) })
+        toast('余额已更新'); setBalanceEdit(null)
+        const r = await api.get(`/api/bills/${billDetail.id}`)
+        setBillDetail(r.data); load()
+      }, '正在保存…')
     } catch (e) { showError(e.message) }
   }
 
@@ -790,8 +846,10 @@ export default function SimpleList({ kind }) {
   async function clearData() {
     if (!(await confirm(`确认清空「${cfg.title}」的全部数据？此操作不可恢复。`))) return
     try {
-      await api.del(cfg.endpoint)
-      toast('已清空'); load()
+      await withBusy(async () => {
+        await api.del(cfg.endpoint)
+        toast('已清空'); load()
+      }, '正在清空…')
     } catch (e) { showError(e.message) }
   }
 
