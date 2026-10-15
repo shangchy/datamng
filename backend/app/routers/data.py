@@ -1784,6 +1784,16 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
         if not orders_info:
             raise HTTPException(status_code=404, detail="所选一级代理没有可分发的数据")
 
+    # 仅分发指定「截止日期」的订单（补发场景：如 10-14 比 10-15 多出的截止日期=10-13 订单）
+    if body.end_date:
+        try:
+            end_obj = datetime.strptime(body.end_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=422, detail="截止日期格式错误")
+        orders_info = {tid: info for tid, info in orders_info.items() if info.get("end_date") == end_obj}
+        if not orders_info:
+            raise HTTPException(status_code=404, detail=f"没有「截止日期={body.end_date}」的可分发订单")
+
     # 截止日期过了 T+1（末次出数日期 end_date+1）之后仍在出数的数据：不分发、不记账
     expired_tids = {tid for tid, info in orders_info.items()
                     if info.get("end_date") and date_obj > info["end_date"] + timedelta(days=1)}
@@ -1859,55 +1869,56 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
 
     # 6. 计算各代理账单（进货量、销售金额 = 手机号 × 订单单价）
     bills = {}
-    for d in rows:
-        if not d.task_id or d.task_id not in orders_info or d.task_id in expired_tids:
-            continue
-        info = orders_info[d.task_id]
-        cc = info["cust_code"]
-        if cc not in bills:
-            label = (f"{cc} {info['cust_name']}".strip() if info["cust_name"] else cc)
-            cust = db.query(Customer).filter(Customer.id == info["customer_id"]).first()
-            bills[cc] = {"customer_id": info["customer_id"], "cust_label": label,
-                         "qty": 0, "sales": 0.0, "cost": 0.0,
-                         "balance": float(cust.balance) if cust and cust.balance is not None else 0,
-                         "groups": {}}
-        bills[cc]["qty"] += 1
-        eff_price = info["price"] + (0.01 if info["add_name"] else 0)
-        bills[cc]["sales"] += eff_price
-        bills[cc]["cost"] += info["upstream_price"]
-        gg = bills[cc]["groups"].setdefault(d.task_id,
-                                            {"task_name": info["task_name"] or info["group_name"],
-                                             "order_no": info["order_no"],
-                                             "channel": info["channel"], "operator": info["operator"],
-                                             "qty": 0, "amount": 0.0, "unit": info["price"], "add_name": info["add_name"]})
-        gg["qty"] += 1
-        gg["amount"] += eff_price
+    if not body.files_only:
+        for d in rows:
+            if not d.task_id or d.task_id not in orders_info or d.task_id in expired_tids:
+                continue
+            info = orders_info[d.task_id]
+            cc = info["cust_code"]
+            if cc not in bills:
+                label = (f"{cc} {info['cust_name']}".strip() if info["cust_name"] else cc)
+                cust = db.query(Customer).filter(Customer.id == info["customer_id"]).first()
+                bills[cc] = {"customer_id": info["customer_id"], "cust_label": label,
+                             "qty": 0, "sales": 0.0, "cost": 0.0,
+                             "balance": float(cust.balance) if cust and cust.balance is not None else 0,
+                             "groups": {}}
+            bills[cc]["qty"] += 1
+            eff_price = info["price"] + (0.01 if info["add_name"] else 0)
+            bills[cc]["sales"] += eff_price
+            bills[cc]["cost"] += info["upstream_price"]
+            gg = bills[cc]["groups"].setdefault(d.task_id,
+                                                {"task_name": info["task_name"] or info["group_name"],
+                                                 "order_no": info["order_no"],
+                                                 "channel": info["channel"], "operator": info["operator"],
+                                                 "qty": 0, "amount": 0.0, "unit": info["price"], "add_name": info["add_name"]})
+            gg["qty"] += 1
+            gg["amount"] += eff_price
 
-    # 7. 保存账单（按客户+日期 upsert；余额 = 客户余额 - 销售金额），并同步客户余额
-    for cc, b in bills.items():
-        cid = b.get("customer_id")
-        if not cid:
-            continue
-        cust = db.query(Customer).filter(Customer.id == cid).first()
-        existing = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == date_obj).first()
-        balance = float(cust.balance) if cust and cust.balance is not None else 0
-        # 重复分发时：把上次已扣的销售金额加回来，恢复到扣减前的基础余额，避免重复扣减
-        if existing and existing.sales is not None:
-            balance = round(balance + float(existing.sales), 2)
-        bill_balance = round(balance - float(b["sales"]), 2)
-        b["balance"] = bill_balance
-        profit = round(float(b["sales"]) - float(b["cost"]), 2)
-        if existing:
-            existing.purchase_qty = b["qty"]
-            existing.sales = b["sales"]
-            existing.balance = bill_balance
-            existing.profit = profit
-        else:
-            db.add(Bill(customer_id=cid, biz_date=date_obj, purchase_qty=b["qty"],
-                        sales=b["sales"], balance=bill_balance, profit=profit))
-        if cust is not None:
-            cust.balance = bill_balance
-    db.commit()
+        # 7. 保存账单（按客户+日期 upsert；余额 = 客户余额 - 销售金额），并同步客户余额
+        for cc, b in bills.items():
+            cid = b.get("customer_id")
+            if not cid:
+                continue
+            cust = db.query(Customer).filter(Customer.id == cid).first()
+            existing = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == date_obj).first()
+            balance = float(cust.balance) if cust and cust.balance is not None else 0
+            # 重复分发时：把上次已扣的销售金额加回来，恢复到扣减前的基础余额，避免重复扣减
+            if existing and existing.sales is not None:
+                balance = round(balance + float(existing.sales), 2)
+            bill_balance = round(balance - float(b["sales"]), 2)
+            b["balance"] = bill_balance
+            profit = round(float(b["sales"]) - float(b["cost"]), 2)
+            if existing:
+                existing.purchase_qty = b["qty"]
+                existing.sales = b["sales"]
+                existing.balance = bill_balance
+                existing.profit = profit
+            else:
+                db.add(Bill(customer_id=cid, biz_date=date_obj, purchase_qty=b["qty"],
+                            sales=b["sales"], balance=bill_balance, profit=profit))
+            if cust is not None:
+                cust.balance = bill_balance
+        db.commit()
 
     # 7.5 各代理账单模版（客户配置了账单模版则按模版生成）
     bill_tpls = {}
