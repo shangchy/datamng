@@ -1053,6 +1053,14 @@ def _resolve_tpl_code(raw):
     return TPL_CODE_ALIAS.get(s.upper(), s)
 
 
+def _norm_url_part(s):
+    """归一化 url 片段：去首尾空白、去末尾斜杠、去 http/https 协议前缀"""
+    s = (s or "").strip()
+    s = s.rstrip("/")
+    s = re.sub(r"^https?://", "", s, flags=re.IGNORECASE)
+    return s
+
+
 @router.post("/import")
 async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_db), user=Depends(get_current_user)):
     fn = file.filename or ""
@@ -1391,18 +1399,18 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
             Order.operator_id == (op.id if op else None),
             Order.channel_id == (ch.id if ch else None),
         ).all()
-        # 有 url 时：按 URL 集合精确比对（回执与订单 url 都按 换行/竖线 拆成集合再比对，兼容小程序"字符串 vs 集合"及单条竖线拼接）
+        # 有 url 时：按 URL 集合精确比对（回执与订单 url 都按 换行/竖线 拆成集合、去末尾斜杠/协议前缀，用集合去重比对）
         if url_val:
-            receipt_urls = sorted(u.strip() for u in re.split(r"[|\n\r｜]", url_val) if u.strip())
+            receipt_urls = {p for p in (_norm_url_part(u) for u in re.split(r"[|\n\r｜]", url_val)) if p}
             matched = []
             for o in base:
-                o_urls = []
+                o_urls = set()
                 for u in db.query(OrderUrl).filter(OrderUrl.order_id == o.id).all():
                     for part in re.split(r"[|\n\r｜]", u.url or ""):
-                        part = part.strip()
-                        if part:
-                            o_urls.append(part)
-                if sorted(o_urls) == receipt_urls:
+                        p = _norm_url_part(part)
+                        if p:
+                            o_urls.add(p)
+                if o_urls == receipt_urls:
                     matched.append(o)
             base = matched
         if not base:
