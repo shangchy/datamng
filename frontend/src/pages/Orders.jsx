@@ -891,7 +891,7 @@ export default function Orders({ variant = 'orders' }) {
       )}
 
       {receiptModal && (
-        <Modal title="导入回执（按任务名更新工单号）" onClose={() => setReceiptModal(false)}>
+        <Modal title="导入回执（按任务名更新工单号）" onClose={() => setReceiptModal(false)} wide>
           <div className="note">回执文件需包含「任务名」「任务ID/工单号」「运营商」「渠道（类型）」列，将按 甲方 + 任务名 + 运营商 + 渠道 且工单号为空 匹配订单并更新工单号；未匹配或多匹配会提示且不更新。</div>
           <div className="row">
             <div className="field"><label>甲方</label>
@@ -901,14 +901,14 @@ export default function Orders({ variant = 'orders' }) {
           </div>
           <input type="file" accept=".xlsx,.xls" ref={receiptFileRef} />
           {receiptResult && (
-            <div>
+            <div className="table-scroll" style={{ maxHeight: 420 }}>
               <div className="note" style={{ background: '#ecfdf5', border: '1px solid #a7f3d0' }}>
                 更新 {receiptResult.updated} 条
                 <table style={{ marginTop: 6, width: '100%' }}>
                   <thead><tr><th>甲方</th><th>工单号</th><th>任务名</th><th>运营商</th><th>类型</th></tr></thead>
                   <tbody>
                     {(receiptResult.updated_list || []).map((e, i) => (
-                      <tr key={i}><td>{e.party}</td><td>{e.task_id}</td><td>{e.task_name}</td><td>{e.operator}</td><td>{e.channel}</td></tr>
+                      <tr key={i}><td>{e.party}</td><td>{e.task_id}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{e.task_name}</td><td>{e.operator}</td><td>{e.channel}</td></tr>
                     ))}
                   </tbody>
                 </table>
@@ -920,7 +920,7 @@ export default function Orders({ variant = 'orders' }) {
                     <thead><tr><th>任务名</th><th>原因</th></tr></thead>
                     <tbody>
                       {receiptResult.errors.map((e, i) => (
-                        <tr key={i}><td>{e.task_name}</td><td>{e.reason}</td></tr>
+                        <tr key={i}><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{e.task_name}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{e.reason}</td></tr>
                       ))}
                     </tbody>
                   </table>

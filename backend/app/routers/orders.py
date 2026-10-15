@@ -1390,31 +1390,28 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
             Order.upstream_id == up_id,
             Order.operator_id == (op.id if op else None),
             Order.channel_id == (ch.id if ch else None),
-            Order.status != "已停",
         ).all()
-        # 有 url 时：按 URL 集合精确比对（拆行 -> 去空格 -> 排序，顺序无关）
+        # 有 url 时：按 URL 集合精确比对（回执可能是字符串，用换行/竖线拆成集合再比对；拆 -> 去空格 -> 排序，顺序无关）
         if url_val:
-            receipt_urls = sorted(u.strip() for u in re.split(r"[\n\r]+", url_val) if u.strip())
+            receipt_urls = sorted(u.strip() for u in re.split(r"[|\n\r｜]", url_val) if u.strip())
             base = [o for o in base
                     if sorted(u.url.strip() for u in db.query(OrderUrl).filter(OrderUrl.order_id == o.id).all()
                               if u.url and u.url.strip()) == receipt_urls]
         if not base:
-            errors.append({"task_name": task_name, "reason": "未找到匹配订单（甲方+任务名+运营商+渠道+url 且非已停）"})
+            errors.append({"task_name": task_name, "reason": "未找到匹配订单（甲方+任务名+运营商+渠道+url）"})
             continue
-        # 已有工单号的无需更新，静默跳过
+        # 只有工单号为空的才需要更新；匹配到多个时若仅一个工单号为空则更新该条
         pending = [o for o in base if not o.task_id]
         if not pending:
             continue
         if len(pending) > 1:
-            errors.append({"task_name": task_name, "reason": f"匹配到 {len(pending)} 个订单"})
+            errors.append({"task_name": task_name, "reason": f"匹配到 {len(pending)} 个工单号为空的订单"})
             continue
         if not new_task_id:
             errors.append({"task_name": task_name, "reason": "工单号为空"})
             continue
-        dup = db.query(Order).filter(Order.task_id == new_task_id, Order.id != pending[0].id).first()
-        if dup:
-            errors.append({"task_name": task_name,
-                           "reason": f"工单号 {new_task_id} 已被其它订单占用（{dup.task_name or dup.order_no}）"})
+        # 工单id 已在系统中存在：无需更新，静默跳过（不报错）
+        if db.query(Order).filter(Order.task_id == new_task_id).first():
             continue
         pending[0].task_id = new_task_id
         pending[0].updated_at = datetime.now()
