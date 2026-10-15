@@ -1391,12 +1391,20 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
             Order.operator_id == (op.id if op else None),
             Order.channel_id == (ch.id if ch else None),
         ).all()
-        # 有 url 时：按 URL 集合精确比对（回执可能是字符串，用换行/竖线拆成集合再比对；拆 -> 去空格 -> 排序，顺序无关）
+        # 有 url 时：按 URL 集合精确比对（回执与订单 url 都按 换行/竖线 拆成集合再比对，兼容小程序"字符串 vs 集合"及单条竖线拼接）
         if url_val:
             receipt_urls = sorted(u.strip() for u in re.split(r"[|\n\r｜]", url_val) if u.strip())
-            base = [o for o in base
-                    if sorted(u.url.strip() for u in db.query(OrderUrl).filter(OrderUrl.order_id == o.id).all()
-                              if u.url and u.url.strip()) == receipt_urls]
+            matched = []
+            for o in base:
+                o_urls = []
+                for u in db.query(OrderUrl).filter(OrderUrl.order_id == o.id).all():
+                    for part in re.split(r"[|\n\r｜]", u.url or ""):
+                        part = part.strip()
+                        if part:
+                            o_urls.append(part)
+                if sorted(o_urls) == receipt_urls:
+                    matched.append(o)
+            base = matched
         if not base:
             errors.append({"task_name": task_name, "reason": "未找到匹配订单（甲方+任务名+运营商+渠道+url）"})
             continue
