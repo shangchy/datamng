@@ -60,9 +60,9 @@ const COLS = [
 
 const FILTER_COLS = [
   { k: 'status', l: '状态' }, { k: 'order_date', l: '更新日期' },
-  { k: 'upstream', l: '甲方' }, { k: 'order_no', l: '订单号' }, { k: 'task_id', l: '工单号' },
+  { k: 'upstream', l: '甲方' }, { k: 'order_no', l: '订单号' }, { k: 'task_id', l: '工单号' }, { k: 'empty_task', l: '空工单' },
   { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' },
-  { k: 'platform', l: '平台' }, { k: 'group_name', l: '小组' }, { k: 'task_name', l: '任务名' },
+  { k: 'platform', l: '平台' }, { k: 'empty_platform', l: '空平台' }, { k: 'group_name', l: '小组' }, { k: 'task_name', l: '任务名' },
   { k: 'add_name', l: '是否加名' }, { k: 'check_collision', l: '是否撞库' }, { k: 'channel', l: '渠道' }, { k: 'operator', l: '运营商' },
   { k: 'tpl_code', l: '出数模版' }, { k: 'url', l: 'url' },
   { k: 'province', l: '省份' }, { k: 'excl_province', l: '排除省份' }, { k: 'city', l: '地市' },
@@ -209,6 +209,8 @@ export default function Orders({ variant = 'orders' }) {
     add_name: ['是', '否'],
     check_collision: ['是', '否'],
     has_alert: ['有', '无'],
+    empty_task: ['有', '无'],
+    empty_platform: ['有', '无'],
     operator: operators.map(o => o.name),
     dup: ['有', '无'],
     province: geo.provinces,
@@ -487,7 +489,7 @@ export default function Orders({ variant = 'orders' }) {
   async function doConfirm() {
     setBusy(true); setBusyMsg('正在检查待确认订单…')
     try {
-      const r = await api.get('/api/orders/confirm-tidabiao/pending-check')
+      const r = await api.get('/api/orders/confirm-tidabiao/pending-check?date=' + encodeURIComponent(confirmDate))
       const pending = r.data || []
       setBusy(false)
       if (pending.length > 0) {
@@ -863,7 +865,11 @@ export default function Orders({ variant = 'orders' }) {
             <div>
               <div className="note" style={{ background: importResult.errors.length ? '#fef2f2' : '#ecfdf5', border: '1px solid ' + (importResult.errors.length ? '#fecaca' : '#a7f3d0') }}>
                 导入 {importResult.imported} 条，更新 {importResult.updated || 0} 条，失败 {importResult.errors.length} 条
-                {importResult.errors.slice(0, 10).map((e, i) => <div key={i}>第 {e.row} 行：{e.reason}</div>)}
+                {importResult.errors.length > 0 && (
+                  <div style={{ maxHeight: 320, overflow: 'auto', marginTop: 6 }}>
+                    {importResult.errors.map((e, i) => <div key={i}>第 {e.row} 行：{e.reason}</div>)}
+                  </div>
+                )}
               </div>
               {(importResult.warnings || []).length > 0 && (
                 <div className="note" style={{ marginTop: 8, background: '#fffbeb', border: '1px solid #fde68a' }}>
@@ -958,9 +964,9 @@ export default function Orders({ variant = 'orders' }) {
       )}
 
       {pendingCheck && (
-        <Modal title="存在过去日期的未确认订单" onClose={() => setPendingCheck(null)} wide>
+        <Modal title="存在早于提单日期的未确认订单" onClose={() => setPendingCheck(null)} wide>
           <div className="note" style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
-            存在 {pendingCheck.length} 条过去日期仍为「未提/待停/改单」的订单，可能遗漏了提单确认。是否继续提单确认？
+            存在 {pendingCheck.length} 条更新日期早于所选提单日期的订单，仍为「未提/待停/改单」，可能遗漏了提单确认。是否继续提单确认？
           </div>
           <div className="table-scroll" style={{ maxHeight: 320 }}>
             <table>

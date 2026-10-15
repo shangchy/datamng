@@ -18,7 +18,7 @@ from ..schemas import OrderBody, StopBody, BatchStopBody, OrderDistConfigBody, G
 from ..pagination import paginate, ok_page
 from ..utils import fmt_dt, norm_region
 from ..tidabiao import _order_type, _region_mode
-from ..regions import CITIES
+from ..regions import CITIES, PROVINCES
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -238,7 +238,7 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
                 add_name: str = "", url: str = "", operator: str = "", price: str = "",
                  dup: str = "", dup_order_no: str = "",
                  check_collision: str = "", no_cat2: str = "", has_alert: str = "",
-                 plat_issue: str = "",
+                 plat_issue: str = "", empty_task: str = "", empty_platform: str = "",
                  page: int = 1, per_page: int = 10):
     Upstream = aliased(Customer)
     qy = (db.query(Order)
@@ -348,6 +348,14 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
         bad_plats = db.query(Platform.name).outerjoin(Category, Category.id == Platform.cat_id) \
             .filter(or_(Platform.cat_id.is_(None), Category.id.is_(None), Category.level != 2)).subquery()
         qy = qy.filter(Order.platform.in_(bad_plats))
+    if empty_task in ("有", "是", "true", "1", "True", "yes", "YES"):
+        qy = qy.filter(or_(Order.task_id.is_(None), Order.task_id == ""))
+    elif empty_task in ("无", "否", "false", "0", "False", "no", "NO"):
+        qy = qy.filter(Order.task_id.isnot(None), Order.task_id != "")
+    if empty_platform in ("有", "是", "true", "1", "True", "yes", "YES"):
+        qy = qy.filter(or_(Order.platform.is_(None), Order.platform == ""))
+    elif empty_platform in ("无", "否", "false", "0", "False", "no", "NO"):
+        qy = qy.filter(Order.platform.isnot(None), Order.platform != "")
     total, rows = paginate(qy.order_by(Order.id.desc()), page, per_page)
     alert_order_ids = {r[0] for r in db.query(Alert.order_id).filter(Alert.type == "停单提醒", Alert.status == "未处理",
                                                                       Alert.order_id.isnot(None)).all()}
@@ -898,7 +906,7 @@ def export_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
                   add_name: str = "", url: str = "", operator: str = "", price: str = "",
                   dup: str = "", dup_order_no: str = "",
                   check_collision: str = "",
-                  has_alert: str = "", plat_issue: str = "",
+                  has_alert: str = "", plat_issue: str = "", empty_task: str = "", empty_platform: str = "",
                   qty: str = "", age_min: str = "", age_max: str = "", pv: str = ""):
     """按 MB-019 模版结构导出订单，文件名固定 订单表.xlsx"""
     import openpyxl
@@ -1001,6 +1009,14 @@ def export_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
         bad_plats = db.query(Platform.name).outerjoin(Category, Category.id == Platform.cat_id) \
             .filter(or_(Platform.cat_id.is_(None), Category.id.is_(None), Category.level != 2)).subquery()
         qy = qy.filter(Order.platform.in_(bad_plats))
+    if empty_task in ("有", "是", "true", "1", "True", "yes", "YES"):
+        qy = qy.filter(or_(Order.task_id.is_(None), Order.task_id == ""))
+    elif empty_task in ("无", "否", "false", "0", "False", "no", "NO"):
+        qy = qy.filter(Order.task_id.isnot(None), Order.task_id != "")
+    if empty_platform in ("有", "是", "true", "1", "True", "yes", "YES"):
+        qy = qy.filter(or_(Order.platform.is_(None), Order.platform == ""))
+    elif empty_platform in ("无", "否", "false", "0", "False", "no", "NO"):
+        qy = qy.filter(Order.platform.isnot(None), Order.platform != "")
 
     rows = qy.order_by(Order.id.desc()).all()
     wb = _fill_mb019_export(db, rows)
@@ -1047,6 +1063,52 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
         rows = _parse_xlsx(content)
     else:
         raise HTTPException(status_code=422, detail="仅支持 csv / xlsx 文件")
+
+    # ===== 导入前整体预检：非法值（上游/状态/一级代理/模版/渠道/运营商/省/市）全部提示并停止导入 =====
+    up_valid = {x for c in db.query(Customer).filter(Customer.ctype == "upstream").all() for x in (c.name, c.code) if x}
+    down_valid = {x for c in db.query(Customer).filter(Customer.ctype == "downstream").all() for x in (c.name, c.code) if x}
+    channel_valid = {c.name for c in db.query(Channel).all() if c.name}
+    operator_valid = {o.name for o in db.query(Operator).all() if o.name}
+    tpl_valid = {t.code for t in db.query(Template).all() if t.code}
+    status_valid = {"未提", "在执", "待停", "已停", "改单", "停", "停单", "已停单"}
+    province_valid = set(PROVINCES) | {"全国"}
+    city_valid = {c for cities in CITIES.values() for c in cities}
+
+    precheck = []
+    for idx, r in enumerate(rows):
+        if not any((str(v) if v is not None else "").strip() for v in r.values()):
+            continue
+        row_no = idx + 2
+        v = str(r.get("upstream") or "").strip()
+        if v and v not in up_valid:
+            precheck.append({"row": row_no, "reason": f"上游「{v}」不存在"})
+        v = str(r.get("status") or "").strip()
+        if v and v not in status_valid:
+            precheck.append({"row": row_no, "reason": f"状态「{v}」非法"})
+        v = str(r.get("customer") or "").strip()
+        if v and v not in down_valid:
+            precheck.append({"row": row_no, "reason": f"一级代理「{v}」不存在"})
+        tcode = _resolve_tpl_code(r.get("tpl_code"))
+        if tcode and tcode not in tpl_valid:
+            precheck.append({"row": row_no, "reason": f"模版编号「{tcode}」不存在"})
+        v = str(r.get("channel") or "").strip()
+        if v and v not in channel_valid:
+            precheck.append({"row": row_no, "reason": f"渠道「{v}」不存在"})
+        v = str(r.get("operator") or "").strip()
+        if v and v not in operator_valid:
+            precheck.append({"row": row_no, "reason": f"运营商「{v}」不存在"})
+        for p in re.split(r"[|｜,，;；]", str(r.get("province") or "")):
+            p = p.strip()
+            if p and p not in province_valid:
+                precheck.append({"row": row_no, "reason": f"省份「{p}」不存在"})
+        for c in re.split(r"[|｜,，;；]", str(r.get("city") or "")):
+            c = c.strip()
+            if c and c not in city_valid:
+                precheck.append({"row": row_no, "reason": f"地市「{c}」不存在"})
+
+    if precheck:
+        return {"code": 0, "data": {"imported": 0, "updated": 0, "errors": precheck, "warnings": []},
+                "msg": f"校验失败：发现 {len(precheck)} 处非法值，未导入任何数据"}
 
     from ..routers.data import _sync_order_stop_alert
 
@@ -1516,11 +1578,17 @@ def generate_tidabiao(body: GenerateBody, db: Session = Depends(get_db), user=De
 
 
 @router.get("/confirm-tidabiao/pending-check")
-def confirm_tidabiao_pending_check(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """提单确认前检查：过去日期（早于今天）仍为 未提/待停/改单 的订单"""
-    today = date.today()
+def confirm_tidabiao_pending_check(db: Session = Depends(get_db), _=Depends(get_current_user), date: str = ""):
+    """提单确认前检查：更新日期早于所选提单日期（不含当天）、仍为 未提/待停/改单 的订单"""
+    if date:
+        try:
+            date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            date_obj = date.today()
+    else:
+        date_obj = date.today()
     rows = db.query(Order).filter(Order.order_date.isnot(None),
-                                  Order.order_date < today,
+                                  Order.order_date < date_obj,
                                   Order.status.in_(["未提", "待停", "改单"])) \
         .order_by(Order.order_date, Order.id).all()
     data = [{"order_no": o.order_no or "", "task_name": o.task_name or "",
