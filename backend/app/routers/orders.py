@@ -13,12 +13,12 @@ from sqlalchemy.orm import Session, aliased
 
 from ..database import get_db
 from ..deps import get_current_user, require_admin
-from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator, Platform, Category, SysConfig
+from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator, Platform, Category
 from ..schemas import OrderBody, StopBody, BatchStopBody, OrderDistConfigBody, GenerateBody, BatchGroupBody, ReopenBody
 from ..pagination import paginate, ok_page
 from ..utils import fmt_dt, norm_region
 from ..tidabiao import _order_type, _region_mode
-from ..regions import CITIES, PROVINCES
+from ..regions import CITIES, PROVINCES, MUNICIPALITIES
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -262,8 +262,24 @@ def _validate_entity_fields(db, body, exclude_order_id=None):
             errors.append(f"省份「{p}」不存在")
     for c in re.split(r"[|｜,，;；]", body.city or ""):
         c = c.strip()
-        if c and c not in city_valid:
+        if not c:
+            continue
+        if c in MUNICIPALITIES:
+            errors.append(f"地市「{c}」是直辖市，不能作为地市")
+        elif c not in city_valid:
             errors.append(f"地市「{c}」不存在")
+    for p in re.split(r"[|｜,，;；]", body.excl_province or ""):
+        p = p.strip()
+        if p and p not in province_valid:
+            errors.append(f"排除省份「{p}」不存在")
+    for c in re.split(r"[|｜,，;；]", body.excl_city or ""):
+        c = c.strip()
+        if not c:
+            continue
+        if c in MUNICIPALITIES:
+            errors.append(f"排除地市「{c}」是直辖市，不能作为排除地市")
+        elif c not in city_valid:
+            errors.append(f"排除地市「{c}」不存在")
     gmsg = _check_group_tpl_consistency(db, body.group_name, body.tpl_id, body.customer_id, exclude_order_id)
     if gmsg:
         errors.append(gmsg)
@@ -812,23 +828,8 @@ def batch_group(body: BatchGroupBody, db: Session = Depends(get_db), _=Depends(g
 @router.post("/recheck-alerts")
 def recheck_alerts(db: Session = Depends(get_db), _=Depends(get_current_user)):
     """预警检查：清除未处理停单提醒，再按「订单预警天数」重新生成（在执 + 截止日期 <= 今天+预警天数）"""
-    today = date.today()
-    cfg = db.query(SysConfig).filter(SysConfig.key == "order_alert_days").first()
-    try:
-        days = int(cfg.value) if cfg and cfg.value else 0
-    except (TypeError, ValueError):
-        days = 0
-    cleared = db.query(Alert).filter(Alert.type == "停单提醒",
-                                     Alert.status == "未处理").delete(synchronize_session=False)
-    target = today + timedelta(days=days)
-    created = 0
-    for o in db.query(Order).filter(Order.status == "在执", Order.end_date.isnot(None),
-                                    Order.end_date <= target).all():
-        db.add(Alert(level="提醒", type="停单提醒", customer_id=o.customer_id,
-                     task_name=o.task_name, order_no=o.order_no, order_id=o.id,
-                     content=f"截止时间 {o.end_date} 已到期（{o.task_name or o.order_no}）",
-                     trigger_time=datetime.now()))
-        created += 1
+    from ..routers.data import _regenerate_stop_alerts
+    cleared, created = _regenerate_stop_alerts(db)
     db.commit()
     return {"code": 0, "data": {"cleared": cleared, "created": created},
             "msg": f"已清除 {cleared} 条预警，重新生成 {created} 条"}
@@ -1193,7 +1194,11 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                 precheck.append({"row": row_no, "reason": f"省份「{p}」不存在"})
         for c in re.split(r"[|｜,，;；]", str(r.get("city") or "")):
             c = c.strip()
-            if c and c not in city_valid:
+            if not c:
+                continue
+            if c in MUNICIPALITIES:
+                precheck.append({"row": row_no, "reason": f"地市「{c}」是直辖市，不能作为地市"})
+            elif c not in city_valid:
                 precheck.append({"row": row_no, "reason": f"地市「{c}」不存在"})
         for p in re.split(r"[|｜,，;；]", str(r.get("excl_province") or "")):
             p = p.strip()
@@ -1201,7 +1206,11 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                 precheck.append({"row": row_no, "reason": f"排除省份「{p}」不存在"})
         for c in re.split(r"[|｜,，;；]", str(r.get("excl_city") or "")):
             c = c.strip()
-            if c and c not in city_valid:
+            if not c:
+                continue
+            if c in MUNICIPALITIES:
+                precheck.append({"row": row_no, "reason": f"排除地市「{c}」是直辖市，不能作为排除地市"})
+            elif c not in city_valid:
                 precheck.append({"row": row_no, "reason": f"排除地市「{c}」不存在"})
         gname = str(r.get("group_name") or "").strip()
         if gname:
@@ -1430,11 +1439,15 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                 imported_nos.append(order_no)
         except Exception as e:  # noqa
             errors.append({"row": idx + 2, "reason": str(e)})
-    _op_log(db, user, "import_orders", f"导入 {imported} 条，更新 {updated} 条，失败 {len(errors)} 条",
-            None, {"imported": imported, "updated": updated, "failed": len(errors), "order_nos": imported_nos, "updated_nos": updated_nos})
+    if errors:
+        db.rollback()
+        return {"code": 0, "data": {"imported": 0, "updated": 0, "errors": errors, "warnings": warnings},
+                "msg": f"校验失败：发现 {len(errors)} 处错误，未导入任何数据"}
+    _op_log(db, user, "import_orders", f"导入 {imported} 条，更新 {updated} 条",
+            None, {"imported": imported, "updated": updated, "order_nos": imported_nos, "updated_nos": updated_nos})
     db.commit()
-    return {"code": 0, "data": {"imported": imported, "updated": updated, "errors": errors, "warnings": warnings},
-            "msg": f"导入 {imported} 条，更新 {updated} 条，失败 {len(errors)} 条"}
+    return {"code": 0, "data": {"imported": imported, "updated": updated, "errors": [], "warnings": warnings},
+            "msg": f"导入 {imported} 条，更新 {updated} 条"}
 
 
 @router.post("/import-receipt")

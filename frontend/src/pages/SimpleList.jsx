@@ -119,7 +119,6 @@ export default function SimpleList({ kind }) {
   const [rolePermModal, setRolePermModal] = useState(null)
   const [sort, setSort] = useState(null)
   const [alertTrigger, setAlertTrigger] = useState('00:00')
-  const [alertDays, setAlertDays] = useState(0)
   const [busy, setBusy] = useState(false)
   const [busyMsg, setBusyMsg] = useState('正在导入，请稍候…')
   const [busyProgress, setBusyProgress] = useState(null)
@@ -180,7 +179,7 @@ export default function SimpleList({ kind }) {
 
   useEffect(() => {
     if (kind === 'alerts') {
-      api.get('/api/alert-config').then(r => { setAlertTrigger(r.data.trigger_time); setAlertDays(r.data.alert_days ?? 0) }).catch(() => {})
+      api.get('/api/alert-config').then(r => { setAlertTrigger(r.data.trigger_time) }).catch(() => {})
       api.get('/api/customers/recharge-rate').then(r => setRechargeRate(r.data.rate)).catch(() => {})
     }
   }, [kind])
@@ -194,7 +193,7 @@ export default function SimpleList({ kind }) {
   }
   async function saveAlertConfig() {
     await withBusy(async () => {
-      await api.put('/api/alert-config', { trigger_time: alertTrigger, alert_days: Number(alertDays) || 0 })
+      await api.put('/api/alert-config', { trigger_time: alertTrigger })
       toast('预警配置已保存')
     }, '正在保存…')
   }
@@ -907,8 +906,6 @@ export default function SimpleList({ kind }) {
           <>
             <label style={{ fontSize: 12, color: 'var(--sub)' }}>触发时间</label>
             <input type="time" value={alertTrigger} onChange={e => setAlertTrigger(e.target.value)} />
-            <label style={{ fontSize: 12, color: 'var(--sub)' }}>提前预警天数</label>
-            <input type="number" style={{ width: 70 }} value={alertDays} onChange={e => setAlertDays(e.target.value)} />
             <button className="btn small" onClick={saveAlertConfig}>保存</button>
             <button className="btn" onClick={manualScan}>立即执行</button>
           </>

@@ -2979,41 +2979,30 @@ def extract_daily(body: ExtractBody, db: Session = Depends(get_db), _=Depends(ge
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
 
 
-def run_alert_scan(db: Session):
-    """定时：停单日临近（按预警天数）-> 停单提醒；余额低于预警额度 -> 账单预警"""
+def _order_alert_days(db):
+    """订单预警天数（截止日期在该天数内到期即提醒，0 天=仅截止已过期）"""
+    cfg = db.query(SysConfig).filter(SysConfig.key == "order_alert_days").first()
+    try:
+        return int(cfg.value) if cfg and cfg.value else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _regenerate_stop_alerts(db, with_notify=False):
+    """清除未处理停单提醒，再按「订单预警天数」重新生成（在执 + 截止日期 <= 今天+预警天数）"""
     today = date.today()
-    # 清理历史重复的未处理停单提醒（同一订单只保留最新一条）
-    keep = db.query(func.max(Alert.id)).filter(
-        Alert.type == "停单提醒", Alert.status == "未处理",
-        Alert.order_id.isnot(None)).group_by(Alert.order_id).all()
-    keep_ids = [r[0] for r in keep]
-    if keep_ids:
-        db.query(Alert).filter(Alert.type == "停单提醒", Alert.status == "未处理",
-                               Alert.order_id.isnot(None),
-                               Alert.id.notin_(keep_ids)).delete(synchronize_session=False)
-    # 停单提醒（预警天数内到期的订单，仅「在执」才提醒，待停/已停不再提醒）
-    alert_days = _alert_days(db)
-    target = today + timedelta(days=alert_days)
-    for o in db.query(Order).filter(Order.stop_date.isnot(None),
-                                    Order.status == "在执",
-                                    Order.stop_date >= today,
-                                    Order.stop_date <= target).all():
-        if not db.query(Alert).filter(Alert.type == "停单提醒", Alert.status == "未处理",
-                                      Alert.order_id == o.id).first():
-            db.add(Alert(level="提醒", type="停单提醒", customer_id=o.customer_id,
-                         task_name=o.task_name, order_no=o.order_no, order_id=o.id,
-                         content=f"停单日 {o.stop_date} 已到达，请确认是否停单",
-                         trigger_time=datetime.now()))
-    # 在执订单截止时间过期提醒（类型：停单提醒，仅「在执」才提醒），新建提醒时同步生成通知消息
-    for o in db.query(Order).filter(Order.status == "在执",
-                                    Order.end_date.isnot(None),
-                                    Order.end_date <= today).all():
-        if not db.query(Alert).filter(Alert.type == "停单提醒", Alert.status == "未处理",
-                                      Alert.order_id == o.id).first():
-            db.add(Alert(level="提醒", type="停单提醒", customer_id=o.customer_id,
-                         task_name=o.task_name, order_no=o.order_no, order_id=o.id,
-                         content=f"截止时间 {o.end_date} 已过期（{o.task_name or o.order_no}），请确认是否处理",
-                         trigger_time=datetime.now()))
+    days = _order_alert_days(db)
+    target = today + timedelta(days=days)
+    cleared = db.query(Alert).filter(Alert.type == "停单提醒",
+                                     Alert.status == "未处理").delete(synchronize_session=False)
+    created = 0
+    for o in db.query(Order).filter(Order.status == "在执", Order.end_date.isnot(None),
+                                    Order.end_date <= target).all():
+        db.add(Alert(level="提醒", type="停单提醒", customer_id=o.customer_id,
+                     task_name=o.task_name, order_no=o.order_no, order_id=o.id,
+                     content=f"截止时间 {o.end_date} 已到期（{o.task_name or o.order_no}），请确认是否处理",
+                     trigger_time=datetime.now()))
+        if with_notify:
             task_label = o.task_name or o.order_no or ""
             if o.task_id:
                 task_label += f"（{o.task_id}）"
@@ -3021,6 +3010,13 @@ def run_alert_scan(db: Session):
             db.add(Notification(order_no=o.order_no, task_id=o.task_id, order_id=o.id,
                                 content=f"{task_label}于 {end_str} 到期，请及时处理停单。",
                                 notify_time=datetime.now()))
+        created += 1
+    return cleared, created
+
+
+def run_alert_scan(db: Session):
+    """定时：按「订单预警天数」重建停单提醒（截止日期到期）；余额低于预警额度 -> 账单预警"""
+    _regenerate_stop_alerts(db, with_notify=True)
     # 账单预警
     for c in db.query(Customer).filter(Customer.ctype == "downstream", Customer.status == 1).all():
         if c.warn_amount and (c.balance or 0) < c.warn_amount:
@@ -3029,39 +3025,25 @@ def run_alert_scan(db: Session):
                 db.add(Alert(level="预警", type="账单预警", customer_id=c.id,
                              content=f"余额 {c.balance} 已低于预警额度 {c.warn_amount}",
                              trigger_time=datetime.now()))
-    # 自动标记已解决的预警（订单已处理/余额已补足）
-    for a in db.query(Alert).filter(Alert.status == "未处理").all():
-        if a.type == "停单提醒":
-            o = None
-            if a.order_id:
-                o = db.query(Order).filter(Order.id == a.order_id).first()
-            if not o and a.order_no:
-                o = db.query(Order).filter(Order.order_no == a.order_no).first()
-            if not o and a.task_name:
-                o = db.query(Order).filter(Order.task_name == a.task_name).first()
-            if not o:
-                a.status = "已处理"
-            elif o.status != "在执":
-                a.status = "已处理"
-            elif (a.content or "").startswith("截止时间") and o.end_date and o.end_date > today:
-                a.status = "已处理"
-        elif a.type == "账单预警":
-            c = db.query(Customer).filter(Customer.id == a.customer_id).first()
-            if not c or not c.warn_amount or (c.balance or 0) >= c.warn_amount:
-                a.status = "已处理"
+    # 自动标记已解决的账单预警（余额已补足）
+    for a in db.query(Alert).filter(Alert.type == "账单预警", Alert.status == "未处理").all():
+        c = db.query(Customer).filter(Customer.id == a.customer_id).first()
+        if not c or not c.warn_amount or (c.balance or 0) >= c.warn_amount:
+            a.status = "已处理"
     db.commit()
 
 
 def _sync_order_stop_alert(db: Session, o):
-    """同步订单的停单提醒（预警）状态：到期仍在执则创建，否则清除已处理的预警"""
-    today = date.today()
-    should = o.status == "在执" and o.end_date is not None and o.end_date <= today
+    """同步订单的停单提醒（预警）状态：截止日期在预警天数内到期仍在执则创建，否则标记已处理"""
+    days = _order_alert_days(db)
+    target = date.today() + timedelta(days=days)
+    should = o.status == "在执" and o.end_date is not None and o.end_date <= target
     existing = db.query(Alert).filter(Alert.type == "停单提醒", Alert.status == "未处理",
                                       Alert.order_id == o.id).first()
     if should and not existing:
         db.add(Alert(level="提醒", type="停单提醒", customer_id=o.customer_id,
                      task_name=o.task_name, order_no=o.order_no, order_id=o.id,
-                     content=f"截止时间 {o.end_date} 已过期（{o.task_name or o.order_no}），请及时处理停单",
+                     content=f"截止时间 {o.end_date} 已到期（{o.task_name or o.order_no}），请确认是否处理",
                      trigger_time=datetime.now()))
         return True
     if not should and existing:
