@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, aliased
 
 from ..database import get_db
 from ..deps import get_current_user, require_admin
-from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator, Platform, Category
+from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator, Platform, Category, SysConfig
 from ..schemas import OrderBody, StopBody, BatchStopBody, OrderDistConfigBody, GenerateBody, BatchGroupBody, ReopenBody
 from ..pagination import paginate, ok_page
 from ..utils import fmt_dt, norm_region
@@ -224,6 +224,50 @@ def _validate_region(body: OrderBody):
         raise HTTPException(status_code=422, detail="选择地市时不可设置排除省/排除市")
     if body.excl_province and "全国" not in provs:
         raise HTTPException(status_code=422, detail="仅省份=全国时可设置排除省")
+
+
+def _check_group_tpl_consistency(db, group_name, tpl_id, customer_id, exclude_order_id=None):
+    """同代理同小组不能有不同出数模版：返回错误文案或 None"""
+    if not group_name or not tpl_id:
+        return None
+    q = db.query(Order.tpl_id).filter(Order.group_name == group_name, Order.tpl_id.isnot(None),
+                                      Order.customer_id == customer_id)
+    if exclude_order_id:
+        q = q.filter(Order.id != exclude_order_id)
+    other_ids = {r[0] for r in q.all()}
+    if other_ids and tpl_id not in other_ids:
+        other_id = sorted(other_ids)[0]
+        tpl = db.query(Template).filter(Template.id == tpl_id).first()
+        other_tpl = db.query(Template).filter(Template.id == other_id).first()
+        return (f"小组「{group_name}」的出数模版必须一致"
+                f"（已有「{other_tpl.code if other_tpl else ''}」，本次「{tpl.code if tpl else ''}」）")
+    return None
+
+
+def _validate_entity_fields(db, body, exclude_order_id=None):
+    """校验甲方/渠道/运营商存在性 + 地区值合法性 + 小组模版一致性，返回错误列表"""
+    errors = []
+    if body.upstream_id and not db.query(Customer).filter(Customer.id == body.upstream_id,
+                                                          Customer.ctype == "upstream").first():
+        errors.append("甲方不存在")
+    if body.channel_id and not db.query(Channel).filter(Channel.id == body.channel_id).first():
+        errors.append("渠道不存在")
+    if body.operator_id and not db.query(Operator).filter(Operator.id == body.operator_id).first():
+        errors.append("运营商不存在")
+    province_valid = set(PROVINCES) | {"全国"}
+    city_valid = {c for cities in CITIES.values() for c in cities}
+    for p in re.split(r"[|｜,，;；]", body.province or ""):
+        p = p.strip()
+        if p and p not in province_valid:
+            errors.append(f"省份「{p}」不存在")
+    for c in re.split(r"[|｜,，;；]", body.city or ""):
+        c = c.strip()
+        if c and c not in city_valid:
+            errors.append(f"地市「{c}」不存在")
+    gmsg = _check_group_tpl_consistency(db, body.group_name, body.tpl_id, body.customer_id, exclude_order_id)
+    if gmsg:
+        errors.append(gmsg)
+    return errors
 
 
 @router.get("")
@@ -459,6 +503,9 @@ def _find_dup_task(db, upstream_id, order_date, task_name, status="未提", excl
 @router.post("")
 def create_order(body: OrderBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
     _validate_region(body)
+    errs = _validate_entity_fields(db, body)
+    if errs:
+        raise HTTPException(status_code=422, detail="；".join(errs))
     missing = []
     if not body.order_date:
         missing.append("更新日期")
@@ -525,6 +572,9 @@ def update_order(oid: int, body: OrderBody, db: Session = Depends(get_db), user=
         raise HTTPException(status_code=404, detail="订单不存在")
     before = _snapshot(db, o)
     _validate_region(body)
+    errs = _validate_entity_fields(db, body, exclude_order_id=oid)
+    if errs:
+        raise HTTPException(status_code=422, detail="；".join(errs))
     is_edit = o.status == "未提"
 
     # 身份字段变更检测（一级代理/甲方/任务名）
@@ -757,6 +807,31 @@ def batch_group(body: BatchGroupBody, db: Session = Depends(get_db), _=Depends(g
         o.updated_at = datetime.now()
     db.commit()
     return {"code": 0, "data": {"updated": len(rows)}, "msg": f"已修改 {len(rows)} 单小组"}
+
+
+@router.post("/recheck-alerts")
+def recheck_alerts(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """预警检查：清除未处理停单提醒，再按「订单预警天数」重新生成（在执 + 截止日期 <= 今天+预警天数）"""
+    today = date.today()
+    cfg = db.query(SysConfig).filter(SysConfig.key == "order_alert_days").first()
+    try:
+        days = int(cfg.value) if cfg and cfg.value else 0
+    except (TypeError, ValueError):
+        days = 0
+    cleared = db.query(Alert).filter(Alert.type == "停单提醒",
+                                     Alert.status == "未处理").delete(synchronize_session=False)
+    target = today + timedelta(days=days)
+    created = 0
+    for o in db.query(Order).filter(Order.status == "在执", Order.end_date.isnot(None),
+                                    Order.end_date <= target).all():
+        db.add(Alert(level="提醒", type="停单提醒", customer_id=o.customer_id,
+                     task_name=o.task_name, order_no=o.order_no, order_id=o.id,
+                     content=f"截止时间 {o.end_date} 已到期（{o.task_name or o.order_no}）",
+                     trigger_time=datetime.now()))
+        created += 1
+    db.commit()
+    return {"code": 0, "data": {"cleared": cleared, "created": created},
+            "msg": f"已清除 {cleared} 条预警，重新生成 {created} 条"}
 
 
 @router.post("/check-duplicates")
@@ -1075,6 +1150,12 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
     # ===== 导入前整体预检：非法值（上游/状态/一级代理/模版/渠道/运营商/省/市）全部提示并停止导入 =====
     up_valid = {x for c in db.query(Customer).filter(Customer.ctype == "upstream").all() for x in (c.name, c.code) if x}
     down_valid = {x for c in db.query(Customer).filter(Customer.ctype == "downstream").all() for x in (c.name, c.code) if x}
+    down_code_map = {}
+    for c in db.query(Customer).filter(Customer.ctype == "downstream").all():
+        if c.code:
+            down_code_map[c.code] = c.code
+            if c.name:
+                down_code_map[c.name] = c.code
     channel_valid = {c.name for c in db.query(Channel).all() if c.name}
     operator_valid = {o.name for o in db.query(Operator).all() if o.name}
     tpl_valid = {t.code for t in db.query(Template).all() if t.code}
@@ -1083,6 +1164,7 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
     city_valid = {c for cities in CITIES.values() for c in cities}
 
     precheck = []
+    precheck_group = {}
     for idx, r in enumerate(rows):
         if not any((str(v) if v is not None else "").strip() for v in r.values()):
             continue
@@ -1113,6 +1195,25 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
             c = c.strip()
             if c and c not in city_valid:
                 precheck.append({"row": row_no, "reason": f"地市「{c}」不存在"})
+        for p in re.split(r"[|｜,，;；]", str(r.get("excl_province") or "")):
+            p = p.strip()
+            if p and p not in province_valid:
+                precheck.append({"row": row_no, "reason": f"排除省份「{p}」不存在"})
+        for c in re.split(r"[|｜,，;；]", str(r.get("excl_city") or "")):
+            c = c.strip()
+            if c and c not in city_valid:
+                precheck.append({"row": row_no, "reason": f"排除地市「{c}」不存在"})
+        gname = str(r.get("group_name") or "").strip()
+        if gname:
+            cval = str(r.get("customer") or "").strip()
+            gkey = (down_code_map.get(cval), gname)
+            prev = precheck_group.get(gkey)
+            if prev is None:
+                precheck_group[gkey] = tcode or ""
+            elif tcode and prev and prev != tcode:
+                precheck.append({"row": row_no, "reason": f"小组「{gname}」的出数模版必须一致（文件内已有 {prev}，本次 {tcode}）"})
+            elif tcode and not prev:
+                precheck_group[gkey] = tcode
 
     if precheck:
         return {"code": 0, "data": {"imported": 0, "updated": 0, "errors": precheck, "warnings": []},
@@ -1131,6 +1232,12 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
     group_consistency = {}
     # 预加载已有订单号，导入按订单号匹配（订单号相同才更新，无订单号则插入）
     existing_order_no = {o.order_no: o for o in db.query(Order).all() if o.order_no}
+    # 预加载已有订单的小组出数模版（(一级代理id, 小组) -> [(订单id, tpl_id)]），用于同代理同小组一致性校验
+    db_group_tpls = {}
+    for _o in db.query(Order).filter(Order.group_name.isnot(None), Order.group_name != "").all():
+        _g = (_o.group_name or "").strip()
+        if _g:
+            db_group_tpls.setdefault((_o.customer_id, _g), []).append((_o.id, _o.tpl_id))
     for idx, r in enumerate(rows):
         if not any((str(v) if v is not None else "").strip() for v in r.values()):
             continue
@@ -1183,20 +1290,28 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                 errors.append({"row": idx + 2, "reason": f"缺少必填字段：{'、'.join(missing)}"})
                 continue
             gname = (r.get("group_name") or "").strip()
-            cust_code = cust.code if cust else ""
+            cust_id = cust.id if cust else None
+            order_no = (r.get("order_no") or "").strip()
+            existing = existing_order_no.get(order_no) if order_no else None
             if gname:
-                known = group_consistency.get(gname)
+                gkey = (cust_id, gname)
+                known = group_consistency.get(gkey)
                 if known:
                     if tpl_code and known["tpl_code"] and known["tpl_code"] != tpl_code:
                         errors.append({"row": idx + 2, "reason": f"小组「{gname}」的出数模版必须一致（文件内已有 {known['tpl_code']}，本次 {tpl_code}）"})
                         continue
                     if tpl_code and not known["tpl_code"]:
                         known["tpl_code"] = tpl_code
-                    if known["cust_code"] != cust_code:
-                        errors.append({"row": idx + 2, "reason": f"小组「{gname}」的一级代理必须一致（文件内已有 {known['cust_code'] or '空'}，本次 {cust_code}）"})
-                        continue
                 else:
-                    group_consistency[gname] = {"tpl_code": tpl_code, "cust_code": cust_code}
+                    group_consistency[gkey] = {"tpl_code": tpl_code}
+                # 与系统内同代理同小组已有订单的出数模版一致性校验（排除本次要更新的订单自身）
+                if tpl_code and tpl:
+                    others = [tid for (oid, tid) in db_group_tpls.get(gkey, []) if tid and (not existing or oid != existing.id)]
+                    conflict_ids = {tid for tid in others if tid != tpl.id}
+                    if conflict_ids:
+                        conflict_codes = "、".join(sorted({tpl_code_map.get(i) for i in conflict_ids if tpl_code_map.get(i)}))
+                        errors.append({"row": idx + 2, "reason": f"小组「{gname}」的出数模版与系统不一致（系统已有 {conflict_codes}，本次 {tpl_code}）"})
+                        continue
             raw_status = str(r.get("status") or "").strip()
             import_status = _map_import_status(raw_status)
             up_id = up.id
@@ -1207,8 +1322,6 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
             check_collision = str(r.get("check_collision") or "").strip() in ("是", "true", "1", "True", "yes", "YES")
 
             # 按订单号匹配：订单号相同才更新，无订单号则插入
-            order_no = (r.get("order_no") or "").strip()
-            existing = existing_order_no.get(order_no) if order_no else None
 
             if existing:
                 # 身份字段不一致检测：一级代理/甲方/任务名 不随导入覆盖，仅提示

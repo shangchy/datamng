@@ -424,6 +424,7 @@ CONFIG_ITEMS = [
     {"key": "stop_check_time", "label": "预警检查时间", "type": "time", "default": "10:00"},
     {"key": "daily_recent_days", "label": "日活列表默认最近天数", "type": "number", "default": "7"},
     {"key": "check_repeat_days", "label": "工单检查重复天数", "type": "number", "default": "30"},
+    {"key": "order_alert_days", "label": "订单预警天数", "type": "number", "default": "0"},
 ]
 
 

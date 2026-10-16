@@ -163,9 +163,14 @@ export default function Orders({ variant = 'orders' }) {
   }
   function goPage(p) { setPage(p); load(p, perPage) }
   function changePerPage(pp) { setPerPage(pp); setPage(1); load(1, pp) }
-  function checkAlert() {
-    const next = filters.has_alert === '有' ? '' : '有'
-    const f = { ...filters, has_alert: next }
+  async function checkAlert() {
+    setBusy(true); setBusyMsg('正在执行预警检查…')
+    try {
+      const r = await api.post('/api/orders/recheck-alerts')
+      toast(r.msg || `预警检查完成，共 ${(r.data && r.data.created) || 0} 条`)
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
+    window.dispatchEvent(new Event('alert-count-refresh'))
+    const f = { ...filters, has_alert: '有' }
     setFilters(f); search(f)
   }
   function doCatCheck(issue) {
