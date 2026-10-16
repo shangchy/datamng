@@ -711,6 +711,7 @@ def stop_order(oid: int, body: StopBody, db: Session = Depends(get_db), _=Depend
         if body.order_date > date.today():
             raise HTTPException(status_code=400, detail="更新日期不能是未来日期，请修改更新日期")
         o.order_date = body.order_date
+    o.end_date = o.order_date
     o.status = "待停"
     o.stop_date = date.today()
     o.updated_at = datetime.now()
@@ -744,6 +745,7 @@ def batch_stop(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(get
     for o in rows:
         if body.order_date:
             o.order_date = body.order_date
+        o.end_date = o.order_date
         o.status = "待停"
         o.stop_date = date.today()
         o.updated_at = datetime.now()
@@ -833,6 +835,24 @@ def recheck_alerts(db: Session = Depends(get_db), _=Depends(get_current_user)):
     db.commit()
     return {"code": 0, "data": {"cleared": cleared, "created": created},
             "msg": f"已清除 {cleared} 条预警，重新生成 {created} 条"}
+
+
+@router.post("/fix-stop-end-dates")
+def fix_stop_end_dates(db: Session = Depends(get_db), user=Depends(require_admin)):
+    """一次性修复：已停/待停订单的截止日期改为与更新日期一致"""
+    rows = db.query(Order).filter(Order.status.in_(["已停", "待停"]),
+                                  Order.order_date.isnot(None)).all()
+    fixed = 0
+    for o in rows:
+        if o.end_date != o.order_date:
+            o.end_date = o.order_date
+            o.updated_at = datetime.now()
+            fixed += 1
+    _op_log(db, user, "fix_stop_end_dates", f"已停/待停订单截止日期=更新日期，修复 {fixed} 单", None,
+            {"total": len(rows), "fixed": fixed})
+    db.commit()
+    return {"code": 0, "data": {"total": len(rows), "fixed": fixed},
+            "msg": f"已处理 {len(rows)} 单（已停/待停），修复 {fixed} 单"} 
 
 
 @router.post("/check-duplicates")

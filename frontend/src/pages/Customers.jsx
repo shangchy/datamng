@@ -82,8 +82,8 @@ export default function Customers() {
   }
 
   async function saveRecharge() {
-    const hasU = recharge.amount_u !== '' && recharge.amount_u != null && Number(recharge.amount_u) !== 0
-    const hasRmb = recharge.amount_rmb !== '' && recharge.amount_rmb != null && Number(recharge.amount_rmb) !== 0
+    const hasU = recharge.amount_u !== '' && recharge.amount_u != null
+    const hasRmb = recharge.amount_rmb !== '' && recharge.amount_rmb != null
     if ((!hasU && !hasRmb) || !recharge.recharge_date) { showError('请填写充值金额和日期'); return }
     try {
       const body = {

@@ -142,7 +142,7 @@ def list_recharges(cid: int, db: Session = Depends(get_db), _=Depends(get_curren
     rows = db.query(CustomerRecharge).filter(CustomerRecharge.customer_id == cid).order_by(CustomerRecharge.recharge_date.desc()).all()
     return {"code": 0, "data": [{
         "id": r.id, "recharge_date": str(r.recharge_date), "amount_u": float(r.amount_u),
-        "amount_rmb": float(r.amount_rmb) if r.amount_rmb else None, "note": r.note,
+        "amount_rmb": float(r.amount_rmb) if r.amount_rmb is not None else None, "note": r.note,
     } for r in rows], "msg": "ok"}
 
 
