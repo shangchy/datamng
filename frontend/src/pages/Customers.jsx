@@ -37,7 +37,7 @@ export default function Customers() {
   const [perPage, setPerPage] = useState(100)
   const [sort, setSort] = useState({ k: 'code', dir: 'asc' })
   const [billTpls, setBillTpls] = useState([])
-  const [rate, setRate] = useState(6.7)
+  const [rate, setRate] = useState('6.7')
 
   function toggleSort(k) {
     setSort(s => (s && s.k === k) ? (s.dir === 'asc' ? { k, dir: 'desc' } : null) : { k, dir: 'asc' })
@@ -68,12 +68,17 @@ export default function Customers() {
     const cid = searchParams.get('detail')
     if (cid) openDetail({ id: cid })
     const rid = searchParams.get('recharge')
-    if (rid) setRecharge({ customer_id: Number(rid), amount_u: '', amount_rmb: '', recharge_date: new Date().toISOString().slice(0, 10), note: '', from_detail: false })
+    if (rid) {
+      api.get(`/api/customers/${rid}`).then(r => {
+        const c = r.data
+        setRecharge({ customer_id: Number(rid), customer_label: `${c.code} ${c.name}`, balance: c.balance ?? 0, old_rmb: 0, amount_u: '', amount_rmb: '', recharge_date: new Date().toISOString().slice(0, 10), note: '', recharge_type: '转账', reason: '', from_detail: false })
+      }).catch(() => {})
+    }
   }, [searchParams])
 
   useEffect(() => {
     api.get('/api/templates').then(r => setBillTpls((r.data || []).filter(t => (t.tpl_type || '').trim() === '账单'))).catch(() => {})
-    api.get('/api/customers/recharge-rate').then(r => setRate(r.data.rate)).catch(() => {})
+    api.get('/api/customers/recharge-rate').then(r => setRate(String(r.data.rate))).catch(() => {})
   }, [])
 
   async function openDetail(c) {
@@ -85,11 +90,13 @@ export default function Customers() {
     const hasU = recharge.amount_u !== '' && recharge.amount_u != null
     const hasRmb = recharge.amount_rmb !== '' && recharge.amount_rmb != null
     if ((!hasU && !hasRmb) || !recharge.recharge_date) { showError('请填写充值金额和日期'); return }
+    if ((recharge.recharge_type || '转账') === '补数' && !(recharge.reason || '').trim()) { showError('补数需写明补数理由'); return }
     try {
       const body = {
         amount_u: hasU ? Number(recharge.amount_u) : null,
         amount_rmb: hasRmb ? Number(recharge.amount_rmb) : null,
         recharge_date: recharge.recharge_date, note: recharge.note || '',
+        recharge_type: recharge.recharge_type || '转账', reason: recharge.reason || '',
       }
       const url = `/api/customers/${recharge.customer_id}/recharges`
       if (recharge.id) await api.put(`${url}/${recharge.id}`, body)
@@ -107,7 +114,8 @@ export default function Customers() {
   }
 
   function editRecharge(cid, r, fromDetail) {
-    setRecharge({ id: r.id, customer_id: cid, amount_u: r.amount_u ?? '', amount_rmb: r.amount_rmb ?? '', recharge_date: r.recharge_date, note: r.note || '', from_detail: fromDetail })
+    const cust = fromDetail ? detail : null
+    setRecharge({ id: r.id, customer_id: cid, customer_label: cust ? `${cust.code} ${cust.name}` : '', balance: cust ? (cust.balance ?? 0) : null, old_rmb: r.amount_rmb ?? 0, amount_u: r.amount_u ?? '', amount_rmb: r.amount_rmb ?? '', recharge_date: r.recharge_date, note: r.note || '', recharge_type: r.recharge_type || '转账', reason: r.reason || '', from_detail: fromDetail })
   }
 
   function openBalanceEdit() {
@@ -176,7 +184,7 @@ export default function Customers() {
                 <td style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{c.note || '—'}</td><td><Badge value={c.status === 1 ? '启用' : '停用'} /></td>
                 <td className="ops">
                   <button className="btn small" onClick={() => openDetail(c)}>详情</button>{' '}
-                  <button className="btn small primary" onClick={() => { setRecharge({ customer_id: c.id, amount_u: '', amount_rmb: '', recharge_date: '', note: '', from_detail: false }) }}>充值</button>{' '}
+                  <button className="btn small primary" onClick={() => { setRecharge({ customer_id: c.id, customer_label: `${c.code} ${c.name}`, balance: c.balance ?? 0, old_rmb: 0, amount_u: '', amount_rmb: '', recharge_date: '', note: '', recharge_type: '转账', reason: '', from_detail: false }) }}>充值</button>{' '}
                   <button className="btn small" onClick={() => openEdit(c)}>编辑</button>
                 </td>
               </tr>
@@ -214,7 +222,7 @@ export default function Customers() {
           </div>
           <TabContent tab={tab} customerId={detail.id} refreshKey={rechargeRefresh} onEditRecharge={(r) => editRecharge(detail.id, r, true)} />
           <div className="foot">
-            <button className="btn primary" onClick={() => { setRecharge({ customer_id: detail.id, amount_u: '', amount_rmb: '', recharge_date: '', note: '', from_detail: true }) }}>+ 充值</button>
+            <button className="btn primary" onClick={() => { setRecharge({ customer_id: detail.id, customer_label: `${detail.code} ${detail.name}`, balance: detail.balance ?? 0, old_rmb: 0, amount_u: '', amount_rmb: '', recharge_date: '', note: '', recharge_type: '转账', reason: '', from_detail: true }) }}>+ 充值</button>
             <button className="btn" onClick={openBalanceEdit}>修改余额</button>
             <button className="btn" onClick={() => setDetail(null)}>关闭</button>
           </div>
@@ -235,18 +243,49 @@ export default function Customers() {
       {recharge && (
         <Modal title={recharge.id ? '编辑充值' : '账户充值'} onClose={() => setRecharge(null)} z={150}>
           <div className="row">
+            <div className="field"><label>代理信息</label><div className="readonly">{recharge.customer_label || '—'}</div></div>
+          </div>
+          <div className="row">
+            <div className="field"><label>充值前余额</label><div className="readonly">¥{(recharge.balance ?? 0)}</div></div>
+            <div className="field"><label>充值后余额</label><div className="readonly">¥{((recharge.balance ?? 0) + (Number(recharge.amount_rmb) || 0) - (Number(recharge.old_rmb) || 0)).toFixed(2)}</div></div>
+          </div>
+          <div className="row">
             <div className="field"><label>充值金额 (U)</label>
-              <input type="number" value={recharge.amount_u ?? ''} onChange={e => { const u = e.target.value; setRecharge({ ...recharge, amount_u: u, amount_rmb: u ? (u * rate).toFixed(2) : '' }) }} />
+              <input type="number" value={recharge.amount_u ?? ''} onChange={e => { const u = e.target.value; setRecharge({ ...recharge, amount_u: u, amount_rmb: u ? (u * Number(rate)).toFixed(2) : '' }) }} />
             </div>
             <div className="field"><label>折算人民币 (元)</label>
-              <input type="number" value={recharge.amount_rmb ?? ''} onChange={e => { const r = e.target.value; setRecharge({ ...recharge, amount_rmb: r, amount_u: r ? (r / rate).toFixed(2) : '' }) }} />
+              <input type="number" value={recharge.amount_rmb ?? ''} onChange={e => { const r = e.target.value; setRecharge({ ...recharge, amount_rmb: r, amount_u: r ? (r / Number(rate)).toFixed(2) : '' }) }} />
             </div>
           </div>
           <div className="row">
             <div className="field"><label>汇率 (U→RMB)</label>
-              <input type="number" step="0.01" value={rate} onChange={e => setRate(Number(e.target.value))} />
+              <input type="number" step="0.01" value={rate} onChange={e => {
+                const val = e.target.value
+                setRate(val)
+                const newRate = Number(val)
+                if (newRate > 0) {
+                  setRecharge(prev => {
+                    if (prev.amount_u !== '' && prev.amount_u != null) return { ...prev, amount_rmb: (Number(prev.amount_u) * newRate).toFixed(2) }
+                    if (prev.amount_rmb !== '' && prev.amount_rmb != null) return { ...prev, amount_u: (Number(prev.amount_rmb) / newRate).toFixed(2) }
+                    return prev
+                  })
+                }
+              }} />
             </div>
             <div className="field"><label>充值日期</label><input type="date" value={recharge.recharge_date} onChange={e => setRecharge({ ...recharge, recharge_date: e.target.value })} /></div>
+          </div>
+          <div className="row">
+            <div className="field"><label>充值类型</label>
+              <select value={recharge.recharge_type || '转账'} onChange={e => setRecharge({ ...recharge, recharge_type: e.target.value })}>
+                <option value="转账">转账</option>
+                <option value="补数">补数</option>
+              </select>
+            </div>
+            {(recharge.recharge_type || '转账') === '补数' && (
+              <div className="field"><label className="required">补数理由</label>
+                <ClearableInput value={recharge.reason} onChange={e => setRecharge({ ...recharge, reason: e.target.value })} />
+              </div>
+            )}
           </div>
           <div className="row">
             <div className="field"><label>备注</label><ClearableInput value={recharge.note} onChange={e => setRecharge({ ...recharge, note: e.target.value })} /></div>
@@ -353,8 +392,8 @@ function TabContent({ tab, customerId, onEditRecharge, refreshKey }) {
       <tbody>{data.map((o, i) => <tr key={i}><td>{o.order_no}</td><td><Badge value={o.status} /></td><td>{o.start_date}</td><td>{o.end_date || '—'}</td><td>{o.upstream}</td><td>{o.channel}</td><td>{o.task_name}</td><td>{o.url}</td><td className="num">{o.qty}</td></tr>)}</tbody></table>
   )
   if (tab === 'recharges') return (
-    <table><thead><tr><th>日期</th><th className="num">充值(U)</th><th className="num">折算RMB</th><th>备注</th><th className="ops">操作</th></tr></thead>
-      <tbody>{data.map((r, i) => <tr key={i}><td>{r.recharge_date}</td><td className="num">{r.amount_u}</td><td className="num">¥{r.amount_rmb}</td><td>{r.note || '—'}</td><td className="ops"><button className="btn small" onClick={() => onEditRecharge(r)}>编辑</button></td></tr>)}</tbody></table>
+    <table><thead><tr><th>日期</th><th className="num">充值(U)</th><th className="num">折算RMB</th><th className="num">汇率</th><th>类型</th><th>备注/理由</th><th className="ops">操作</th></tr></thead>
+      <tbody>{data.map((r, i) => <tr key={i}><td>{r.recharge_date}</td><td className="num">{r.amount_u}</td><td className="num">¥{r.amount_rmb}</td><td className="num">{r.rate != null ? r.rate : '—'}</td><td>{r.recharge_type || '转账'}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{(r.recharge_type || '转账') === '补数' ? (r.reason || '—') : (r.note || '—')}</td><td className="ops"><button className="btn small" onClick={() => onEditRecharge(r)}>编辑</button></td></tr>)}</tbody></table>
   )
   return (
     <div>

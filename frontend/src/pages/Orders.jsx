@@ -922,10 +922,10 @@ export default function Orders({ variant = 'orders' }) {
                 <div className="note" style={{ marginTop: 8, background: '#fef2f2', border: '1px solid #fecaca' }}>
                   失败 {receiptResult.errors.length} 条
                   <table style={{ marginTop: 6, width: '100%' }}>
-                    <thead><tr><th>任务名</th><th>原因</th></tr></thead>
+                    <thead><tr><th>工单号</th><th>任务名</th><th>原因</th></tr></thead>
                     <tbody>
                       {receiptResult.errors.map((e, i) => (
-                        <tr key={i}><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{e.task_name}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{e.reason}</td></tr>
+                        <tr key={i}><td>{e.task_id || '—'}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{e.task_name}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{e.reason}</td></tr>
                       ))}
                     </tbody>
                   </table>

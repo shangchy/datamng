@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, getToken, getUser, downloadFile, uploadFile } from '../api'
 import { Modal, Badge, useToast, useConfirm, Loading, ClearableInput } from '../components/ui'
@@ -26,12 +26,13 @@ const KINDS = {
       { k: 'city', l: '市' }, { k: 'operator', l: '运营商' }, { k: 'cat1', l: '一级品类' }, { k: 'cat2', l: '二级品类' }, { k: 'platform', l: '平台' },
       { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' }, { k: 'channel', l: '渠道' },
       { k: 'source_file', l: '来源文件名' }, { k: 'created_at', l: '创建时间' }, { k: 'updated_at', l: '更新时间' },
-    ], export: true, dailyImp: true, csvImp: true, batchDel: true, batchDelAdmin: true, dist: true, check: true, showSeq: true, defaultPerPage: 10000, dailyEdit: true,
+    ], export: true, dailyImp: true, csvImp: true, batchDel: true, batchDelAdmin: true, dist: true, check: true, showSeq: true, defaultPerPage: 500, dailyEdit: true,
+      defaultHidden: ['source_file', 'cat1', 'cat2', 'secondary_agent'],
   },
   sourcefiles: {
-    title: '元文件管理', endpoint: '/api/source-files',
+    title: '文件管理', endpoint: '/api/source-files',
     cols: [
-      { k: 'filename', l: '文件名' }, { k: 'file_type', l: '类型' }, { k: 'biz_date', l: '数据日期' },
+      { k: 'filename', l: '文件名' }, { k: 'category', l: '文件类型' }, { k: 'file_type', l: '扩展名' }, { k: 'biz_date', l: '数据日期' },
       { k: 'size', l: '大小' }, { k: 'created_at', l: '上传时间' },
     ], dl: true, del: true,
   },
@@ -100,7 +101,7 @@ export default function SimpleList({ kind }) {
   const { toast, showError } = useToast()
   const nav = useNavigate()
   const [confirm, confirmEl] = useConfirm()
-  const { visible: cols, picker, openPicker } = useColumnConfig(cfg.cols, `cols_${kind}`)
+  const { visible: cols, picker, openPicker } = useColumnConfig(cfg.cols, `cols_${kind}`, cfg.defaultHidden || [])
   const fileRef = useRef(null)
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
@@ -152,12 +153,16 @@ export default function SimpleList({ kind }) {
   const [billExpEnd, setBillExpEnd] = useState('')
   const [billExpCustId, setBillExpCustId] = useState(0)
   const [billSummaryModal, setBillSummaryModal] = useState(false)
+  const [billSummaryType, setBillSummaryType] = useState('day')
   const [billSummaryDate, setBillSummaryDate] = useState('')
+  const [billSummaryStart, setBillSummaryStart] = useState('')
+  const [billSummaryEnd, setBillSummaryEnd] = useState('')
   const [checkModal, setCheckModal] = useState(false)
   const [checkDate, setCheckDate] = useState(() => {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
+  const [checkUpstream, setCheckUpstream] = useState('')
   const [checkResult, setCheckResult] = useState(null)
   const [repeatDetailModal, setRepeatDetailModal] = useState(null)
   const [exportModal, setExportModal] = useState(false)
@@ -170,7 +175,7 @@ export default function SimpleList({ kind }) {
   })
   const [rechargeAlert, setRechargeAlert] = useState(null)
   const [rechargeRate, setRechargeRate] = useState(6.7)
-  const [recentDays, setRecentDays] = useState(7)
+  const [recentDays, setRecentDays] = useState(3)
   const [stopAlert, setStopAlert] = useState(null)
   const [importWarn, setImportWarn] = useState(null) // {title, items:[{task_id,task_name,channel}], confirm:boolean}
   const [pendingImportFiles, setPendingImportFiles] = useState(null)
@@ -208,7 +213,7 @@ export default function SimpleList({ kind }) {
   function toggleSort(k) {
     setSort(s => (s && s.k === k) ? (s.dir === 'asc' ? { k, dir: 'desc' } : null) : { k, dir: 'asc' })
   }
-  function sortedRows() {
+  const sorted = useMemo(() => {
     if (!sort) return rows
     return [...rows].sort((a, b) => {
       const va = a[sort.k], vb = b[sort.k]
@@ -218,7 +223,7 @@ export default function SimpleList({ kind }) {
       if (na > nb) return sort.dir === 'asc' ? 1 : -1
       return 0
     })
-  }
+  }, [rows, sort])
   function cascadeFieldOptions() {
     const base = { ...fieldOptions }
     if (kind !== 'daily' || !cascadeOpts) return base
@@ -270,13 +275,13 @@ export default function SimpleList({ kind }) {
     setPerPage(pp)
     if (kind === 'daily') {
       api.get('/api/config-center').then(r => {
-        const days = parseInt((r.data || []).find(i => i.key === 'daily_recent_days')?.value) || 7
+        const days = parseInt((r.data || []).find(i => i.key === 'daily_recent_days')?.value) || 3
         setRecentDays(days)
         const f = { start_date: dateNDaysAgo(days) }
         setFilters(f)
         load(1, pp, f)
       }).catch(() => {
-        const f = { start_date: dateNDaysAgo(7) }
+        const f = { start_date: dateNDaysAgo(3) }
         setFilters(f)
         load(1, pp, f)
       })
@@ -382,7 +387,7 @@ export default function SimpleList({ kind }) {
     setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
   }
   function toggleAll() {
-    const ids = sortedRows().map(o => o.id)
+    const ids = sorted.map(o => o.id)
     setSelected(selected.length === ids.length ? [] : ids)
   }
   async function batchDelete() {
@@ -658,8 +663,8 @@ export default function SimpleList({ kind }) {
       if (data.data && data.data.needs_confirm) {
         setBusy(false); setBusyProgress(null)
         const items = [
-          ...(data.data.unmatched_items || []).map(x => ({ ...x, kind: '多出' })),
-          ...(data.data.stopped_items || []).map(x => ({ ...x, kind: '多出' })),
+          ...(data.data.unmatched_items || []),
+          ...(data.data.stopped_items || []),
         ]
         setImportWarn({ title: '以下工单数据异常，是否继续导入？', items, confirm: true })
         return
@@ -754,11 +759,18 @@ export default function SimpleList({ kind }) {
   }
 
   async function doBillSummaryExport() {
-    if (!billSummaryDate) { showError('请选择日期'); return }
+    let params
+    if (billSummaryType === 'day') {
+      if (!billSummaryDate) { showError('请选择日期'); return }
+      params = `date=${billSummaryDate}`
+    } else {
+      if (!billSummaryStart || !billSummaryEnd) { showError('请选择日期区间'); return }
+      params = `start_date=${billSummaryStart}&end_date=${billSummaryEnd}`
+    }
     setBillSummaryModal(false)
     try {
       await withBusy(async () => {
-        await downloadFile(`/api/bills/summary-export?date=${billSummaryDate}`)
+        await downloadFile(`/api/bills/summary-export?${params}`)
         toast('账单汇总已导出')
       }, '正在导出账单汇总…')
     } catch (e) { showError(e.message) }
@@ -768,7 +780,7 @@ export default function SimpleList({ kind }) {
     if (!checkDate) { showError('请选择数据日期'); return }
     try {
       await withBusy(async () => {
-        const r = await api.get(`/api/daily-data/check?date=${encodeURIComponent(checkDate)}`)
+        const r = await api.get(`/api/daily-data/check?date=${encodeURIComponent(checkDate)}&upstream=${encodeURIComponent(checkUpstream)}`)
         setCheckResult(r.data || [])
       }, '正在检查…')
     } catch (e) { showError(e.message) }
@@ -778,7 +790,7 @@ export default function SimpleList({ kind }) {
     if (!checkDate) { showError('请选择数据日期'); return }
     try {
       await withBusy(async () => {
-        await downloadFile(`/api/daily-data/check-export?date=${encodeURIComponent(checkDate)}`)
+        await downloadFile(`/api/daily-data/check-export?date=${encodeURIComponent(checkDate)}&upstream=${encodeURIComponent(checkUpstream)}`)
         toast('检查结果已导出')
       }, '正在导出…')
     } catch (e) { showError(e.message) }
@@ -916,9 +928,9 @@ export default function SimpleList({ kind }) {
       <div className="panel">
         <div className="table-scroll">
           <table>
-            <thead><tr>{cfg.showSeq && <th className="num" style={{ width: 56 }}>序号</th>}{showBatchDel && <th style={{ width: 32 }}><input type="checkbox" checked={rows.length > 0 && selected.length === sortedRows().length} onChange={toggleAll} /></th>}{hasRowOps && <th className="ops">操作</th>}{cols.map(c => <th key={c.k} className={c.num ? 'num' : ''} onClick={() => toggleSort(c.k)}>{c.l}{sort?.k === c.k ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>)}</tr></thead>
+            <thead><tr>{cfg.showSeq && <th className="num" style={{ width: 56 }}>序号</th>}{showBatchDel && <th style={{ width: 32 }}><input type="checkbox" checked={rows.length > 0 && selected.length === sorted.length} onChange={toggleAll} /></th>}{hasRowOps && <th className="ops">操作</th>}{cols.map(c => <th key={c.k} className={c.num ? 'num' : ''} onClick={() => toggleSort(c.k)}>{c.l}{sort?.k === c.k ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>)}</tr></thead>
             <tbody>
-              {sortedRows().map((r, i) => (
+              {sorted.map((r, i) => (
                 <tr key={r.id}>
                   {cfg.showSeq && <td className="num">{(page - 1) * perPage + i + 1}</td>}
                   {showBatchDel && <td><input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} /></td>}
@@ -1166,10 +1178,10 @@ export default function SimpleList({ kind }) {
         <Modal title={importWarn.title} onClose={() => setImportWarn(null)} wide>
           <div className="table-scroll" style={{ maxHeight: 420 }}>
             <table>
-              <thead><tr><th style={{ width: 56 }}>序号</th><th>工单号</th><th>任务名</th><th>渠道</th></tr></thead>
+              <thead><tr><th style={{ width: 56 }}>序号</th><th>工单号</th><th>任务名</th><th>原因</th></tr></thead>
               <tbody>
                 {importWarn.items.map((x, i) => (
-                  <tr key={i}><td className="num">{i + 1}</td><td>{x.task_id || '—'}</td><td>{x.task_name || '—'}</td><td>{x.channel || '—'}</td></tr>
+                  <tr key={i}><td className="num">{i + 1}</td><td>{x.task_id || '—'}</td><td>{x.task_name || '—'}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{x.reason || '—'}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -1222,9 +1234,23 @@ export default function SimpleList({ kind }) {
 
       {billSummaryModal && (
         <Modal title="导出账单汇总" onClose={() => setBillSummaryModal(false)}>
-          <div className="note">按指定日期导出账单汇总，包含上游（牛/新，按渠道套上游单价）与下游代理的账单。</div>
-          <div className="field" style={{ marginBottom: 12 }}><label className="required">日期</label>
-            <input type="date" value={billSummaryDate} onChange={e => setBillSummaryDate(e.target.value)} /></div>
+          <div className="note">特定日期：导出该日账单，顶部附补数金额/理由；日期区间：导出每天的上游+下游汇总，末列备注=当天补数理由。</div>
+          <div className="field" style={{ marginBottom: 12 }}><label>导出类型</label>
+            <select value={billSummaryType} onChange={e => setBillSummaryType(e.target.value)}>
+              <option value="day">特定日期账单</option>
+              <option value="range">日期区间账单</option>
+            </select></div>
+          {billSummaryType === 'day' ? (
+            <div className="field" style={{ marginBottom: 12 }}><label className="required">日期</label>
+              <input type="date" value={billSummaryDate} onChange={e => setBillSummaryDate(e.target.value)} /></div>
+          ) : (
+            <div className="row">
+              <div className="field"><label className="required">开始日期</label>
+                <input type="date" value={billSummaryStart} onChange={e => setBillSummaryStart(e.target.value)} /></div>
+              <div className="field"><label className="required">结束日期</label>
+                <input type="date" value={billSummaryEnd} onChange={e => setBillSummaryEnd(e.target.value)} /></div>
+            </div>
+          )}
           <div className="foot">
             <button className="btn" onClick={() => setBillSummaryModal(false)}>取消</button>
             <button className="btn primary" onClick={() => doBillSummaryExport().catch(e => showError(e.message))}>导出</button>
@@ -1233,11 +1259,16 @@ export default function SimpleList({ kind }) {
       )}
 
       {checkModal && (
-        <Modal title="工单检查" onClose={() => setCheckModal(false)} wide>
-          <div className="note">统计所有「在执」工单在所选数据日期的数据量情况（按数据量降序）。</div>
+        <Modal title="工单检查" onClose={() => setCheckModal(false)} wide style={{ width: 1092 }}>
+          <div className="note">按所选甲方和「在执」工单在所选数据日期的数据量情况（按数据量降序）。</div>
           <div className="row">
             <div className="field"><label className="required">数据日期</label>
               <input type="date" value={checkDate} onChange={e => setCheckDate(e.target.value)} /></div>
+            <div className="field"><label>甲方</label>
+              <select value={checkUpstream} onChange={e => setCheckUpstream(e.target.value)}>
+                <option value="">全部</option>
+                {(fieldOptions.upstream || []).map(u => <option key={u} value={u}>{u}</option>)}
+              </select></div>
             <div className="field" style={{ display: 'flex', alignItems: 'flex-end' }}>
               <button className="btn primary" onClick={() => doCheck().catch(e => showError(e.message))}>检查</button>
             </div>
@@ -1245,13 +1276,18 @@ export default function SimpleList({ kind }) {
           {checkResult && (
             <div className="table-scroll" style={{ maxHeight: 420 }}>
               <table>
-                <thead><tr><th>工单号</th><th>任务名</th><th className="num">数据量</th><th>重复出现</th></tr></thead>
+                <thead><tr><th>工单号</th><th>任务名</th><th>渠道</th><th className="num">当天</th><th className="num">前两天</th><th className="num">前一天</th><th className="num">超出订单数量</th><th className="num">违规地区</th><th>重复出现</th></tr></thead>
                 <tbody>
                   {checkResult.map((r, i) => (
                     <tr key={i}>
                       <td>{r.task_id || '—'}</td>
                       <td>{r.task_name || '—'}</td>
+                      <td>{r.channel || '—'}</td>
                       <td className="num">{r.count}</td>
+                      <td className="num">{r.count_prev2}</td>
+                      <td className="num">{r.count_prev1}</td>
+                      <td className="num">{r.over_qty}</td>
+                      <td className="num">{r.region_violation}</td>
                       <td>
                         {(r.repeat_dates || []).length
                           ? <a className="link" style={{ color: 'var(--red)' }} onClick={() => setRepeatDetailModal({ task_id: r.task_id, task_name: r.task_name, detail: r.repeat_detail || [] })}>有</a>
@@ -1259,7 +1295,7 @@ export default function SimpleList({ kind }) {
                       </td>
                     </tr>
                   ))}
-                  {checkResult.length === 0 && <tr><td colSpan={4} className="empty">无匹配的在执工单</td></tr>}
+                  {checkResult.length === 0 && <tr><td colSpan={9} className="empty">无匹配的在执工单</td></tr>}
                 </tbody>
               </table>
             </div>

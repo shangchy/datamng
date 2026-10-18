@@ -8,7 +8,7 @@ const TITLE_MAP = {
   '/wash-names': '洗名库',
   '/customers': '客户管理', '/parts': '配件管理', '/categories': '品类管理',
   '/channels': '渠道管理', '/operators': '运营商管理', '/bills': '账单管理',
-  '/source-files': '源头文件',
+  '/source-files': '文件管理',
   '/alerts': '预警中心', '/accounts': '账户管理', '/templates': '模版管理',
   '/tidabiao-history': '提单历史',
   '/logs': '日志管理',
@@ -25,7 +25,7 @@ const MENUS = [
     { key: '/tidabiao-history', name: '提单历史' },
     { key: '/wash-names', name: '洗名库' },
     { key: '/fund', name: '公积金' },
-    { key: '/source-files', name: '源头文件' },
+    { key: '/source-files', name: '文件管理' },
   ] },
   { key: 'master', name: '基础配置', icon: '🗄️', perm: 'master:view', children: [
     { key: '/parts', name: '配件管理' },

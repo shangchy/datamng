@@ -66,6 +66,8 @@ def _migrate_schema():
         cp_cols = {c["name"] for c in insp.get_columns("customer_price")} if "customer_price" in insp.get_table_names() else set()
         alert_cols = {c["name"] for c in insp.get_columns("alert")} if "alert" in insp.get_table_names() else set()
         bill_cols = {c["name"] for c in insp.get_columns("bill")} if "bill" in insp.get_table_names() else set()
+        cr_cols = {c["name"] for c in insp.get_columns("customer_recharge")} if "customer_recharge" in insp.get_table_names() else set()
+        sf_cols = {c["name"] for c in insp.get_columns("source_file")} if "source_file" in insp.get_table_names() else set()
         with engine.begin() as conn:
             for col, ddl in [
                 ("task_id", "VARCHAR(100)"),
@@ -149,6 +151,21 @@ def _migrate_schema():
             ]:
                 if col not in bill_cols:
                     conn.execute(text(f"ALTER TABLE bill ADD COLUMN {col} {ddl}"))
+            for col, ddl in [
+                ("recharge_type", "VARCHAR(20)"),
+                ("reason", "TEXT"),
+                ("rate", "NUMERIC(14, 4)"),
+            ]:
+                if col not in cr_cols:
+                    conn.execute(text(f"ALTER TABLE customer_recharge ADD COLUMN {col} {ddl}"))
+            # 回填历史充值记录的汇率（amount_rmb / amount_u）
+            conn.execute(text("UPDATE customer_recharge SET rate = ROUND(amount_rmb / amount_u, 4) "
+                              "WHERE rate IS NULL AND amount_u IS NOT NULL AND amount_u != 0"))
+            for col, ddl in [
+                ("category", "VARCHAR(20)"),
+            ]:
+                if col not in sf_cols:
+                    conn.execute(text(f"ALTER TABLE source_file ADD COLUMN {col} {ddl}"))
             # bill.customer_id 改为可空（给「其他人」单独抽取）
             bill_customer_col = next((c for c in insp.get_columns("bill") if c["name"] == "customer_id"), None) if "bill" in insp.get_table_names() else None
             if bill_customer_col is not None and not bill_customer_col.get("nullable"):

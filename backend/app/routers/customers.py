@@ -143,6 +143,8 @@ def list_recharges(cid: int, db: Session = Depends(get_db), _=Depends(get_curren
     return {"code": 0, "data": [{
         "id": r.id, "recharge_date": str(r.recharge_date), "amount_u": float(r.amount_u),
         "amount_rmb": float(r.amount_rmb) if r.amount_rmb is not None else None, "note": r.note,
+        "recharge_type": r.recharge_type or "转账", "reason": r.reason or "",
+        "rate": float(r.rate) if r.rate is not None else None,
     } for r in rows], "msg": "ok"}
 
 
@@ -160,8 +162,15 @@ def create_recharge(cid: int, body: RechargeBody, db: Session = Depends(get_db),
         rmb = round(u * rate, 2)
     else:
         raise HTTPException(status_code=422, detail="请填写充值金额（U 或 人民币）")
+    recharge_type = (body.recharge_type or "转账").strip() or "转账"
+    if recharge_type not in ("转账", "补数"):
+        raise HTTPException(status_code=422, detail="充值类型非法")
+    if recharge_type == "补数" and not (body.reason or "").strip():
+        raise HTTPException(status_code=422, detail="补数需写明补数理由")
     db.add(CustomerRecharge(customer_id=cid, recharge_date=body.recharge_date,
-                            amount_u=u, amount_rmb=rmb, note=body.note))
+                            amount_u=u, amount_rmb=rmb, note=body.note,
+                            recharge_type=recharge_type, reason=(body.reason or "").strip(),
+                            rate=rate))
     c.balance = (c.balance if c.balance is not None else Decimal("0")) + Decimal(str(rmb))
     db.query(Alert).filter(Alert.type == "账单预警", Alert.customer_id == cid, Alert.status == "未处理").delete()
     db.commit()
@@ -188,10 +197,18 @@ def update_recharge(cid: int, rid: int, body: RechargeBody, db: Session = Depend
         raise HTTPException(status_code=422, detail="请填写充值金额（U 或 人民币）")
     old_rmb = float(r.amount_rmb) if r.amount_rmb is not None else 0
     delta = round(rmb - old_rmb, 2)
+    recharge_type = (body.recharge_type or "转账").strip() or "转账"
+    if recharge_type not in ("转账", "补数"):
+        raise HTTPException(status_code=422, detail="充值类型非法")
+    if recharge_type == "补数" and not (body.reason or "").strip():
+        raise HTTPException(status_code=422, detail="补数需写明补数理由")
     r.amount_u = u
     r.amount_rmb = rmb
     r.recharge_date = body.recharge_date
     r.note = body.note
+    r.recharge_type = recharge_type
+    r.reason = (body.reason or "").strip()
+    r.rate = rate
     if delta:
         c.balance = (c.balance if c.balance is not None else Decimal("0")) + Decimal(str(delta))
     db.query(Alert).filter(Alert.type == "账单预警", Alert.customer_id == cid, Alert.status == "未处理").delete()

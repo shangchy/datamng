@@ -630,7 +630,7 @@ def _count_unmatched(db, file_list):
                 total += 1
                 if tid:
                     unmatched_tids.add(tid)
-    items = [{"task_id": tid, "task_name": "", "channel": ""} for tid in sorted(unmatched_tids)]
+    items = [{"task_id": tid, "task_name": "", "channel": "", "reason": "未匹配到订单（系统中无此工单号）"} for tid in sorted(unmatched_tids)]
     return total, items
 
 
@@ -649,8 +649,10 @@ def _count_stopped_abnormal(db, file_list, date_obj):
     items = []
     for tid in sorted(tids):
         o = stopped.get(tid)
+        end_str = str(o.end_date) if (o and o.end_date) else ""
         items.append({"task_id": tid, "task_name": (o.task_name or "") if o else "",
-                      "channel": chans.get(o.channel_id, "") if o else ""})
+                      "channel": chans.get(o.channel_id, "") if o else "",
+                      "reason": f"已停订单，数据日期已过末次出数日（截止日期 {end_str}）" if end_str else "已停订单，数据日期已过末次出数日"})
     return total, items
 
 
@@ -662,7 +664,8 @@ def _count_inactive_orders(db, date_obj):
     for o in db.query(Order).filter(Order.status == "在执").all():
         if o.task_id and o.order_date and date_obj >= o.order_date + timedelta(days=2) and o.task_id not in has_data:
             items.append({"task_id": o.task_id, "task_name": o.task_name or "",
-                          "channel": chans.get(o.channel_id, "")})
+                          "channel": chans.get(o.channel_id, ""),
+                          "reason": f"在执订单，更新日期 {o.order_date} +2 天后仍未出数据"})
     items.sort(key=lambda x: x["task_id"])
     return items
 
@@ -707,7 +710,7 @@ async def import_daily(files: List[UploadFile] = File(...), biz_date: str = Form
             continue
         # 上传到源文件管理表
         sf = SourceFile(filename=fn, file_data=content, file_type=ext,
-                        biz_date=date_obj.strftime("%Y-%m-%d"), size=len(content))
+                        category="进货", biz_date=date_obj.strftime("%Y-%m-%d"), size=len(content))
         db.add(sf)
         db.flush()
         n, dd = _import_one_daily_file(db, fn, content, date_obj, sf.id, errors, seen, ctx)
@@ -964,16 +967,57 @@ def _check_repeat_days(db):
         return 30
 
 
-def _check_daily_result(db, date_obj):
-    """工单检查：统计所有在执工单在所选日期的数据量（按数据量降序），未到出数日(T+2)的工单不检查"""
-    orders = db.query(Order).filter(Order.status == "在执").all()
+def _region_violation(o, dp, dc):
+    """日活记录地区是否超出订单要求地区（违规）：True=违规"""
+    provs = [p for p in re.split(r"[|｜,，;；]", o.province or "") if p.strip()]
+    cities = [c for c in re.split(r"[|｜,，;；]", o.city or "") if c.strip()]
+    excl_provs = [p for p in re.split(r"[|｜,，;；]", o.excl_province or "") if p.strip()]
+    excl_cities = [c for c in re.split(r"[|｜,，;；]", o.excl_city or "") if c.strip()]
+    dp = (dp or "").strip()
+    dc = (dc or "").strip()
+    if dp and dp in excl_provs:
+        return True
+    if dc and dc in excl_cities:
+        return True
+    if cities:
+        return not dc or dc not in cities
+    if provs and "全国" not in provs:
+        return not dp or dp not in provs
+    return False
+
+
+def _check_daily_result(db, date_obj, upstream=None):
+    """工单检查：统计所选甲方+日期的在执工单数据量（按数据量降序），未到出数日(T+2)的工单不检查"""
+    up_id = None
+    if upstream:
+        up = db.query(Customer).filter(Customer.ctype == "upstream",
+                                        or_(Customer.name == upstream, Customer.code == upstream)).first()
+        up_id = up.id if up else None
+    orders_q = db.query(Order).filter(Order.status == "在执")
+    if up_id:
+        orders_q = orders_q.filter(Order.upstream_id == up_id)
+    orders = orders_q.all()
     chans = {c.id: c.name for c in db.query(Channel).all()}
     ops = {o.id: o.name for o in db.query(Operator).all()}
-    counts = {}
-    for tid, cnt in db.query(DailyData.task_id, func.count(DailyData.id)) \
-            .filter(DailyData.biz_date == date_obj, DailyData.task_id.isnot(None)) \
-            .group_by(DailyData.task_id).all():
-        counts[tid] = int(cnt)
+    ups = {c.id: c.name for c in db.query(Customer).filter(Customer.ctype == "upstream").all()}
+
+    def _day_counts(day):
+        c = {}
+        for tid, cnt in db.query(DailyData.task_id, func.count(DailyData.id)) \
+                .filter(DailyData.biz_date == day, DailyData.task_id.isnot(None)) \
+                .group_by(DailyData.task_id).all():
+            c[tid] = int(cnt)
+        return c
+
+    counts = _day_counts(date_obj)
+    counts_prev1 = _day_counts(date_obj - timedelta(days=1))
+    counts_prev2 = _day_counts(date_obj - timedelta(days=2))
+    # 当天各地区记录：task_id -> [(province, city)]，用于违规地区检查
+    today_regions = defaultdict(list)
+    for tid, province, city in db.query(DailyData.task_id, DailyData.province, DailyData.city) \
+            .filter(DailyData.biz_date == date_obj, DailyData.task_id.isnot(None),
+                    DailyData.task_id != "").all():
+        today_regions[tid].append((province or "", city or ""))
     # 重复出现检查：同一工单号下，指定日期的手机号在前 N 天内是否重复出现（按手机号、同工单号比对）
     repeat_days = _check_repeat_days(db)
     start = date_obj - timedelta(days=repeat_days)
@@ -1000,13 +1044,21 @@ def _check_daily_result(db, date_obj):
         dup_phones = {p for p in phones if p in hist}
         repeat_dates = sorted({bd for p in dup_phones for bd in hist.get(p, set())})
         repeat_detail = [{"phone": p, "dates": sorted(hist.get(p, set()))} for p in sorted(dup_phones)]
+        count = counts.get(o.task_id, 0)
+        over_qty = max(count - (o.qty or 0), 0)
+        region_violation = sum(1 for dp, dc in today_regions.get(tid, []) if _region_violation(o, dp, dc))
         result.append({
             "task_id": tid,
             "task_name": o.task_name or "",
             "order_no": o.order_no or "",
+            "upstream": ups.get(o.upstream_id, ""),
             "channel": chans.get(o.channel_id, ""),
             "operator": ops.get(o.operator_id, ""),
-            "count": counts.get(o.task_id, 0),
+            "count": count,
+            "count_prev1": counts_prev1.get(o.task_id, 0),
+            "count_prev2": counts_prev2.get(o.task_id, 0),
+            "over_qty": over_qty,
+            "region_violation": region_violation,
             "repeat_count": len(dup_phones),
             "repeat_dates": repeat_dates,
             "repeat_detail": repeat_detail,
@@ -1016,16 +1068,16 @@ def _check_daily_result(db, date_obj):
 
 
 @router.get("/daily-data/check")
-def check_daily(date: str = "", db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """工单检查：统计所有在执工单在所选日期的数据量（按数据量降序）"""
+def check_daily(date: str = "", upstream: str = "", db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """工单检查：按甲方+日期统计在执工单数据量（按数据量降序）"""
     date_obj = _parse_biz_date(date)
     if not date_obj:
         raise HTTPException(status_code=422, detail="请选择数据日期")
-    return {"code": 0, "data": _check_daily_result(db, date_obj), "msg": "ok"}
+    return {"code": 0, "data": _check_daily_result(db, date_obj, upstream or None), "msg": "ok"}
 
 
 @router.get("/daily-data/check-export")
-def check_export(date: str = "", db: Session = Depends(get_db), _=Depends(get_current_user)):
+def check_export(date: str = "", upstream: str = "", db: Session = Depends(get_db), _=Depends(get_current_user)):
     """工单检查结果导出（Excel，带样式）"""
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -1035,10 +1087,10 @@ def check_export(date: str = "", db: Session = Depends(get_db), _=Depends(get_cu
     date_obj = _parse_biz_date(date)
     if not date_obj:
         raise HTTPException(status_code=422, detail="请选择数据日期")
-    result = _check_daily_result(db, date_obj)
-    headers = ["工单号", "任务名", "渠道", "运营商", "数据量", "重复数量", "重复手机号与日期"]
-    rows = [[r["task_id"], r["task_name"], r["channel"], r["operator"], r["count"],
-             r["repeat_count"],
+    result = _check_daily_result(db, date_obj, upstream or None)
+    headers = ["工单号", "任务名", "甲方", "渠道", "运营商", "当天", "前两天", "前一天", "超出要求数量", "违规地区", "重复数量", "重复手机号与日期"]
+    rows = [[r["task_id"], r["task_name"], r["upstream"], r["channel"], r["operator"], r["count"],
+             r["count_prev2"], r["count_prev1"], r["over_qty"], r["region_violation"], r["repeat_count"],
              ("；".join(f"{d['phone']}（{'、'.join(d['dates'])}）" for d in r["repeat_detail"]) if r["repeat_detail"] else "无")] for r in result]
 
     wb = openpyxl.Workbook()
@@ -1058,7 +1110,7 @@ def check_export(date: str = "", db: Session = Depends(get_db), _=Depends(get_cu
         for j, v in enumerate(row, 1):
             c = ws.cell(row=i, column=j, value=v)
             c.border = border
-            c.alignment = right if j in (5, 6) else center
+            c.alignment = right if j in (6, 7, 8, 9, 10, 11) else center
 
     def disp_len(v):
         s = str(v) if v is not None else ""
@@ -1433,7 +1485,11 @@ def _fill_bill_file(cust_label, date_str, bill, tpl_bytes=None):
         ["进货量", qty],
         ["单价(元/条)", unit],
         ["销售金额(元)", sales],
+        ["余额", round(float(bill.get("balance") or 0), 2)],
     ]
+    recharge_info = bill.get("recharge_info") or []
+    if recharge_info:
+        rows.append(["充值/补数", "；".join(recharge_info)])
     for r in rows:
         ws.append(r)
     ws.append([])
@@ -1501,6 +1557,9 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
     for rng in ws.merged_cells.ranges:
         if rng.min_col > 1:
             merged_by_row.setdefault(rng.min_row, rng.min_col)
+    balance_row = None
+    balance_label_col = None
+    balance_val_col = None
     for row in ws.iter_rows():
         for cell in row:
             if cell.value is None:
@@ -1509,6 +1568,52 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
             if field:
                 target_col = merged_by_row.get(cell.row, cell.column + 1)
                 ws.cell(row=cell.row, column=target_col, value=summary_vals[field])
+                if field == "余额":
+                    balance_row = cell.row
+                    balance_label_col = cell.column
+                    balance_val_col = target_col
+
+    # ---- 余额下追加充值/补数信息 ----
+    recharge_info = bill.get("recharge_info") or []
+    if recharge_info and balance_row is not None:
+        insert_at = balance_row + 1
+        # 余额值单元格的合并列范围
+        val_min = balance_val_col
+        val_max = balance_val_col
+        for rng in ws.merged_cells.ranges:
+            if rng.min_row == balance_row and rng.min_col == balance_val_col:
+                val_max = rng.max_col
+                break
+        # 记录插入点下方合并区间与行高（openpyxl insert_rows 不移动它们，需手动下移）
+        shifted = [rng for rng in list(ws.merged_cells.ranges) if rng.min_row >= insert_at]
+        heights = {}
+        for r in range(insert_at, ws.max_row + 2):
+            h = ws.row_dimensions[r].height
+            if h is not None:
+                heights[r] = h
+        for rng in shifted:
+            ws.unmerge_cells(str(rng))
+        ws.insert_rows(insert_at)
+        for rng in shifted:
+            ws.merge_cells(start_row=rng.min_row + 1, start_column=rng.min_col,
+                           end_row=rng.max_row + 1, end_column=rng.max_col)
+        for r in sorted(heights.keys(), reverse=True):
+            ws.row_dimensions[r + 1].height = heights[r]
+        ws.row_dimensions[insert_at].height = None
+        # 复制余额整行（值+样式），再填充新内容
+        for c in range(1, ws.max_column + 1):
+            src = ws.cell(row=balance_row, column=c)
+            dst = ws.cell(row=insert_at, column=c)
+            dst.value = src.value
+            _copy_cell_style(src, dst)
+        src_height = ws.row_dimensions[balance_row].height
+        if src_height is not None:
+            ws.row_dimensions[insert_at].height = src_height
+        ws.cell(row=insert_at, column=balance_label_col, value="充值/补数")
+        ws.cell(row=insert_at, column=val_min, value="；".join(recharge_info))
+        if val_max > val_min:
+            ws.merge_cells(start_row=insert_at, start_column=val_min,
+                           end_row=insert_at, end_column=val_max)
 
     # ---- 2. 明细表：定位表头行与各列 ----
     header_row = None
@@ -1640,36 +1745,39 @@ def _fill_bill_file_from_template(tpl_bytes, cust_label, date_str, bill):
 
 def _attach_history(db, jobs, date_obj):
     """给「是否撞库=是」的记录补充「近期申请记录」：手机号在日活历史中（早于本次数据日期）
-    最近三次出现，且只匹配相同一级品类的历史（日期+平台）。"""
+    最近三次出现，只匹配相同一级品类且非当前平台的历史（日期+平台）。"""
     keys = set()
     for job in jobs:
         for rec in job["records"]:
             if rec.get("check_collision") and rec.get("url"):
-                keys.add((rec["url"], rec.get("cat1") or ""))
+                keys.add((rec["url"], rec.get("cat1") or "", rec.get("platform") or ""))
     keys = sorted(keys)
-    valid = set(keys)
+    lookup = {}
+    for k in keys:
+        lookup.setdefault((k[0], k[1]), []).append(k)
     history_map = {}
     CHUNK = 500
-    for i in range(0, len(keys), CHUNK):
-        chunk = keys[i:i + CHUNK]
-        phones = sorted({k[0] for k in chunk})
+    phones = sorted({k[0] for k in keys})
+    for i in range(0, len(phones), CHUNK):
+        chunk_phones = phones[i:i + CHUNK]
         rows = db.query(DailyData.phone, DailyData.cat1, DailyData.biz_date, DailyData.platform).filter(
-            DailyData.phone.in_(phones), DailyData.biz_date < date_obj
+            DailyData.phone.in_(chunk_phones), DailyData.biz_date < date_obj
         ).order_by(DailyData.phone, DailyData.biz_date.desc()).all()
         for phone, cat1, bd, pf in rows:
-            key = (phone, cat1 or "")
-            if key not in valid:
-                continue
-            lst = history_map.setdefault(key, [])
-            if any(x[0] == bd for x in lst):
-                continue
-            if len(lst) < 3:
-                lst.append((bd, pf or ""))
+            for key in lookup.get((phone, cat1 or ""), []):
+                if key[2] and pf == key[2]:
+                    continue
+                lst = history_map.setdefault(key, [])
+                if any(x[0] == bd for x in lst):
+                    continue
+                if len(lst) < 3:
+                    lst.append((bd, pf or ""))
     for job in jobs:
         for rec in job["records"]:
             if not rec.get("check_collision"):
                 continue
-            lst = history_map.get((rec.get("url"), rec.get("cat1") or ""), [])
+            key = (rec.get("url"), rec.get("cat1") or "", rec.get("platform") or "")
+            lst = history_map.get(key, [])
             rec["history"] = [f"{bd.strftime('%Y%m%d')} {pf or '未知'}" for bd, pf in lst] or ["无"]
 
 
@@ -1894,6 +2002,19 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             gg["qty"] += 1
             gg["amount"] += eff_price
 
+        # 6.5 各代理当日充值/补数信息（金额+说明）
+        recharge_map = defaultdict(list)
+        for rec in db.query(CustomerRecharge).filter(CustomerRecharge.recharge_date == date_obj).all():
+            tlabel = "补数" if (rec.recharge_type or "转账") == "补数" else "充值"
+            amt = float(rec.amount_rmb or 0)
+            reason = (rec.reason or "").strip()
+            s = f"{tlabel} {amt:g}元"
+            if reason:
+                s += f"（{reason}）"
+            recharge_map[rec.customer_id].append(s)
+        for cc, b in bills.items():
+            b["recharge_info"] = recharge_map.get(b.get("customer_id"), [])
+
         # 7. 保存账单（按客户+日期 upsert；余额 = 客户余额 - 销售金额），并同步客户余额
         for cc, b in bills.items():
             cid = b.get("customer_id")
@@ -1943,6 +2064,11 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), _=Depend
             buf = _build_distribute_zip(jobs, bills, date_obj.strftime("%m%d"),
                                         lambda done: _DISTRIBUTE_TASKS[task_id].update(done=done),
                                         bill_tpls)
+            data = buf.getvalue()
+            db2.add(SourceFile(filename=f"分发数据-{date_obj.strftime('%Y-%m-%d')}.zip",
+                               file_data=data, file_type="zip", category="出货",
+                               biz_date=date_obj.strftime("%Y-%m-%d"), size=len(data)))
+            db2.commit()
             _DISTRIBUTE_TASKS[task_id]["buffer"] = buf
             _DISTRIBUTE_TASKS[task_id]["status"] = "done"
         except Exception as e:  # noqa
@@ -1988,7 +2114,7 @@ def list_source_files(db: Session = Depends(get_db), _=Depends(get_current_user)
         qy = qy.filter(SourceFile.biz_date == biz_date)
     total, rows = paginate(qy.order_by(SourceFile.id.desc()), page, per_page)
     data = [{"id": s.id, "filename": s.filename, "file_type": s.file_type,
-             "biz_date": s.biz_date, "party": s.party, "size": s.size,
+             "category": s.category or "", "biz_date": s.biz_date, "party": s.party, "size": s.size,
              "created_at": fmt_dt(s.created_at)} for s in rows]
     return ok_page(data, total)
 
@@ -2457,48 +2583,86 @@ def export_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
 
 
 @router.get("/bills/summary-export")
-def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_user), date: str = ""):
-    """导出账单汇总：指定日期的上游账单（牛/新，按渠道套上游单价）+ 下游账单"""
+def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_user),
+                         date: str = "", start_date: str = "", end_date: str = ""):
+    """导出账单汇总：
+    - 特定日期(date)：上游(牛/新按渠道套单价)+下游账单，顶部附当日补数金额/理由；
+    - 日期区间(start_date~end_date)：每天上游+下游汇总，末列备注=当天该客户补数理由。
+    """
     from urllib.parse import quote
     from fastapi.responses import Response
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
     from collections import defaultdict
 
-    date_obj = _parse_biz_date(date)
-    if not date_obj:
-        raise HTTPException(status_code=422, detail="请选择日期")
+    if date:
+        date_obj = _parse_biz_date(date)
+        if not date_obj:
+            raise HTTPException(status_code=422, detail="请选择日期")
+        dates = [date_obj]
+        mode = "day"
+    elif start_date and end_date:
+        sd = _parse_biz_date(start_date)
+        ed = _parse_biz_date(end_date)
+        if not sd or not ed:
+            raise HTTPException(status_code=422, detail="请选择日期区间")
+        if ed < sd:
+            sd, ed = ed, sd
+        dates = []
+        d = sd
+        while d <= ed:
+            dates.append(d)
+            d += timedelta(days=1)
+        mode = "range"
+    else:
+        raise HTTPException(status_code=422, detail="请选择日期或日期区间")
 
-    # 上游客户（牛/新）
     up_customers = {c.id: c for c in db.query(Customer).filter(Customer.ctype == "upstream").all()}
     up_name_by_id = {c.id: c.name for c in up_customers.values()}
     ch_by_id = {ch.id: ch.name for ch in db.query(Channel).all()}
-
-    # 上游单价：customer_id -> (channel_id, operator_id) -> price（渠道+运营商组合）
+    op_by_id = {op.id: op.name for op in db.query(Operator).all()}
+    cust_map = {c.id: c for c in db.query(Customer).all()}
+    down_customers = db.query(Customer).filter(Customer.ctype == "downstream", Customer.status == 1) \
+        .order_by(Customer.code).all()
     price_map = defaultdict(dict)
     for p in db.query(CustomerPrice).filter(CustomerPrice.customer_id.in_(up_customers.keys())).all():
         price_map[p.customer_id][(p.channel_id, p.operator_id)] = float(p.price)
 
-    # 上游汇总：日活数据按 task_id 关联订单 -> (上游, 渠道, 运营商)，统计数量
-    task_ids = [r[0] for r in db.query(DailyData.task_id)
-                .filter(DailyData.biz_date == date_obj, DailyData.task_id.isnot(None))
-                .distinct().all()]
-    order_task_map = {}
-    for o in db.query(Order).filter(Order.task_id.in_(task_ids)).all():
-        order_task_map[o.task_id] = (o.upstream_id, o.channel_id, o.operator_id)
-    op_by_id = {op.id: op.name for op in db.query(Operator).all()}
-    up_agg = defaultdict(lambda: defaultdict(int))
-    for tid, in db.query(DailyData.task_id).filter(DailyData.biz_date == date_obj).all():
-        if tid not in order_task_map:
-            continue
-        up_id, ch_id, op_id = order_task_map[tid]
-        up_agg[up_id][(ch_id, op_id)] += 1
+    # 充值信息（区间内）：(customer_id, date) -> [类型+金额+理由]
+    recharge_info = defaultdict(list)
+    for rec in db.query(CustomerRecharge).filter(
+            CustomerRecharge.recharge_date >= dates[0],
+            CustomerRecharge.recharge_date <= dates[-1]).all():
+        tlabel = "补数" if (rec.recharge_type or "转账") == "补数" else "充值"
+        amt = float(rec.amount_rmb or 0)
+        reason = (rec.reason or "").strip()
+        s = f"{tlabel} {amt:g}元"
+        if reason:
+            s += f"（{reason}）"
+        recharge_info[(rec.customer_id, rec.recharge_date)].append(s)
 
-    # 下游账单：全部有效下游客户（含当天未出数的）
-    down_customers = db.query(Customer).filter(Customer.ctype == "downstream", Customer.status == 1) \
-        .order_by(Customer.code).all()
-    down_bills = {b.customer_id: b for b in db.query(Bill).filter(Bill.biz_date == date_obj).all()}
-    cust_map = {c.id: c for c in db.query(Customer).all()}
+    def channel_label(ch_id, op_id):
+        ch_name = ch_by_id.get(ch_id, "")
+        op_name = op_by_id.get(op_id, "")
+        return f"{ch_name}-{op_name}" if ("dpi" in (ch_name or "").lower() and op_name) else (ch_name or "未知")
+
+    def up_agg_for(d):
+        task_ids = [r[0] for r in db.query(DailyData.task_id)
+                    .filter(DailyData.biz_date == d, DailyData.task_id.isnot(None)).distinct().all()]
+        order_task_map = {}
+        for o in db.query(Order).filter(Order.task_id.in_(task_ids)).all():
+            order_task_map[o.task_id] = (o.upstream_id, o.channel_id, o.operator_id)
+        agg = defaultdict(lambda: defaultdict(int))
+        for (tid,) in db.query(DailyData.task_id).filter(DailyData.biz_date == d).all():
+            if tid not in order_task_map:
+                continue
+            up_id, ch_id, op_id = order_task_map[tid]
+            agg[up_id][(ch_id, op_id)] += 1
+        return agg
+
+    def down_bills_for(d):
+        return {b.customer_id: b for b in db.query(Bill).filter(Bill.biz_date == d).all()}
 
     wb = openpyxl.Workbook()
     title_font = Font(bold=True, size=14)
@@ -2510,113 +2674,189 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     center = Alignment(horizontal="center", vertical="center")
     right = Alignment(horizontal="right", vertical="center")
+    money_fmt = '#,##0.00'
 
-    # ---- Sheet1 上游账单 ----
+    # ================= Sheet1 上游账单 =================
     ws1 = wb.active
     ws1.title = "上游账单"
-    up_headers = ["甲方", "渠道", "数量", "单价(元)", "金额(元)"]
-    ws1.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(up_headers))
-    tc = ws1.cell(row=1, column=1, value=f"上游账单汇总（{date}）")
-    tc.font = title_font
-    tc.alignment = center
-    ws1.row_dimensions[1].height = 26
-    for j, h in enumerate(up_headers, 1):
-        c = ws1.cell(row=2, column=j, value=h)
-        c.font = header_font; c.fill = header_fill; c.border = border; c.alignment = center
-    r = 3
-    total_qty = total_amt = 0
-    for up_id in sorted(up_agg.keys()):
-        up_name = up_name_by_id.get(up_id, "")
-        combos = up_agg[up_id]
-        sub_qty = sum(combos.values())
-        sub_amt = 0.0
-        for (ch_id, op_id) in sorted(combos.keys(), key=lambda x: (x[0] or 0, x[1] or 0)):
-            cnt = combos[(ch_id, op_id)]
-            ch_name = ch_by_id.get(ch_id, "")
-            op_name = op_by_id.get(op_id, "")
-            # 渠道显示：dpi 渠道用「渠道-运营商」，其余用渠道名
-            label = f"{ch_name}-{op_name}" if ("dpi" in (ch_name or "").lower() and op_name) else (ch_name or "未知")
-            price = price_map.get(up_id, {}).get((ch_id, op_id))
-            if price is None:
-                price = price_map.get(up_id, {}).get((ch_id, None), 0.0)
-            amt = round(cnt * price, 2)
-            sub_amt = round(sub_amt + amt, 2)
-            vals = [up_name, label, cnt, price, amt]
-            for j, v in enumerate(vals, 1):
+    if mode == "day":
+        d0 = dates[0]
+        up_headers = ["甲方", "渠道", "数量", "单价(元)", "金额(元)", "充值信息"]
+        ws1.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(up_headers))
+        tc = ws1.cell(row=1, column=1, value=f"上游账单汇总（{date}）")
+        tc.font = title_font
+        tc.alignment = center
+        ws1.row_dimensions[1].height = 26
+        hr = 2
+        for j, h in enumerate(up_headers, 1):
+            c = ws1.cell(row=hr, column=j, value=h)
+            c.font = header_font; c.fill = header_fill; c.border = border; c.alignment = center
+        r = hr + 1
+        agg = up_agg_for(d0)
+        total_qty = total_amt = 0
+        for up_id in sorted(agg.keys()):
+            up_name = up_name_by_id.get(up_id, "")
+            combos = agg[up_id]
+            sub_qty = sum(combos.values())
+            sub_amt = 0.0
+            up_note = "；".join(recharge_info.get((up_id, d0), []))
+            for (ch_id, op_id) in sorted(combos.keys(), key=lambda x: (x[0] or 0, x[1] or 0)):
+                cnt = combos[(ch_id, op_id)]
+                label = channel_label(ch_id, op_id)
+                price = price_map.get(up_id, {}).get((ch_id, op_id))
+                if price is None:
+                    price = price_map.get(up_id, {}).get((ch_id, None), 0.0)
+                amt = round(cnt * price, 2)
+                sub_amt = round(sub_amt + amt, 2)
+                vals = [up_name, label, cnt, price, amt, up_note]
+                for j, v in enumerate(vals, 1):
+                    cell = ws1.cell(row=r, column=j, value=v)
+                    cell.border = border
+                    cell.alignment = right if j in (3, 4, 5) else center
+                    if j == 5:
+                        cell.number_format = money_fmt
+                r += 1
+            for j, v in enumerate(["", "", sub_qty, "", round(sub_amt, 2), ""], 1):
                 cell = ws1.cell(row=r, column=j, value=v)
-                cell.border = border
-                cell.alignment = right if j >= 3 else center
+                cell.font = total_font; cell.fill = total_fill; cell.border = border
+                cell.alignment = right if j in (3, 4, 5) else center
                 if j == 5:
-                    cell.number_format = '#,##0.00'
+                    cell.number_format = money_fmt
             r += 1
-        # 甲方合计
-        for j, v in enumerate(["", "", sub_qty, "", round(sub_amt, 2)], 1):
+            total_qty += sub_qty
+            total_amt = round(total_amt + sub_amt, 2)
+        for j, v in enumerate(["合计", "", total_qty, "", round(total_amt, 2), ""], 1):
             cell = ws1.cell(row=r, column=j, value=v)
             cell.font = total_font; cell.fill = total_fill; cell.border = border
-            cell.alignment = right if j >= 3 else center
+            cell.alignment = right if j in (3, 4, 5) else center
             if j == 5:
-                cell.number_format = '#,##0.00'
-        r += 1
-        total_qty += sub_qty
-        total_amt = round(total_amt + sub_amt, 2)
-    # 总合计
-    for j, v in enumerate(["合计", "", total_qty, "", round(total_amt, 2)], 1):
-        cell = ws1.cell(row=r, column=j, value=v)
-        cell.font = total_font; cell.fill = total_fill; cell.border = border
-        cell.alignment = right if j >= 3 else center
-        if j == 5:
-            cell.number_format = '#,##0.00'
-    for j, w in enumerate([10, 12, 10, 10, 12], 1):
-        ws1.column_dimensions[openpyxl.utils.get_column_letter(j)].width = w
+                cell.number_format = money_fmt
+        for j, w in enumerate([10, 12, 10, 10, 12, 30], 1):
+            ws1.column_dimensions[get_column_letter(j)].width = w
+    else:
+        up_headers = ["日期", "甲方", "渠道", "数量", "单价(元)", "金额(元)", "充值信息"]
+        ws1.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(up_headers))
+        tc = ws1.cell(row=1, column=1, value=f"上游账单汇总（{start_date} ~ {end_date}）")
+        tc.font = title_font
+        tc.alignment = center
+        ws1.row_dimensions[1].height = 26
+        for j, h in enumerate(up_headers, 1):
+            c = ws1.cell(row=2, column=j, value=h)
+            c.font = header_font; c.fill = header_fill; c.border = border; c.alignment = center
+        r = 3
+        for d in dates:
+            agg = up_agg_for(d)
+            for up_id in sorted(agg.keys()):
+                up_name = up_name_by_id.get(up_id, "")
+                combos = agg[up_id]
+                for (ch_id, op_id) in sorted(combos.keys(), key=lambda x: (x[0] or 0, x[1] or 0)):
+                    cnt = combos[(ch_id, op_id)]
+                    label = channel_label(ch_id, op_id)
+                    price = price_map.get(up_id, {}).get((ch_id, op_id))
+                    if price is None:
+                        price = price_map.get(up_id, {}).get((ch_id, None), 0.0)
+                    amt = round(cnt * price, 2)
+                    note = "；".join(recharge_info.get((up_id, d), []))
+                    vals = [str(d), up_name, label, cnt, price, amt, note or ""]
+                    for j, v in enumerate(vals, 1):
+                        cell = ws1.cell(row=r, column=j, value=v)
+                        cell.border = border
+                        cell.alignment = right if j in (4, 5, 6) else center
+                        if j == 6:
+                            cell.number_format = money_fmt
+                    r += 1
+        for j, w in enumerate([12, 10, 12, 10, 10, 12, 30], 1):
+            ws1.column_dimensions[get_column_letter(j)].width = w
 
-    # ---- Sheet2 下游账单 ----
+    # ================= Sheet2 下游账单 =================
     ws2 = wb.create_sheet("下游账单")
-    down_headers = ["代理编号", "代理名称", "进货量", "销售金额(元)", "利润(元)", "余额(元)"]
-    ws2.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(down_headers))
-    tc2 = ws2.cell(row=1, column=1, value=f"下游账单（{date}）")
-    tc2.font = title_font
-    tc2.alignment = center
-    ws2.row_dimensions[1].height = 26
-    for j, h in enumerate(down_headers, 1):
-        c = ws2.cell(row=2, column=j, value=h)
-        c.font = header_font; c.fill = header_fill; c.border = border; c.alignment = center
-    r = 3
-    d_qty = d_sales = d_profit = d_bal = 0
-    for c in down_customers:
-        b = down_bills.get(c.id)
-        if b:
-            qty = b.purchase_qty or 0
-            sales = float(b.sales) if b.sales is not None else 0
-            profit = float(b.profit) if b.profit is not None else 0
-            balance = float(b.balance) if b.balance is not None else 0
-        else:
-            qty = 0
-            sales = 0.0
-            profit = 0.0
-            balance = float(c.balance) if c.balance is not None else 0
-        vals = [c.code if c else "", c.name if c else "", qty, sales, profit, balance]
-        d_qty += vals[2]; d_sales = round(d_sales + vals[3], 2)
-        d_profit = round(d_profit + vals[4], 2); d_bal = round(d_bal + vals[5], 2)
-        for j, v in enumerate(vals, 1):
+    if mode == "day":
+        d0 = dates[0]
+        down_bills = down_bills_for(d0)
+        down_headers = ["代理编号", "代理名称", "进货量", "销售金额(元)", "利润(元)", "余额(元)", "充值信息"]
+        ws2.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(down_headers))
+        tc2 = ws2.cell(row=1, column=1, value=f"下游账单（{date}）")
+        tc2.font = title_font
+        tc2.alignment = center
+        ws2.row_dimensions[1].height = 26
+        for j, h in enumerate(down_headers, 1):
+            c = ws2.cell(row=2, column=j, value=h)
+            c.font = header_font; c.fill = header_fill; c.border = border; c.alignment = center
+        r = 3
+        d_qty = d_sales = d_profit = d_bal = 0
+        for c in down_customers:
+            b = down_bills.get(c.id)
+            if b:
+                qty = b.purchase_qty or 0
+                sales = float(b.sales) if b.sales is not None else 0
+                profit = float(b.profit) if b.profit is not None else 0
+                balance = float(b.balance) if b.balance is not None else 0
+            else:
+                qty = 0
+                sales = 0.0
+                profit = 0.0
+                balance = float(c.balance) if c.balance is not None else 0
+            note = "；".join(recharge_info.get((c.id, d0), []))
+            vals = [c.code if c else "", c.name if c else "", qty, sales, profit, balance, note]
+            d_qty += vals[2]; d_sales = round(d_sales + vals[3], 2)
+            d_profit = round(d_profit + vals[4], 2); d_bal = round(d_bal + vals[5], 2)
+            for j, v in enumerate(vals, 1):
+                cell = ws2.cell(row=r, column=j, value=v)
+                cell.border = border
+                cell.alignment = right if j in (3, 4, 5, 6) else center
+                if j in (4, 5, 6):
+                    cell.number_format = money_fmt
+            r += 1
+        for j, v in enumerate(["合计", "", d_qty, round(d_sales, 2), round(d_profit, 2), round(d_bal, 2), ""], 1):
             cell = ws2.cell(row=r, column=j, value=v)
-            cell.border = border
-            cell.alignment = right if j >= 3 else center
-            if j >= 4:
-                cell.number_format = '#,##0.00'
-        r += 1
-    for j, v in enumerate(["合计", "", d_qty, round(d_sales, 2), round(d_profit, 2), round(d_bal, 2)], 1):
-        cell = ws2.cell(row=r, column=j, value=v)
-        cell.font = total_font; cell.fill = total_fill; cell.border = border
-        cell.alignment = right if j >= 3 else center
-        if j >= 4:
-            cell.number_format = '#,##0.00'
-    for j, w in enumerate([12, 16, 10, 14, 14, 14], 1):
-        ws2.column_dimensions[openpyxl.utils.get_column_letter(j)].width = w
+            cell.font = total_font; cell.fill = total_fill; cell.border = border
+            cell.alignment = right if j in (3, 4, 5, 6) else center
+            if j in (4, 5, 6):
+                cell.number_format = money_fmt
+        for j, w in enumerate([12, 16, 10, 14, 14, 14, 30], 1):
+            ws2.column_dimensions[get_column_letter(j)].width = w
+    else:
+        down_headers = ["日期", "代理编号", "代理名称", "进货量", "销售金额(元)", "利润(元)", "余额(元)", "充值信息"]
+        ws2.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(down_headers))
+        tc2 = ws2.cell(row=1, column=1, value=f"下游账单（{start_date} ~ {end_date}）")
+        tc2.font = title_font
+        tc2.alignment = center
+        ws2.row_dimensions[1].height = 26
+        for j, h in enumerate(down_headers, 1):
+            c = ws2.cell(row=2, column=j, value=h)
+            c.font = header_font; c.fill = header_fill; c.border = border; c.alignment = center
+        r = 3
+        for d in dates:
+            down_bills = down_bills_for(d)
+            for c in down_customers:
+                b = down_bills.get(c.id)
+                if b:
+                    qty = b.purchase_qty or 0
+                    sales = float(b.sales) if b.sales is not None else 0
+                    profit = float(b.profit) if b.profit is not None else 0
+                    balance = float(b.balance) if b.balance is not None else 0
+                else:
+                    qty = 0
+                    sales = 0.0
+                    profit = 0.0
+                    balance = float(c.balance) if c.balance is not None else 0
+                note = "；".join(recharge_info.get((c.id, d), []))
+                vals = [str(d), c.code if c else "", c.name if c else "", qty, sales, profit, balance, note or ""]
+                for j, v in enumerate(vals, 1):
+                    cell = ws2.cell(row=r, column=j, value=v)
+                    cell.border = border
+                    cell.alignment = right if j in (4, 5, 6, 7) else center
+                    if j in (5, 6, 7):
+                        cell.number_format = money_fmt
+                r += 1
+        for j, w in enumerate([12, 12, 16, 10, 14, 14, 14, 30], 1):
+            ws2.column_dimensions[get_column_letter(j)].width = w
 
     bio = io.BytesIO()
     wb.save(bio)
     bio.seek(0)
-    filename = f"账单汇总-{date}.xlsx"
+    period = date or f"{start_date}-{end_date}"
+    filename = f"账单汇总-{period}.xlsx"
     return Response(content=bio.getvalue(),
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})

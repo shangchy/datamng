@@ -84,6 +84,9 @@ class CustomerRecharge(Base):
     amount_u = Column(Numeric(14, 2), nullable=False)
     amount_rmb = Column(Numeric(14, 2))
     note = Column(Text)
+    recharge_type = Column(String(20), default="转账")   # 转账/补数
+    reason = Column(Text)                                 # 补数理由
+    rate = Column(Numeric(14, 4))                         # 充值时的汇率（U→RMB）
     created_at = Column(DateTime, default=datetime.now)
 
 
@@ -310,7 +313,8 @@ class SourceFile(Base):
     id = Column(Integer, primary_key=True)
     filename = Column(String(500))               # 文件名
     file_data = Column(LargeBinary)              # 文件内容
-    file_type = Column(String(20))               # zip / xlsx / xls
+    file_type = Column(String(20))               # 扩展名 zip / xlsx / xls
+    category = Column(String(20))                # 文件类型：进货/出货/提单
     biz_date = Column(String(50))                # 数据日期
     party = Column(String(50))                   # 甲方（牛/新）
     size = Column(Integer)                       # 文件大小（字节）

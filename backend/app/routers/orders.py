@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, aliased
 
 from ..database import get_db
 from ..deps import get_current_user, require_admin
-from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator, Platform, Category
+from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator, Platform, Category, SourceFile
 from ..schemas import OrderBody, StopBody, BatchStopBody, OrderDistConfigBody, GenerateBody, BatchGroupBody, ReopenBody
 from ..pagination import paginate, ok_page
 from ..utils import fmt_dt, norm_region
@@ -1534,10 +1534,10 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
         op = db.query(Operator).filter(Operator.name == operator_val).first() if operator_val else None
         ch = db.query(Channel).filter(Channel.name == channel_val).first() if channel_val else None
         if operator_val and not op:
-            errors.append({"task_name": task_name, "reason": f"运营商「{operator_val}」在系统中不存在"})
+            errors.append({"task_id": new_task_id, "task_name": task_name, "reason": f"运营商「{operator_val}」在系统中不存在"})
             continue
         if channel_val and not ch:
-            errors.append({"task_name": task_name, "reason": f"渠道「{channel_val}」在系统中不存在"})
+            errors.append({"task_id": new_task_id, "task_name": task_name, "reason": f"渠道「{channel_val}」在系统中不存在"})
             continue
         base = db.query(Order).filter(
             Order.task_name == task_name,
@@ -1560,17 +1560,17 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
                     matched.append(o)
             base = matched
         if not base:
-            errors.append({"task_name": task_name, "reason": "未找到匹配订单（甲方+任务名+运营商+渠道+url）"})
+            errors.append({"task_id": new_task_id, "task_name": task_name, "reason": "未找到匹配订单（甲方+任务名+运营商+渠道+url）"})
             continue
         # 只有工单号为空的才需要更新；匹配到多个时若仅一个工单号为空则更新该条
         pending = [o for o in base if not o.task_id]
         if not pending:
             continue
         if len(pending) > 1:
-            errors.append({"task_name": task_name, "reason": f"匹配到 {len(pending)} 个工单号为空的订单"})
+            errors.append({"task_id": new_task_id, "task_name": task_name, "reason": f"匹配到 {len(pending)} 个工单号为空的订单"})
             continue
         if not new_task_id:
-            errors.append({"task_name": task_name, "reason": "工单号为空"})
+            errors.append({"task_id": new_task_id, "task_name": task_name, "reason": "工单号为空"})
             continue
         # 工单id 已在系统中存在：无需更新，静默跳过（不报错）
         if db.query(Order).filter(Order.task_id == new_task_id).first():
@@ -1731,6 +1731,10 @@ def generate_tidabiao(body: GenerateBody, db: Session = Depends(get_db), user=De
     if not manifest:
         raise HTTPException(status_code=404, detail="没有可生成的订单（仅未提/改单/待停状态会生成），请检查订单状态或模版")
     filename = f"提单表-{mmdd}.zip"
+    db.add(SourceFile(filename=filename, file_data=buf.getvalue(), file_type="zip",
+                      category="提单", biz_date=body.date or date_obj.strftime("%Y-%m-%d"),
+                      size=len(buf.getvalue())))
+    db.commit()
     return Response(content=buf.getvalue(),
                     media_type="application/zip",
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})

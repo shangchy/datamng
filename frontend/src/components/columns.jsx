@@ -2,9 +2,13 @@ import React, { useState } from 'react'
 import { Modal } from './ui'
 
 // 自定义表头列（显隐），localStorage 持久化
-export function useColumnConfig(cols, storageKey) {
+export function useColumnConfig(cols, storageKey, defaultHidden = []) {
   const [hidden, setHidden] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(storageKey) || '[]') } catch { return [] }
+    const stored = localStorage.getItem(storageKey)
+    if (stored != null) {
+      try { return JSON.parse(stored) } catch { return defaultHidden }
+    }
+    return defaultHidden
   })
   const [open, setOpen] = useState(false)
 

@@ -55,6 +55,8 @@ class RechargeBody(BaseModel):
     amount_rmb: Optional[float] = None
     recharge_date: date
     note: str = ""
+    recharge_type: str = "转账"
+    reason: str = ""
 
 
 class PriceBody(BaseModel):
