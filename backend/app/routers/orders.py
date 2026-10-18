@@ -118,13 +118,21 @@ def _operator_name(db, o: Order) -> str:
     return ""
 
 
-def _order_dict(db, o: Order, alert_order_ids=None) -> dict:
-    ch = db.query(Channel).filter(Channel.id == o.channel_id).first()
-    c = db.query(Customer).filter(Customer.id == o.customer_id).first()
-    up = db.query(Customer).filter(Customer.id == o.upstream_id).first()
-    tpl = db.query(Template).filter(Template.id == o.tpl_id).first() if o.tpl_id else None
-    operator = _operator_name(db, o)
-    order_urls = list(o.urls)
+def _order_dict(db, o: Order, alert_order_ids=None, cache=None) -> dict:
+    cache = cache or {}
+    channels = cache.get("channels", {})
+    customers = cache.get("customers", {})
+    templates = cache.get("templates", {})
+    operators = cache.get("operators", {})
+    order_templates = cache.get("order_templates", {})
+    urls_map = cache.get("urls_map", {})
+    ch = channels.get(o.channel_id)
+    c = customers.get(o.customer_id)
+    up = customers.get(o.upstream_id)
+    tpl = templates.get(o.tpl_id) if o.tpl_id else None
+    op = operators.get(o.operator_id)
+    operator = op.name if op else ""
+    order_urls = urls_map.get(o.id, [])
     urls = [u.url for u in order_urls]
     url_items = [{"url": u.url} for u in order_urls]
     # 小程序：名称和 id 用 | 连接（不丢失 id）
@@ -157,8 +165,7 @@ def _order_dict(db, o: Order, alert_order_ids=None) -> dict:
         "secondary_agent": o.secondary_agent or "",
         "platform": o.platform or "",
         "template_id": o.template_id, "filename_rule": o.filename_rule or "",
-        "template_name": (db.query(OrderTemplate).filter(OrderTemplate.id == o.template_id).first().name
-                          if o.template_id else ""),
+        "template_name": (order_templates.get(o.template_id).name if (o.template_id and order_templates.get(o.template_id)) else ""),
         "tpl_id": o.tpl_id, "tpl_code": tpl.code if tpl else "", "tpl_name": tpl.name if tpl else "",
         "group_name": o.group_name or "",
         "export_filename": o.export_filename or "",
@@ -419,7 +426,20 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
     total, rows = paginate(qy.order_by(Order.id.desc()), page, per_page)
     alert_order_ids = {r[0] for r in db.query(Alert.order_id).filter(Alert.type == "停单提醒", Alert.status == "未处理",
                                                                       Alert.order_id.isnot(None)).all()}
-    return ok_page([_order_dict(db, o, alert_order_ids) for o in rows], total)
+    # 预加载关联数据（小表全量、URL 只取当前页），避免逐单 N+1 查询
+    cache = {
+        "channels": {c.id: c for c in db.query(Channel).all()},
+        "customers": {c.id: c for c in db.query(Customer).all()},
+        "templates": {t.id: t for t in db.query(Template).all()},
+        "operators": {o.id: o for o in db.query(Operator).all()},
+        "order_templates": {t.id: t for t in db.query(OrderTemplate).all()},
+        "urls_map": {},
+    }
+    order_ids = [o.id for o in rows]
+    if order_ids:
+        for u in db.query(OrderUrl).filter(OrderUrl.order_id.in_(order_ids)).all():
+            cache["urls_map"].setdefault(u.order_id, []).append(u)
+    return ok_page([_order_dict(db, o, alert_order_ids, cache) for o in rows], total)
 
 
 def _num(v):
