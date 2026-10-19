@@ -76,6 +76,10 @@ function todayStr() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
+function toDateInput(val) {
+  if (!val) return ''
+  return String(val).replace(/\//g, '-')
+}
 function fmtRegion(val) {
   return (val || '').split(REGION_SEP).map(s => s.trim()).filter(Boolean).join('|')
 }
@@ -309,7 +313,7 @@ export default function Orders({ variant = 'orders' }) {
     const d = new Date()
     const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     setReopenOrder(o)
-    setReopenForm({ order_date: today, start_date: o.start_date || '', end_date: o.end_date || '' })
+    setReopenForm({ order_date: today, start_date: toDateInput(o.start_date), end_date: toDateInput(o.end_date) })
   }
 
   async function doReopenOrder() {
@@ -348,8 +352,8 @@ export default function Orders({ variant = 'orders' }) {
       task_id: o.task_id || '', qty: o.qty ?? '', duration: o.duration || '',
       province: toComma(o.province), city: toComma(o.city), excl_province: toComma(o.excl_province),
       excl_city: toComma(o.excl_city), age_min: o.age_min ?? '', age_max: o.age_max ?? '', pv: o.pv ?? '',
-      start_date: o.start_date || '', end_date: o.end_date || '',
-      order_date: o.order_date || '', price: o.price ?? '', secondary_agent: o.secondary_agent || '',
+      start_date: toDateInput(o.start_date), end_date: toDateInput(o.end_date),
+      order_date: toDateInput(o.order_date), price: o.price ?? '', secondary_agent: o.secondary_agent || '',
       platform: o.platform || '', tpl_id: o.tpl_id ?? '', group_name: o.group_name || '',
       export_filename: o.export_filename || '', add_name: !!o.add_name, check_collision: !!o.check_collision,
       template_id: o.template_id ?? '', filename_rule: o.filename_rule || '', dist_config: o.dist_config || null,

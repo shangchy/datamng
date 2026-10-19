@@ -5,6 +5,11 @@ import { Modal, Badge, useToast, useConfirm, ClearableInput } from '../component
 import FilterBar, { buildQuery } from '../components/FilterBar'
 import Pagination from '../components/Pagination'
 
+function toDateInput(val) {
+  if (!val) return ''
+  return String(val).replace(/\//g, '-')
+}
+
 const emptyForm = { code: '', name: '', ctype: 'downstream', tg_id: '', is_accounted: true, warn_amount: 0, start_date: '', end_date: '', bill_tpl_id: null, note: '', status: 1 }
 
 const CUST_COLS = [
@@ -115,7 +120,7 @@ export default function Customers() {
 
   function editRecharge(cid, r, fromDetail) {
     const cust = fromDetail ? detail : null
-    setRecharge({ id: r.id, customer_id: cid, customer_label: cust ? `${cust.code} ${cust.name}` : '', balance: cust ? (cust.balance ?? 0) : null, old_rmb: r.amount_rmb ?? 0, amount_u: r.amount_u ?? '', amount_rmb: r.amount_rmb ?? '', recharge_date: r.recharge_date, note: r.note || '', recharge_type: r.recharge_type || '转账', reason: r.reason || '', from_detail: fromDetail })
+    setRecharge({ id: r.id, customer_id: cid, customer_label: cust ? `${cust.code} ${cust.name}` : '', balance: cust ? (cust.balance ?? 0) : null, old_rmb: r.amount_rmb ?? 0, amount_u: r.amount_u ?? '', amount_rmb: r.amount_rmb ?? '', recharge_date: toDateInput(r.recharge_date), note: r.note || '', recharge_type: r.recharge_type || '转账', reason: r.reason || '', from_detail: fromDetail })
   }
 
   function openBalanceEdit() {
@@ -149,7 +154,7 @@ export default function Customers() {
   }
 
   function openEdit(c) {
-    setForm({ ...emptyForm, ...c, tg_id: c.tg_id || '', note: c.note || '', start_date: c.start_date || '', end_date: c.end_date || '', bill_tpl_id: c.bill_tpl_id ?? null, is_accounted: c.is_accounted ?? true })
+    setForm({ ...emptyForm, ...c, tg_id: c.tg_id || '', note: c.note || '', start_date: toDateInput(c.start_date), end_date: toDateInput(c.end_date), bill_tpl_id: c.bill_tpl_id ?? null, is_accounted: c.is_accounted ?? true })
     setFormTab('recharges')
     setModal('edit')
   }

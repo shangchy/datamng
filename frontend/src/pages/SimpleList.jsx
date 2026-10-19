@@ -7,6 +7,11 @@ import FilterBar, { buildQuery } from '../components/FilterBar'
 import Pagination from '../components/Pagination'
 import { MENU_PERMS } from '../menuPerms'
 
+function toDateInput(val) {
+  if (!val) return ''
+  return String(val).replace(/\//g, '-')
+}
+
 const IconChevronDown = (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
 )
@@ -360,7 +365,7 @@ export default function SimpleList({ kind }) {
   }
   function openDailyEdit(r) {
     setDailyEdit({
-      id: r.id, biz_date: r.biz_date || '', upstream: r.upstream || '', task_id: r.task_id || '',
+      id: r.id, biz_date: toDateInput(r.biz_date), upstream: r.upstream || '', task_id: r.task_id || '',
       task_name: r.task_name || '', phone: r.phone || '', name: r.name || '', province: r.province || '',
       city: r.city || '', operator: r.operator || '', cat1: r.cat1 || '', cat2: r.cat2 || '',
       platform: r.platform || '', customer: r.customer || '', secondary_agent: r.secondary_agent || '',
@@ -682,6 +687,26 @@ export default function SimpleList({ kind }) {
   async function doImportConfirm() {
     setImportWarn(null)
     doUploadDaily(pendingImportFiles, true)
+  }
+
+  async function exportWarnItems() {
+    try {
+      const res = await fetch('/api/daily-data/export-warn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getToken() },
+        body: JSON.stringify({ items: importWarn.items }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.msg || d.detail || '导出失败')
+      }
+      const blob = await res.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = '工单异常.xlsx'
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } catch (e) { showError(e.message) }
   }
 
   async function importDailyCsv() {
@@ -1185,15 +1210,16 @@ export default function SimpleList({ kind }) {
         <Modal title={importWarn.title} onClose={() => setImportWarn(null)} wide>
           <div className="table-scroll" style={{ maxHeight: 420 }}>
             <table>
-              <thead><tr><th style={{ width: 56 }}>序号</th><th>工单号</th><th>任务名</th><th>原因</th></tr></thead>
+              <thead><tr><th style={{ width: 56 }}>序号</th><th>工单号</th><th>任务名</th><th className="num">数量</th><th>原因</th></tr></thead>
               <tbody>
                 {importWarn.items.map((x, i) => (
-                  <tr key={i}><td className="num">{i + 1}</td><td>{x.task_id || '—'}</td><td>{x.task_name || '—'}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{x.reason || '—'}</td></tr>
+                  <tr key={i}><td className="num">{i + 1}</td><td>{x.task_id || '—'}</td><td>{x.task_name || '—'}</td><td className="num">{x.qty ?? '—'}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{x.reason || '—'}</td></tr>
                 ))}
               </tbody>
             </table>
           </div>
           <div className="foot">
+            <button className="btn" onClick={exportWarnItems}>导出异常</button>
             {importWarn.confirm ? (
               <>
                 <button className="btn" onClick={() => setImportWarn(null)}>取消</button>

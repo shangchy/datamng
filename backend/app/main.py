@@ -7,6 +7,7 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -405,6 +406,16 @@ def _scheduler_loop():
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content={"code": exc.status_code, "data": None, "msg": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    msgs = []
+    for err in exc.errors():
+        loc = ".".join(str(x) for x in err.get("loc", []) if x not in ("body", "query", "path"))
+        m = err.get("msg", "")
+        msgs.append(f"{loc}: {m}" if loc else m)
+    return JSONResponse(status_code=422, content={"code": 422, "data": None, "msg": "；".join(msgs) or "请求参数错误"})
 
 
 @app.exception_handler(Exception)

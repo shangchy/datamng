@@ -623,14 +623,15 @@ def _count_unmatched(db, file_list):
     """统计未匹配到订单的日活数据条数，返回 (条数, 未匹配工单明细列表)"""
     order_tids = {r[0] for r in db.query(Order.task_id).all() if r[0]}
     total = 0
-    unmatched_tids = set()
+    cnt = defaultdict(int)
     for fn, content in file_list:
         for tid in _extract_task_ids(fn, content):
             if tid not in order_tids:
                 total += 1
                 if tid:
-                    unmatched_tids.add(tid)
-    items = [{"task_id": tid, "task_name": "", "channel": "", "reason": "未匹配到订单（系统中无此工单号）"} for tid in sorted(unmatched_tids)]
+                    cnt[tid] += 1
+    items = [{"task_id": tid, "task_name": "", "channel": "", "reason": "未匹配到订单（系统中无此工单号）",
+              "qty": cnt[tid]} for tid in sorted(cnt)]
     return total, items
 
 
@@ -640,19 +641,22 @@ def _count_stopped_abnormal(db, file_list, date_obj):
     chans = {c.id: c.name for c in db.query(Channel).all()}
     total = 0
     tids = set()
+    cnt = defaultdict(int)
     for fn, content in file_list:
         for tid in _extract_task_ids(fn, content):
             o = stopped.get(tid)
             if o and o.end_date and date_obj > o.end_date + timedelta(days=1):
                 total += 1
                 tids.add(tid)
+                cnt[tid] += 1
     items = []
     for tid in sorted(tids):
         o = stopped.get(tid)
         end_str = fmt_date(o.end_date) if (o and o.end_date) else ""
         items.append({"task_id": tid, "task_name": (o.task_name or "") if o else "",
                       "channel": chans.get(o.channel_id, "") if o else "",
-                      "reason": f"已停订单，数据日期已过末次出数日（截止日期 {end_str}）" if end_str else "已停订单，数据日期已过末次出数日"})
+                      "reason": f"已停订单，数据日期已过末次出数日（截止日期 {end_str}）" if end_str else "已停订单，数据日期已过末次出数日",
+                      "qty": cnt[tid]})
     return total, items
 
 
@@ -1137,6 +1141,58 @@ def check_export(date: str = "", upstream: str = "", db: Session = Depends(get_d
     return Response(content=bio.getvalue(),
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
+
+
+@router.post("/daily-data/export-warn")
+def export_warn(body: dict, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """导出工单异常明细（Excel，表头带背景色、列宽自适应）"""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    from urllib.parse import quote
+    from fastapi.responses import Response
+
+    items = body.get("items") or []
+    headers = ["工单号", "任务名", "数量", "原因"]
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "工单异常"
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="4472C4")
+    thin = Side(style="thin", color="D9D9D9")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center")
+    for j, h in enumerate(headers, 1):
+        c = ws.cell(row=1, column=j, value=h)
+        c.font = header_font
+        c.fill = header_fill
+        c.border = border
+        c.alignment = center
+    for i, item in enumerate(items, 2):
+        vals = [item.get("task_id", ""), item.get("task_name", ""), item.get("qty", ""), item.get("reason", "")]
+        for j, v in enumerate(vals, 1):
+            c = ws.cell(row=i, column=j, value=v)
+            c.border = border
+            if j == 3:
+                c.alignment = center
+
+    def disp_len(v):
+        s = str(v) if v is not None else ""
+        return sum(2 if ord(ch) > 127 else 1 for ch in s)
+
+    for j, h in enumerate(headers, 1):
+        max_len = disp_len(h)
+        for item in items:
+            v = [item.get("task_id", ""), item.get("task_name", ""), item.get("qty", ""), item.get("reason", "")][j - 1]
+            max_len = max(max_len, disp_len(v))
+        ws.column_dimensions[get_column_letter(j)].width = min(max_len + 2, 60)
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return Response(content=bio.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('工单异常.xlsx')}"})
 
 
 def _parse_wash_file(fn, content):
