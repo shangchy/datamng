@@ -16,7 +16,7 @@ from ..deps import get_current_user, require_admin
 from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator, Platform, Category, SourceFile
 from ..schemas import OrderBody, StopBody, BatchStopBody, OrderDistConfigBody, GenerateBody, BatchGroupBody, ReopenBody
 from ..pagination import paginate, ok_page
-from ..utils import fmt_dt, norm_region
+from ..utils import fmt_dt, fmt_date, norm_region
 from ..tidabiao import _order_type, _region_mode
 from ..regions import CITIES, PROVINCES, MUNICIPALITIES
 
@@ -152,9 +152,9 @@ def _order_dict(db, o: Order, alert_order_ids=None, cache=None) -> dict:
         "id": o.id, "order_no": o.order_no, "status": o.status,
         "batch_no": o.batch_no or "",
         "dup_order_nos": o.dup_order_nos or "",
-        "order_date": str(o.order_date) if o.order_date else None,
-        "start_date": str(o.start_date) if o.start_date else None,
-        "end_date": str(o.end_date) if o.end_date else None,
+        "order_date": fmt_date(o.order_date) if o.order_date else None,
+        "start_date": fmt_date(o.start_date) if o.start_date else None,
+        "end_date": fmt_date(o.end_date) if o.end_date else None,
         "updated_at": fmt_dt(o.updated_at),
         "upstream": up.name if up else "", "upstream_id": o.upstream_id,
         "customer": f"{c.code} {c.name}" if c else "", "customer_id": o.customer_id,
@@ -171,15 +171,15 @@ def _order_dict(db, o: Order, alert_order_ids=None, cache=None) -> dict:
         "export_filename": o.export_filename or "",
         "add_name": bool(o.add_name),
         "check_collision": bool(o.check_collision),
-        "first_output_date": str(o.start_date + timedelta(days=2)) if o.start_date else None,
-        "last_output_date": str(o.end_date + timedelta(days=1)) if o.end_date else None,
+        "first_output_date": fmt_date(o.start_date + timedelta(days=2)) if o.start_date else None,
+        "last_output_date": fmt_date(o.end_date + timedelta(days=1)) if o.end_date else None,
         "dist_config": json.loads(o.dist_config_json) if o.dist_config_json else None,
         "url": display_url,
         "urls": urls, "url_items": url_items, "region": _region_summary(o),
         "province": norm_region(o.province), "city": norm_region(o.city),
         "excl_province": norm_region(o.excl_province), "excl_city": norm_region(o.excl_city),
         "qty": o.qty, "age_min": o.age_min, "age_max": o.age_max, "pv": o.pv,
-        "created_at": fmt_dt(o.created_at), "stop_date": str(o.stop_date) if o.stop_date else None,
+        "created_at": fmt_dt(o.created_at), "stop_date": fmt_date(o.stop_date) if o.stop_date else None,
         "has_alert": (o.id in alert_order_ids and o.status in ("在执", "待停")) if alert_order_ids is not None else False,
     }
 
@@ -203,14 +203,14 @@ def _snapshot(db, o: Order, urls=None) -> dict:
     tpl = db.query(Template).filter(Template.id == o.tpl_id).first() if o.tpl_id else None
     return {
         "order_no": o.order_no, "task_name": o.task_name, "task_id": o.task_id or "",
-        "status": o.status, "order_date": str(o.order_date) if o.order_date else None,
+        "status": o.status, "order_date": fmt_date(o.order_date) if o.order_date else None,
         "upstream": up.name if up else "", "customer": (f"{cust.code} {cust.name}" if cust else ""),
         "channel": ch.name if ch else "", "operator": _operator_name(db, o), "tpl_code": tpl.code if tpl else "",
         "qty": o.qty, "duration": o.duration, "province": o.province, "city": o.city,
         "excl_province": o.excl_province, "excl_city": o.excl_city,
         "age_min": o.age_min, "age_max": o.age_max, "pv": o.pv,
-        "start_date": str(o.start_date) if o.start_date else None,
-        "end_date": str(o.end_date) if o.end_date else None,
+        "start_date": fmt_date(o.start_date) if o.start_date else None,
+        "end_date": fmt_date(o.end_date) if o.end_date else None,
         "price": float(o.price) if o.price is not None else None,
         "secondary_agent": o.secondary_agent, "platform": o.platform,
         "group_name": o.group_name, "add_name": bool(o.add_name),
@@ -1634,7 +1634,7 @@ def _history_from_order(db, o: Order, batch_no: str):
         order_id=o.id,
         order_no=o.order_no or "",
         status=o.status or "",
-        order_date=str(o.order_date) if o.order_date else "",
+        order_date=fmt_date(o.order_date) if o.order_date else "",
         upstream=up.name if up else "",
         customer=(f"{cust.code} {cust.name}" if cust else ""),
         secondary_agent=o.secondary_agent or "",
@@ -1652,8 +1652,8 @@ def _history_from_order(db, o: Order, batch_no: str):
         city=o.city or "",
         excl_province=o.excl_province or "",
         excl_city=o.excl_city or "",
-        start_date=str(o.start_date) if o.start_date else "",
-        end_date=str(o.end_date) if o.end_date else "",
+        start_date=fmt_date(o.start_date) if o.start_date else "",
+        end_date=fmt_date(o.end_date) if o.end_date else "",
         price=str(o.price) if o.price is not None else "",
         platform=o.platform or "",
         group_name=o.group_name or "",
@@ -1775,7 +1775,7 @@ def confirm_tidabiao_pending_check(db: Session = Depends(get_db), _=Depends(get_
                                   Order.status.in_(["未提", "待停", "改单"])) \
         .order_by(Order.order_date, Order.id).all()
     data = [{"order_no": o.order_no or "", "task_name": o.task_name or "",
-             "status": o.status or "", "order_date": str(o.order_date) if o.order_date else ""}
+             "status": o.status or "", "order_date": fmt_date(o.order_date) if o.order_date else ""}
             for o in rows]
     return {"code": 0, "data": data, "msg": "ok"}
 

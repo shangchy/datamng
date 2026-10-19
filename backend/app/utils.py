@@ -3,10 +3,17 @@ import re
 
 
 def fmt_dt(dt):
-    """格式化 datetime 为 YYYY-MM-DD HH:MM:SS（去掉微秒）"""
+    """格式化 datetime 为 YYYY/MM/DD HH:MM:SS（含时分秒）"""
     if not dt:
         return None
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+    return dt.strftime("%Y/%m/%d %H:%M:%S")
+
+
+def fmt_date(d):
+    """格式化 date 为 YYYY/MM/DD"""
+    if not d:
+        return None
+    return d.strftime("%Y/%m/%d")
 
 
 def norm_region(v):

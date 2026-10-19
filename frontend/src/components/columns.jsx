@@ -23,7 +23,7 @@ export function useColumnConfig(cols, storageKey, defaultHidden = []) {
         ))}
       </div>
       <div className="foot">
-        <button className="btn" onClick={() => { setHidden([]); localStorage.removeItem(storageKey); setOpen(false) }}>恢复默认</button>
+        <button className="btn" onClick={() => { setHidden(defaultHidden); localStorage.removeItem(storageKey); setOpen(false) }}>恢复默认</button>
         <button className="btn primary" onClick={() => { localStorage.setItem(storageKey, JSON.stringify(hidden)); setOpen(false) }}>应用</button>
       </div>
     </Modal>

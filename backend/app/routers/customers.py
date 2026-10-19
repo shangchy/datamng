@@ -12,7 +12,7 @@ from ..models import (Customer, CustomerRecharge, CustomerPrice, Channel,
                       Bill, Order, Url, Category, Alert, SysConfig, Operator)
 from ..schemas import CustomerBody, RechargeBody, PriceBody
 from ..pagination import paginate, ok_page
-from ..utils import fmt_dt
+from ..utils import fmt_dt, fmt_date
 
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
@@ -141,7 +141,7 @@ def delete_customer(cid: int, db: Session = Depends(get_db), _=Depends(get_curre
 def list_recharges(cid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     rows = db.query(CustomerRecharge).filter(CustomerRecharge.customer_id == cid).order_by(CustomerRecharge.recharge_date.desc()).all()
     return {"code": 0, "data": [{
-        "id": r.id, "recharge_date": str(r.recharge_date), "amount_u": float(r.amount_u),
+        "id": r.id, "recharge_date": fmt_date(r.recharge_date), "amount_u": float(r.amount_u),
         "amount_rmb": float(r.amount_rmb) if r.amount_rmb is not None else None, "note": r.note,
         "recharge_type": r.recharge_type or "转账", "reason": r.reason or "",
         "rate": float(r.rate) if r.rate is not None else None,
@@ -290,8 +290,8 @@ def customer_orders(cid: int, db: Session = Depends(get_db), _=Depends(get_curre
         up = db.query(Customer).filter(Customer.id == o.upstream_id).first()
         urls = [u.url for u in o.urls]
         data.append({
-            "order_no": o.order_no, "status": o.status, "start_date": str(o.start_date) if o.start_date else None,
-            "end_date": str(o.end_date) if o.end_date else None,
+            "order_no": o.order_no, "status": o.status, "start_date": fmt_date(o.start_date) if o.start_date else None,
+            "end_date": fmt_date(o.end_date) if o.end_date else None,
             "upstream": (f"{up.code} {up.name}".strip() if up else ""),
             "channel": ch.name if ch else "", "task_name": o.task_name,
             "url": urls[0] + f" 等{len(urls)}个" if len(urls) > 1 else (urls[0] if urls else ""),
@@ -306,8 +306,8 @@ def _customer_dict(c: Customer):
         "is_accounted": c.is_accounted,
         "balance": float(c.balance) if c.balance is not None else 0,
         "warn_amount": float(c.warn_amount) if c.warn_amount is not None else 0,
-        "start_date": str(c.start_date) if c.start_date else None,
-        "end_date": str(c.end_date) if c.end_date else None,
+        "start_date": fmt_date(c.start_date) if c.start_date else None,
+        "end_date": fmt_date(c.end_date) if c.end_date else None,
         "bill_tpl_id": c.bill_tpl_id,
         "note": c.note, "status": c.status,
         "created_at": fmt_dt(c.created_at),

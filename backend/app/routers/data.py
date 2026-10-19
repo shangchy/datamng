@@ -19,7 +19,7 @@ from ..models import (DailyData, Fund, Bill, Alert, Customer, Channel, Category,
                       CustomerRecharge, CustomerPrice, Notification)
 from ..pagination import paginate, ok_page
 from ..excel import xlsx_response
-from ..utils import fmt_dt
+from ..utils import fmt_dt, fmt_date
 from ..schemas import BatchStopBody, GenerateBody, ExtractBody
 
 router = APIRouter(prefix="/api", tags=["data"])
@@ -129,7 +129,7 @@ def update_daily(did: int, body: dict, db: Session = Depends(get_db), _=Depends(
 
 def _daily_dict(d: DailyData):
     return {
-        "id": d.id, "biz_date": str(d.biz_date) if d.biz_date else None,
+        "id": d.id, "biz_date": fmt_date(d.biz_date) if d.biz_date else None,
         "upstream": d.upstream or "", "task_id": d.task_id or "",
         "task_name": d.task_name or "", "phone": d.phone or "",
         "name": d.name or "",
@@ -145,7 +145,7 @@ def _daily_dict(d: DailyData):
 
 
 DAILY_EXPORT_COLS = [
-    ("biz_date", "数据日期", lambda d: str(d.biz_date) if d.biz_date else ""),
+    ("biz_date", "数据日期", lambda d: fmt_date(d.biz_date) if d.biz_date else ""),
     ("upstream", "甲方", lambda d: d.upstream or ""),
     ("task_id", "任务id", lambda d: d.task_id or ""),
     ("task_name", "任务名", lambda d: d.task_name or ""),
@@ -649,7 +649,7 @@ def _count_stopped_abnormal(db, file_list, date_obj):
     items = []
     for tid in sorted(tids):
         o = stopped.get(tid)
-        end_str = str(o.end_date) if (o and o.end_date) else ""
+        end_str = fmt_date(o.end_date) if (o and o.end_date) else ""
         items.append({"task_id": tid, "task_name": (o.task_name or "") if o else "",
                       "channel": chans.get(o.channel_id, "") if o else "",
                       "reason": f"已停订单，数据日期已过末次出数日（截止日期 {end_str}）" if end_str else "已停订单，数据日期已过末次出数日"})
@@ -1045,6 +1045,15 @@ def _check_daily_result(db, date_obj, upstream=None):
         repeat_dates = sorted({bd for p in dup_phones for bd in hist.get(p, set())})
         repeat_detail = [{"phone": p, "dates": sorted(hist.get(p, set()))} for p in sorted(dup_phones)]
         count = counts.get(o.task_id, 0)
+        count_prev1 = counts_prev1.get(o.task_id, 0)
+        count_prev2 = counts_prev2.get(o.task_id, 0)
+        # 未到出数日（提单日+2天）的前一天/前两天显示为空（/）
+        if o.order_date:
+            first_output = o.order_date + timedelta(days=2)
+            if date_obj - timedelta(days=1) < first_output:
+                count_prev1 = None
+            if date_obj - timedelta(days=2) < first_output:
+                count_prev2 = None
         over_qty = max(count - (o.qty or 0), 0)
         region_violation = sum(1 for dp, dc in today_regions.get(tid, []) if _region_violation(o, dp, dc))
         result.append({
@@ -1055,8 +1064,8 @@ def _check_daily_result(db, date_obj, upstream=None):
             "channel": chans.get(o.channel_id, ""),
             "operator": ops.get(o.operator_id, ""),
             "count": count,
-            "count_prev1": counts_prev1.get(o.task_id, 0),
-            "count_prev2": counts_prev2.get(o.task_id, 0),
+            "count_prev1": count_prev1,
+            "count_prev2": count_prev2,
             "over_qty": over_qty,
             "region_violation": region_violation,
             "repeat_count": len(dup_phones),
@@ -2332,7 +2341,7 @@ def list_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
         c = db.query(Customer).filter(Customer.id == b.customer_id).first()
         data.append({
             "id": b.id, "customer": f"{c.code} {c.name}" if c else "", "customer_id": b.customer_id,
-            "biz_date": str(b.biz_date), "purchase_qty": b.purchase_qty,
+            "biz_date": fmt_date(b.biz_date), "purchase_qty": b.purchase_qty,
             "sales": float(b.sales) if b.sales is not None else 0,
             "balance": float(b.balance) if b.balance is not None else None,
             "profit": float(b.profit) if b.profit is not None else 0,
@@ -2520,7 +2529,7 @@ def export_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
         c = cust_map.get(b.customer_id)
         row = [
             c.code if c else "", c.name if c else "",
-            str(b.biz_date) if b.biz_date else "",
+            fmt_date(b.biz_date) if b.biz_date else "",
             b.purchase_qty if b.purchase_qty is not None else 0,
             float(b.sales) if b.sales is not None else 0,
             float(b.balance) if b.balance is not None else 0,
@@ -2557,7 +2566,7 @@ def export_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
         c = cust_map.get(rec.customer_id)
         row = [
             c.code if c else "", c.name if c else "",
-            str(rec.recharge_date) if rec.recharge_date else "",
+            fmt_date(rec.recharge_date) if rec.recharge_date else "",
             float(rec.amount_u) if rec.amount_u is not None else 0,
             float(rec.amount_rmb) if rec.amount_rmb is not None else 0,
             rec.note or "",
@@ -2890,7 +2899,7 @@ def bill_detail(bid: int, db: Session = Depends(get_db), _=Depends(get_current_u
     detail = {
         "id": b.id,
         "customer": (f"{c.code} {c.name}" if c else ""),
-        "biz_date": str(b.biz_date),
+        "biz_date": fmt_date(b.biz_date),
         "purchase_qty": b.purchase_qty,
         "sales": float(b.sales) if b.sales is not None else 0,
         "balance": float(b.balance) if b.balance is not None else 0,
@@ -3191,7 +3200,7 @@ def extract_daily(body: ExtractBody, db: Session = Depends(get_db), _=Depends(ge
         dheaders = ["数据日期", "甲方", "任务id", "任务名", "手机号", "姓名", "省", "市", "运营商", "渠道", "平台"]
         dws.append(dheaders)
         for d in rows:
-            dws.append([str(d.biz_date) if d.biz_date else "", d.upstream or "", d.task_id or "",
+            dws.append([fmt_date(d.biz_date) if d.biz_date else "", d.upstream or "", d.task_id or "",
                         d.task_name or "", d.phone or "", d.name or "", d.province or "", d.city or "",
                         d.operator or "", d.channel or "", d.platform or ""])
         dbio = io.BytesIO()

@@ -27,7 +27,7 @@ const KINDS = {
       { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' }, { k: 'channel', l: '渠道' },
       { k: 'source_file', l: '来源文件名' }, { k: 'created_at', l: '创建时间' }, { k: 'updated_at', l: '更新时间' },
     ], export: true, dailyImp: true, csvImp: true, batchDel: true, batchDelAdmin: true, dist: true, check: true, showSeq: true, defaultPerPage: 500, dailyEdit: true,
-      defaultHidden: ['source_file', 'cat1', 'cat2', 'secondary_agent'],
+      defaultHidden: ['name', 'cat1', 'cat2', 'source_file'],
   },
   sourcefiles: {
     title: '文件管理', endpoint: '/api/source-files',
@@ -101,7 +101,7 @@ export default function SimpleList({ kind }) {
   const { toast, showError } = useToast()
   const nav = useNavigate()
   const [confirm, confirmEl] = useConfirm()
-  const { visible: cols, picker, openPicker } = useColumnConfig(cfg.cols, `cols_${kind}`, cfg.defaultHidden || [])
+  const { visible: cols, picker, openPicker } = useColumnConfig(cfg.cols, `cols_${kind}_v2`, cfg.defaultHidden || [])
   const fileRef = useRef(null)
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
@@ -786,6 +786,13 @@ export default function SimpleList({ kind }) {
     } catch (e) { showError(e.message) }
   }
 
+  function checkMMDD(offset) {
+    if (!checkDate) return ''
+    const d = new Date(checkDate + 'T00:00:00')
+    d.setDate(d.getDate() - offset)
+    return `${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+  }
+
   async function doCheckExport() {
     if (!checkDate) { showError('请选择数据日期'); return }
     try {
@@ -1276,7 +1283,7 @@ export default function SimpleList({ kind }) {
           {checkResult && (
             <div className="table-scroll" style={{ maxHeight: 420 }}>
               <table>
-                <thead><tr><th>工单号</th><th>任务名</th><th>渠道</th><th className="num">当天</th><th className="num">前两天</th><th className="num">前一天</th><th className="num">超出订单数量</th><th className="num">违规地区</th><th>重复出现</th></tr></thead>
+                <thead><tr><th>工单号</th><th>任务名</th><th>渠道</th><th className="num">{checkMMDD(0)}</th><th className="num">{checkMMDD(1)}</th><th className="num">{checkMMDD(2)}</th><th className="num">超出订单数量</th><th className="num">违规地区</th><th>重复出现</th></tr></thead>
                 <tbody>
                   {checkResult.map((r, i) => (
                     <tr key={i}>
@@ -1284,8 +1291,8 @@ export default function SimpleList({ kind }) {
                       <td>{r.task_name || '—'}</td>
                       <td>{r.channel || '—'}</td>
                       <td className="num">{r.count}</td>
-                      <td className="num">{r.count_prev2}</td>
-                      <td className="num">{r.count_prev1}</td>
+                      <td className="num">{r.count_prev1 == null ? '/' : r.count_prev1}</td>
+                      <td className="num">{r.count_prev2 == null ? '/' : r.count_prev2}</td>
                       <td className="num">{r.over_qty}</td>
                       <td className="num">{r.region_violation}</td>
                       <td>
