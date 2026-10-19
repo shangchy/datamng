@@ -837,6 +837,28 @@ def batch_delete(body: BatchStopBody, db: Session = Depends(get_db), user=Depend
     return {"code": 0, "data": {"deleted": len(rows)}, "msg": f"已删除 {len(rows)} 单"}
 
 
+@router.post("/batch-extend")
+def batch_extend(body: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """批量延期：批量更新选中订单的截止日期"""
+    ids = body.get("ids") or []
+    end_date = (body.get("end_date") or "").strip()
+    if not ids:
+        raise HTTPException(status_code=422, detail="请勾选要延期的订单")
+    if not end_date:
+        raise HTTPException(status_code=422, detail="请选择截止日期")
+    try:
+        ed = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=422, detail="截止日期格式错误")
+    rows = db.query(Order).filter(Order.id.in_(ids)).all()
+    for o in rows:
+        o.end_date = ed
+        o.updated_at = datetime.now()
+    _op_log(db, user, "batch_extend_orders", f"批量延期 {len(rows)} 单，截止日期 {end_date}", None, {"ids": ids})
+    db.commit()
+    return {"code": 0, "data": {"updated": len(rows)}, "msg": f"已延期 {len(rows)} 单，截止日期 {end_date}"}
+
+
 @router.post("/batch-group")
 def batch_group(body: BatchGroupBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
     rows = db.query(Order).filter(Order.id.in_(body.ids)).all()

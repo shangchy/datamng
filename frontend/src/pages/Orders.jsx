@@ -111,6 +111,8 @@ export default function Orders({ variant = 'orders' }) {
   const [stopReason, setStopReason] = useState('业务调整')
   const [reopenTarget, setReopenTarget] = useState(null)
   const [reopenDate, setReopenDate] = useState('')
+  const [extendTarget, setExtendTarget] = useState(null)
+  const [extendDate, setExtendDate] = useState('')
   const [reopenOrder, setReopenOrder] = useState(null)
   const [reopenForm, setReopenForm] = useState({ order_date: '', start_date: '', end_date: '' })
   const [urlDetail, setUrlDetail] = useState(null)
@@ -283,6 +285,23 @@ export default function Orders({ variant = 'orders' }) {
     try {
       const r = await api.post('/api/orders/batch-reopen', { ids: reopenTarget.ids, order_date: reopenDate })
       toast(r.msg); setReopenTarget(null); setReopenDate(''); setSelected([]); load()
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
+  }
+
+  function batchExtend() {
+    if (!selected.length) { showError('请先勾选要延期的订单'); return }
+    setExtendDate('')
+    setExtendTarget({ ids: selected })
+  }
+
+  async function doExtend() {
+    if (!extendDate) { showError('请选择截止日期'); return }
+    if (!extendTarget) return
+    if (!(await confirm(`确认将选中的 ${extendTarget.ids.length} 个订单的截止日期更新为 ${extendDate}？`))) return
+    setBusy(true); setBusyMsg('正在批量延期，请稍候…')
+    try {
+      const r = await api.post('/api/orders/batch-extend', { ids: extendTarget.ids, end_date: extendDate })
+      toast(r.msg); setExtendTarget(null); setExtendDate(''); setSelected([]); load()
     } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
@@ -625,6 +644,7 @@ export default function Orders({ variant = 'orders' }) {
           {!isStop && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
           {!isStop && isAdmin && selected.length > 0 && <button className="btn" onClick={batchReopen}>批量复提({selected.length})</button>}
           {!isStop && selected.length > 0 && <button className="btn" onClick={() => { setGroupVal(''); setGroupModal(true) }}>批量修改小组({selected.length})</button>}
+          {!isStop && selected.length > 0 && <button className="btn" onClick={batchExtend}>批量延期({selected.length})</button>}
           {!isStop && <button className="btn primary" onClick={openCreate}>+ 新建提单</button>}
           <button className="btn icon" title="自定义表头" onClick={openPicker}>{IconColumns}</button>
         </div>
@@ -808,6 +828,18 @@ export default function Orders({ variant = 'orders' }) {
           <div className="foot">
             <button className="btn" onClick={() => setReopenTarget(null)}>取消</button>
             <button className="btn primary" onClick={doReopen}>确认复提</button>
+          </div>
+        </Modal>
+      )}
+
+      {extendTarget && (
+        <Modal title="批量延期确认" onClose={() => setExtendTarget(null)}>
+          <div className="note">将选中的 {extendTarget.ids.length} 个订单的截止日期更新为所选日期。</div>
+          <div className="field" style={{ marginBottom: 12 }}><label className="required">截止日期</label>
+            <input type="date" value={extendDate} onChange={e => setExtendDate(e.target.value)} /></div>
+          <div className="foot">
+            <button className="btn" onClick={() => setExtendTarget(null)}>取消</button>
+            <button className="btn primary" onClick={doExtend}>确认延期</button>
           </div>
         </Modal>
       )}
