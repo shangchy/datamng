@@ -101,7 +101,7 @@ export default function SimpleList({ kind }) {
   const cfg = KINDS[kind]
   const user = getUser() || {}
   const isAdmin = user.role_code === 'admin' || (user.permissions || []).includes('*')
-  const showBatchDel = !!cfg.batchDel && (!cfg.batchDelAdmin || isAdmin)
+  const showBatchDel = !!cfg.batchDel && isAdmin
   const hasRowOps = !!(cfg.simple || cfg.editUrl || cfg.del || cfg.dl || cfg.handle || cfg.reset || cfg.pwd || cfg.detail || cfg.dailyEdit)
   const { toast, showError } = useToast()
   const nav = useNavigate()
@@ -123,6 +123,9 @@ export default function SimpleList({ kind }) {
   const [urlOptions, setUrlOptions] = useState({ channels: [], platforms: [] })
   const [pwdModal, setPwdModal] = useState(null)
   const [rolePermModal, setRolePermModal] = useState(null)
+  const [userEdit, setUserEdit] = useState(null)
+  const [roles, setRoles] = useState([])
+  const [roleCreate, setRoleCreate] = useState(null)
   const [sort, setSort] = useState(null)
   const [alertTrigger, setAlertTrigger] = useState('00:00')
   const [busy, setBusy] = useState(false)
@@ -153,6 +156,9 @@ export default function SimpleList({ kind }) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
   const washFileRef = useRef(null)
+  const [sfModal, setSfModal] = useState(false)
+  const [sfCategory, setSfCategory] = useState('手动')
+  const sfFileRef = useRef(null)
   const [billExpModal, setBillExpModal] = useState(false)
   const [billExpStart, setBillExpStart] = useState('')
   const [billExpEnd, setBillExpEnd] = useState('')
@@ -206,13 +212,6 @@ export default function SimpleList({ kind }) {
       await api.put('/api/alert-config', { trigger_time: alertTrigger })
       toast('预警配置已保存')
     }, '正在保存…')
-  }
-  async function manualScan() {
-    if (!(await confirm('确认立即执行预警扫描？'))) return
-    await withBusy(async () => {
-      const r = await api.post('/api/alerts/scan')
-      toast(`扫描完成，未处理预警 ${r.data.unhandled} 条`); load()
-    }, '正在执行预警扫描…')
   }
 
   function toggleSort(k) {
@@ -509,6 +508,28 @@ export default function SimpleList({ kind }) {
     } catch (e) { showError(e.message) }
   }
 
+  async function openUserEdit(r) {
+    try {
+      const rolesRes = await api.get('/api/roles')
+      setRoles(rolesRes.data || [])
+      setUserEdit({ id: r.id, username: r.username, nickname: r.nickname || '', role_id: r.role_id, status: r.status })
+    } catch (e) { showError(e.message) }
+  }
+
+  async function saveUserEdit() {
+    if (!userEdit.nickname) { showError('昵称不能为空'); return }
+    try {
+      await withBusy(async () => {
+        await api.put(`/api/users/${userEdit.id}`, {
+          nickname: userEdit.nickname,
+          role_id: userEdit.role_id,
+          status: userEdit.status,
+        })
+        toast('已保存'); setUserEdit(null); load()
+      }, '正在保存…')
+    } catch (e) { showError(e.message) }
+  }
+
   async function openRolePerms() {
     try {
       const r = await api.get('/api/roles')
@@ -537,6 +558,31 @@ export default function SimpleList({ kind }) {
         await api.put(`/api/roles/${rolePermModal.rid}/permissions`, { codes: rolePermModal.codes })
         toast('权限已保存'); setRolePermModal(null)
       }, '正在保存…')
+    } catch (e) { showError(e.message) }
+  }
+
+  async function saveRoleCreate() {
+    const name = (roleCreate.name || '').trim()
+    const code = (roleCreate.code || '').trim()
+    if (!name) { showError('请填写角色名称'); return }
+    if (!code) { showError('请填写角色编码'); return }
+    try {
+      await withBusy(async () => {
+        await api.post('/api/roles', { name, code, note: (roleCreate.note || '').trim() })
+        toast('角色已创建'); setRoleCreate(null)
+        const r = await api.get('/api/roles')
+        setRoles(r.data || [])
+      }, '正在创建…')
+    } catch (e) { showError(e.message) }
+  }
+
+  async function deleteRole(rid) {
+    if (!(await confirm('确认删除该角色？该角色下不能有账户。'))) return
+    try {
+      await withBusy(async () => {
+        await api.del(`/api/roles/${rid}`)
+        toast('角色已删除'); setRolePermModal(null)
+      }, '正在删除…')
     } catch (e) { showError(e.message) }
   }
 
@@ -844,6 +890,20 @@ export default function SimpleList({ kind }) {
     downloadFile(`/api/source-files/${r.id}/download`).catch(e => showError(e.message))
   }
 
+  async function uploadSourceFile() {
+    const f = sfFileRef.current?.files?.[0]
+    if (!f) { showError('请选择文件'); return }
+    try {
+      await withBusy(async () => {
+        const fd = new FormData()
+        fd.append('file', f)
+        fd.append('category', sfCategory)
+        await uploadFile('/api/source-files/upload', fd)
+        toast('上传成功'); setSfModal(false); load()
+      }, '正在上传文件…')
+    } catch (e) { showError(e.message) }
+  }
+
   async function viewBillDetail(id) {
     try {
       await withBusy(async () => {
@@ -938,20 +998,21 @@ export default function SimpleList({ kind }) {
         {cfg.check && <button className="btn" onClick={() => { setCheckResult(null); setCheckModal(true) }}>工单检查</button>}
         {showBatchDel && kind !== 'daily' && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
         {kind === 'daily' && <button className="btn" onClick={() => backfillCategory().catch(e => showError(e.message))}>补充品类</button>}
+        {kind === 'sourcefiles' && <button className="btn primary" onClick={() => { setSfCategory('手动'); setSfModal(true) }}>上传文件</button>}
         {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
         {cfg.export && <button className="btn green" onClick={() => setExportModal(true)}>导出数据</button>}
         {kind === 'daily' && isAdmin && <button className="btn danger" onClick={() => setBatchDelModal(true)}>批量删除</button>}
         {cfg.billExp && <button className="btn green" onClick={() => setBillSummaryModal(true)}>导出账单</button>}
         {cfg.simple && <button className="btn primary" onClick={() => setSimpleModal({ name: '', status: 1 })}>+ 新增</button>}
         {cfg.addUrl && <button className="btn primary" onClick={openAddUrl}>+ 新增 URL</button>}
-        {cfg.clear && <button className="btn danger" onClick={clearData}>清空数据</button>}
+        {cfg.clear && isAdmin && <button className="btn danger" onClick={clearData}>清空数据</button>}
         {kind === 'users' && <button className="btn" onClick={openRolePerms}>角色权限</button>}
+        {kind === 'users' && <button className="btn" onClick={() => setRoleCreate({ name: '', code: '', note: '' })}>新增角色</button>}
         {kind === 'alerts' && (
           <>
             <label style={{ fontSize: 12, color: 'var(--sub)' }}>触发时间</label>
             <input type="time" value={alertTrigger} onChange={e => setAlertTrigger(e.target.value)} />
             <button className="btn small" onClick={saveAlertConfig}>保存</button>
-            <button className="btn" onClick={manualScan}>立即执行</button>
           </>
         )}
         <button className="btn icon" title="自定义表头" onClick={openPicker}>{IconColumns}</button>
@@ -971,12 +1032,13 @@ export default function SimpleList({ kind }) {
                     {cfg.simple && <button className="btn small" onClick={() => toast('编辑')}>编辑</button>}
                     {cfg.editUrl && <button className="btn small" onClick={() => openEditUrl(r)}>编辑</button>}
                     {cfg.dailyEdit && <button className="btn small" onClick={() => openDailyEdit(r)}>编辑</button>}
-                    {cfg.del && <button className="btn small danger" onClick={() => del(r.id)}>删除</button>}
+                    {cfg.del && isAdmin && <button className="btn small danger" onClick={() => del(r.id)}>删除</button>}
                     {cfg.dl && <button className="btn small" onClick={() => downloadSourceFile(r)}>下载</button>}
                     {cfg.handle && r.type === '账单预警' && <button className="btn small primary" onClick={() => openRecharge(r)}>充值</button>}
                     {cfg.handle && r.type === '停单提醒' && <button className="btn small primary" onClick={() => openStop(r)}>停单</button>}
                     {cfg.reset && <button className="btn small" onClick={() => resetPwd(r.id)}>重置密码</button>}
                     {cfg.pwd && <button className="btn small primary" onClick={() => setPwdModal({ id: r.id, username: r.username, password: '', confirm: '' })}>修改密码</button>}
+                    {kind === 'users' && <button className="btn small" onClick={() => openUserEdit(r)}>编辑</button>}
                   </td>}
                   {cols.map(c => <td key={c.k} className={c.num ? 'num' : ''}>{cell(c, r)}</td>)}
                 </tr>
@@ -995,6 +1057,25 @@ export default function SimpleList({ kind }) {
             <div className="field"><label>状态</label><select value={simpleModal.status} onChange={e => setSimpleModal({ ...simpleModal, status: Number(e.target.value) })}><option value={1}>启用</option><option value={0}>停用</option></select></div>
           </div>
           <div className="foot"><button className="btn" onClick={() => setSimpleModal(null)}>取消</button><button className="btn primary" onClick={addSimple}>保存</button></div>
+        </Modal>
+      )}
+
+      {sfModal && (
+        <Modal title="上传文件" onClose={() => setSfModal(false)}>
+          <div className="field" style={{ marginBottom: 14 }}>
+            <label>文件类型</label>
+            <select value={sfCategory} onChange={e => setSfCategory(e.target.value)}>
+              <option value="手动">手动</option>
+              <option value="进货">进货</option>
+              <option value="出货">出货</option>
+              <option value="提单">提单</option>
+            </select>
+          </div>
+          <input type="file" ref={sfFileRef} />
+          <div className="foot">
+            <button className="btn" onClick={() => setSfModal(false)}>取消</button>
+            <button className="btn primary" onClick={() => uploadSourceFile().catch(e => showError(e.message))}>上传</button>
+          </div>
         </Modal>
       )}
 
@@ -1506,6 +1587,41 @@ export default function SimpleList({ kind }) {
         </Modal>
       )}
 
+      {userEdit && (
+        <Modal title={`编辑账户 · ${userEdit.username}`} onClose={() => setUserEdit(null)}>
+          <div className="field" style={{ marginBottom: 10 }}><label>昵称</label>
+            <ClearableInput value={userEdit.nickname} onChange={e => setUserEdit({ ...userEdit, nickname: e.target.value })} /></div>
+          <div className="field" style={{ marginBottom: 10 }}><label>角色</label>
+            <select value={userEdit.role_id ?? ''} onChange={e => setUserEdit({ ...userEdit, role_id: Number(e.target.value) })}>
+              {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select></div>
+          <div className="field" style={{ marginBottom: 14 }}><label>状态</label>
+            <select value={userEdit.status} onChange={e => setUserEdit({ ...userEdit, status: Number(e.target.value) })}>
+              <option value={1}>启用</option>
+              <option value={0}>停用</option>
+            </select></div>
+          <div className="foot">
+            <button className="btn" onClick={() => setUserEdit(null)}>取消</button>
+            <button className="btn primary" onClick={saveUserEdit}>保存</button>
+          </div>
+        </Modal>
+      )}
+
+      {roleCreate && (
+        <Modal title="新增角色" onClose={() => setRoleCreate(null)}>
+          <div className="field" style={{ marginBottom: 10 }}><label>角色名称</label>
+            <ClearableInput value={roleCreate.name} onChange={e => setRoleCreate({ ...roleCreate, name: e.target.value })} placeholder="如：运营助理" /></div>
+          <div className="field" style={{ marginBottom: 10 }}><label>角色编码</label>
+            <ClearableInput value={roleCreate.code} onChange={e => setRoleCreate({ ...roleCreate, code: e.target.value })} placeholder="如：operator2（唯一，用于系统识别）" /></div>
+          <div className="field" style={{ marginBottom: 14 }}><label>备注</label>
+            <ClearableInput value={roleCreate.note} onChange={e => setRoleCreate({ ...roleCreate, note: e.target.value })} /></div>
+          <div className="foot">
+            <button className="btn" onClick={() => setRoleCreate(null)}>取消</button>
+            <button className="btn primary" onClick={saveRoleCreate}>创建</button>
+          </div>
+        </Modal>
+      )}
+
       {rolePermModal && (
         <Modal title="角色菜单权限" onClose={() => setRolePermModal(null)}>
           <div className="field"><label>角色</label>
@@ -1526,6 +1642,7 @@ export default function SimpleList({ kind }) {
             </tbody>
           </table>
           <div className="foot">
+            <button className="btn danger" onClick={() => deleteRole(rolePermModal.rid)}>删除角色</button>
             <button className="btn" onClick={() => setRolePermModal(null)}>取消</button>
             <button className="btn primary" onClick={saveRolePerms}>保存</button>
           </div>

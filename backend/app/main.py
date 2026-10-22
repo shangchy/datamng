@@ -89,6 +89,8 @@ def _migrate_schema():
                 ("operator_id", "INTEGER"),
                 ("dup_order_nos", "TEXT"),
                 ("change_fields_json", "TEXT"),
+                ("created_by", "VARCHAR(50)"),
+                ("updated_by", "VARCHAR(50)"),
             ]:
                 if col not in order_cols:
                     conn.execute(text(f"ALTER TABLE orders ADD COLUMN {col} {ddl}"))
@@ -403,6 +405,38 @@ def _scheduler_loop():
         time.sleep(60)  # 防止重复触发
 
 
+def _backup_loop():
+    """每天按配置时间执行一次数据库备份（仅保留近 N 天）"""
+    from .models import SysConfig
+    from .backup import backup_database
+    while True:
+        try:
+            db = SessionLocal()
+            cfg = db.query(SysConfig).filter(SysConfig.key == "backup_time").first()
+            trigger = cfg.value if cfg and cfg.value else "12:00"
+            keep_cfg = db.query(SysConfig).filter(SysConfig.key == "backup_keep_days").first()
+            keep_days = int(keep_cfg.value) if keep_cfg and (keep_cfg.value or "").strip().isdigit() else 7
+            db.close()
+        except Exception:  # noqa
+            trigger = "12:00"
+            keep_days = 7
+        try:
+            hh, mm = [int(x) for x in trigger.split(":")]
+        except Exception:  # noqa
+            hh, mm = 12, 0
+        now = datetime.now()
+        next_run = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if next_run <= now:
+            next_run += timedelta(days=1)
+        time.sleep((next_run - now).total_seconds())
+        try:
+            dest = backup_database(keep_days=keep_days)
+            print(f"[backup] 数据库备份完成：{dest}")
+        except Exception as e:  # noqa
+            print(f"[backup] 备份异常: {e}")
+        time.sleep(60)  # 防止重复触发
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content={"code": exc.status_code, "data": None, "msg": exc.detail})
@@ -432,6 +466,7 @@ def on_startup():
     finally:
         db.close()
     threading.Thread(target=_scheduler_loop, daemon=True).start()
+    threading.Thread(target=_backup_loop, daemon=True).start()
 
 
 @app.get("/healthz")

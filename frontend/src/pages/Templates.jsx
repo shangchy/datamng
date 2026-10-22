@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { api } from '../api'
+import { api, getUser } from '../api'
 import { Modal, useToast, useConfirm, ClearableInput } from '../components/ui'
 
 const SOURCE_LABELS = {
@@ -14,6 +14,8 @@ const emptyStyle = { zebra: 'FFFFFF', border: true, font: '宋体', font_size: 1
 export default function Templates() {
   const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
+  const user = getUser() || {}
+  const isAdmin = user.role_code === 'admin' || (user.permissions || []).includes('*')
   const [rows, setRows] = useState([])
   const [modal, setModal] = useState(null) // {isNew, form}
 
@@ -72,7 +74,7 @@ export default function Templates() {
                   <td><code>{t.filename_rule}</code></td><td>{(t.columns || []).length}</td>
                   <td className="ops">
                     <button className="btn small" onClick={() => openEdit(t)}>编辑</button>{' '}
-                    <button className="btn small danger" onClick={() => del(t)}>删除</button>
+                    {isAdmin && <button className="btn small danger" onClick={() => del(t)}>删除</button>}
                   </td>
                 </tr>
               ))}

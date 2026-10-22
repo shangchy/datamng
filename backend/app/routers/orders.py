@@ -118,6 +118,10 @@ def _operator_name(db, o: Order) -> str:
     return ""
 
 
+def _user_label(user) -> str:
+    return (user.nickname or user.username) if user else ""
+
+
 def _order_dict(db, o: Order, alert_order_ids=None, cache=None) -> dict:
     cache = cache or {}
     channels = cache.get("channels", {})
@@ -180,6 +184,7 @@ def _order_dict(db, o: Order, alert_order_ids=None, cache=None) -> dict:
         "excl_province": norm_region(o.excl_province), "excl_city": norm_region(o.excl_city),
         "qty": o.qty, "age_min": o.age_min, "age_max": o.age_max, "pv": o.pv,
         "created_at": fmt_dt(o.created_at), "stop_date": fmt_date(o.stop_date) if o.stop_date else None,
+        "created_by": o.created_by or "", "updated_by": o.updated_by or "",
         "has_alert": (o.id in alert_order_ids and o.status in ("在执", "待停")) if alert_order_ids is not None else False,
     }
 
@@ -589,6 +594,8 @@ def create_order(body: OrderBody, db: Session = Depends(get_db), user=Depends(ge
                check_collision=body.check_collision,
                dist_config_json=json.dumps(body.dist_config, ensure_ascii=False) if body.dist_config else None)
     o.template_id = body.template_id if body.template_id is not None else match_template(db, o)
+    o.created_by = _user_label(user)
+    o.updated_by = _user_label(user)
     db.add(o)
     db.flush()
     url_list = []
@@ -670,6 +677,7 @@ def update_order(oid: int, body: OrderBody, db: Session = Depends(get_db), user=
     o.change_fields_json = json.dumps(changed_fields, ensure_ascii=False) if (new_status == "改单" and changed_fields) else None
     o.stop_date = date.today() if new_status in ("已停", "待停") else None
     o.updated_at = datetime.now()
+    o.updated_by = _user_label(user)
     db.query(OrderUrl).filter(OrderUrl.order_id == oid).delete()
     url_list = []
     for i, u in enumerate(body.urls):
@@ -698,7 +706,7 @@ def update_order(oid: int, body: OrderBody, db: Session = Depends(get_db), user=
 
 
 @router.put("/{oid}/dist-config")
-def save_dist_config(oid: int, body: OrderDistConfigBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def save_dist_config(oid: int, body: OrderDistConfigBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
     o = db.query(Order).filter(Order.id == oid).first()
     if not o:
         raise HTTPException(status_code=404, detail="订单不存在")
@@ -706,12 +714,13 @@ def save_dist_config(oid: int, body: OrderDistConfigBody, db: Session = Depends(
     o.filename_rule = body.filename_rule or ""
     o.dist_config_json = json.dumps(body.dist_config, ensure_ascii=False) if body.dist_config else None
     o.updated_at = datetime.now()
+    o.updated_by = _user_label(user)
     db.commit()
     return {"code": 0, "data": None, "msg": "下发配置已保存"}
 
 
 @router.delete("/{oid}")
-def delete_order(oid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def delete_order(oid: int, db: Session = Depends(get_db), _=Depends(require_admin)):
     o = db.query(Order).filter(Order.id == oid).first()
     if not o:
         raise HTTPException(status_code=404, detail="订单不存在")
@@ -723,7 +732,7 @@ def delete_order(oid: int, db: Session = Depends(get_db), _=Depends(get_current_
 
 
 @router.post("/{oid}/stop")
-def stop_order(oid: int, body: StopBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def stop_order(oid: int, body: StopBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
     o = db.query(Order).filter(Order.id == oid).first()
     if not o:
         raise HTTPException(status_code=404, detail="订单不存在")
@@ -735,13 +744,14 @@ def stop_order(oid: int, body: StopBody, db: Session = Depends(get_db), _=Depend
     o.status = "待停"
     o.stop_date = date.today()
     o.updated_at = datetime.now()
+    o.updated_by = _user_label(user)
     db.query(Alert).filter(Alert.type == "停单提醒", Alert.order_id == o.id, Alert.status == "未处理").delete()
     db.commit()
     return {"code": 0, "data": None, "msg": "已提交停单（状态：待停）"}
 
 
 @router.post("/{oid}/cancel-stop")
-def cancel_stop(oid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def cancel_stop(oid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
     """取消停单：待停订单恢复为在执（仅状态与更新时间变化）"""
     o = db.query(Order).filter(Order.id == oid).first()
     if not o:
@@ -751,12 +761,13 @@ def cancel_stop(oid: int, db: Session = Depends(get_db), _=Depends(get_current_u
     o.status = "在执"
     o.stop_date = None
     o.updated_at = datetime.now()
+    o.updated_by = _user_label(user)
     db.commit()
     return {"code": 0, "data": None, "msg": "已取消停单（状态：在执）"}
 
 
 @router.post("/batch-stop")
-def batch_stop(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def batch_stop(body: BatchStopBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
     if body.order_date:
         if body.order_date > date.today():
             raise HTTPException(status_code=400, detail="更新日期不能是未来日期，请修改更新日期")
@@ -769,6 +780,7 @@ def batch_stop(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(get
         o.status = "待停"
         o.stop_date = date.today()
         o.updated_at = datetime.now()
+        o.updated_by = _user_label(user)
     if ids:
         db.query(Alert).filter(Alert.type == "停单提醒", Alert.order_id.in_(ids), Alert.status == "未处理").delete()
     db.commit()
@@ -790,6 +802,7 @@ def batch_reopen(body: BatchStopBody, db: Session = Depends(get_db), user=Depend
             o.status = "未提"
             o.stop_date = None
             o.updated_at = datetime.now()
+            o.updated_by = _user_label(user)
             order_nos.append(o.order_no)
     if order_nos:
         _op_log(db, user, "batch_reopen_orders", f"批量复提 {len(order_nos)} 单", None, {"order_nos": order_nos})
@@ -798,7 +811,7 @@ def batch_reopen(body: BatchStopBody, db: Session = Depends(get_db), user=Depend
 
 
 @router.post("/{oid}/reopen")
-def reopen_order(oid: int, body: ReopenBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def reopen_order(oid: int, body: ReopenBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
     """复提：已停订单改回未提（状态默认未提，更新日期默认当天，可改开始/结束日期）"""
     o = db.query(Order).filter(Order.id == oid).first()
     if not o:
@@ -818,12 +831,13 @@ def reopen_order(oid: int, body: ReopenBody, db: Session = Depends(get_db), _=De
     o.status = "未提"
     o.stop_date = None
     o.updated_at = datetime.now()
+    o.updated_by = _user_label(user)
     db.commit()
     return {"code": 0, "data": None, "msg": "已复提（状态：未提）"}
 
 
 @router.post("/batch-delete")
-def batch_delete(body: BatchStopBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def batch_delete(body: BatchStopBody, db: Session = Depends(get_db), user=Depends(require_admin)):
     rows = db.query(Order).filter(Order.id.in_(body.ids)).all()
     ids = [o.id for o in rows]
     order_nos = [o.order_no for o in rows]
@@ -854,29 +868,21 @@ def batch_extend(body: dict, db: Session = Depends(get_db), user=Depends(get_cur
     for o in rows:
         o.end_date = ed
         o.updated_at = datetime.now()
+        o.updated_by = _user_label(user)
     _op_log(db, user, "batch_extend_orders", f"批量延期 {len(rows)} 单，截止日期 {end_date}", None, {"ids": ids})
     db.commit()
     return {"code": 0, "data": {"updated": len(rows)}, "msg": f"已延期 {len(rows)} 单，截止日期 {end_date}"}
 
 
 @router.post("/batch-group")
-def batch_group(body: BatchGroupBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def batch_group(body: BatchGroupBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
     rows = db.query(Order).filter(Order.id.in_(body.ids)).all()
     for o in rows:
         o.group_name = body.group_name or ""
         o.updated_at = datetime.now()
+        o.updated_by = _user_label(user)
     db.commit()
     return {"code": 0, "data": {"updated": len(rows)}, "msg": f"已修改 {len(rows)} 单小组"}
-
-
-@router.post("/recheck-alerts")
-def recheck_alerts(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """预警检查：清除未处理停单提醒，再按「订单预警天数」重新生成（在执 + 截止日期 <= 今天+预警天数）"""
-    from ..routers.data import _regenerate_stop_alerts
-    cleared, created = _regenerate_stop_alerts(db)
-    db.commit()
-    return {"code": 0, "data": {"cleared": cleared, "created": created},
-            "msg": f"已清除 {cleared} 条预警，重新生成 {created} 条"}
 
 
 @router.post("/fix-stop-end-dates")
@@ -989,10 +995,10 @@ def _export_row(db, o):
         (o.age_min if o.age_min is not None else ""),
         (o.age_max if o.age_max is not None else ""),
         (o.pv if o.pv is not None else ""),
-        o.province or "",
-        o.excl_province or "",
-        o.city or "",
-        o.excl_city or "",
+        norm_region(o.province),
+        norm_region(o.excl_province),
+        norm_region(o.city),
+        norm_region(o.excl_city),
     ]
 
 
@@ -1332,7 +1338,7 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
             excl_city_raw = str(r.get("excl_city") or "").strip()
             # 省份与排除地市冲突校验（省份非全国且排除地市不属于该省）
             if province and "全国" not in province and excl_city_raw:
-                provs = [p for p in re.split(r"[,，]", province) if p.strip()]
+                provs = [p for p in re.split(r"[|｜,，;；]", province) if p.strip()]
                 excl_cities = [c for c in re.split(r"[|｜,，;；]", excl_city_raw) if c.strip()]
                 all_cities = set()
                 for p in provs:
@@ -1447,6 +1453,7 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                         db.query(Alert).filter(Alert.type == "停单提醒", Alert.order_id == existing.id,
                                                Alert.status == "未处理").delete(synchronize_session=False)
                 existing.updated_at = datetime.now()
+                existing.updated_by = _user_label(user)
                 db.query(OrderUrl).filter(OrderUrl.order_id == existing.id).delete()
                 if url_str:
                     urls = [u for u in re.split(r"[\n\r]+", url_str) if u.strip()]
@@ -1489,6 +1496,8 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                           tpl_id=tpl.id if tpl else None,
                            group_name=r.get("group_name"), export_filename=r.get("export_filename"),
                            add_name=add_name, check_collision=check_collision)
+                o.created_by = _user_label(user)
+                o.updated_by = _user_label(user)
                 db.add(o)
                 db.flush()
                 o.template_id = match_template(db, o)

@@ -18,25 +18,28 @@ const TITLE_MAP = {
 const MENUS = [
   { key: '/', name: '工作台', icon: '📊' },
   { key: '/orders', name: '订单管理', icon: '📝', perm: 'order:view' },
-  { key: '/daily', name: '日活管理', icon: '📈', perm: 'data:view' },
+  { key: '/daily', name: '日活管理', icon: '📈', perm: 'daily:view' },
   { key: '/bills', name: '账单管理', icon: '💰', perm: 'bill:view' },
   { key: '/customers', name: '客户管理', icon: '👤', perm: 'customer:view' },
-  { key: 'data', name: '业务数据', icon: '📋', perm: 'data:view', children: [
-    { key: '/tidabiao-history', name: '提单历史' },
-    { key: '/wash-names', name: '洗名库' },
-    { key: '/fund', name: '公积金' },
-    { key: '/source-files', name: '文件管理' },
+  { key: '/alerts', name: '预警中心', icon: '🔔', perm: 'alert:view' },
+  { key: 'data', name: '业务数据', icon: '📋', children: [
+    { key: '/tidabiao-history', name: '提单历史', perm: 'tidabiao:view' },
+    { key: '/wash-names', name: '洗名库', perm: 'wash:view' },
+    { key: '/fund', name: '公积金', perm: 'fund:view' },
+    { key: '/source-files', name: '文件管理', perm: 'file:view' },
   ] },
-  { key: 'master', name: '基础配置', icon: '🗄️', perm: 'master:view', children: [
-    { key: '/parts', name: '配件管理' },
-    { key: '/categories', name: '品类管理' },
-    { key: '/channels', name: '渠道管理' },
-    { key: '/operators', name: '运营商管理' },
-    { key: '/templates', name: '模版管理' },
+  { key: 'master', name: '基础配置', icon: '🗄️', children: [
+    { key: '/parts', name: '配件管理', perm: 'parts:view' },
+    { key: '/categories', name: '品类管理', perm: 'category:view' },
+    { key: '/channels', name: '渠道管理', perm: 'channel:view' },
+    { key: '/operators', name: '运营商管理', perm: 'operator:view' },
+    { key: '/templates', name: '模版管理', perm: 'template:view' },
   ] },
-  { key: '/accounts', name: '账户管理', icon: '⚙️', admin: true },
-  { key: '/config-center', name: '配置中心', icon: '🛠️', admin: true },
-  { key: '/logs', name: '日志管理', icon: '📜', admin: true },
+  { key: 'system', name: '系统管理', icon: '⚙️', children: [
+    { key: '/accounts', name: '账户管理', perm: 'account:view' },
+    { key: '/config-center', name: '配置中心', perm: 'config:view' },
+    { key: '/logs', name: '日志管理', perm: 'log:view' },
+  ] },
 ]
 
 export default function Layout() {
@@ -64,19 +67,20 @@ export default function Layout() {
   function renderMenus() {
     const perms = user.permissions || []
     const isAdmin = user.role_code === 'admin' || perms.includes('*')
+    const canSee = (perm) => isAdmin || !perm || perms.includes(perm)
     return MENUS.filter(m => {
-      if (m.admin && !isAdmin) return false
-      if (m.perm && !isAdmin && !perms.includes(m.perm)) return false
-      return true
+      if (m.children) return m.children.some(c => canSee(c.perm))
+      return canSee(m.perm)
     }).map(m => {
       if (m.children) {
         const open = openSub[m.key]
+        const visibleChildren = m.children.filter(c => canSee(c.perm))
         return (
           <React.Fragment key={m.key}>
             <a onClick={() => setOpenSub({ ...openSub, [m.key]: !open })}>
               <span>{m.icon}</span>{m.name}<span className="toggle">{open ? '▼' : '▶'}</span>
             </a>
-            {open && m.children.map(c => (
+            {open && visibleChildren.map(c => (
               <NavLink key={c.key} to={c.key} className="sub">
                 <span></span>{c.name}
               </NavLink>

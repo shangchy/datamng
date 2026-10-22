@@ -42,29 +42,31 @@ export default function ConfigCenter() {
   return (
     <div className="page">
       {confirmEl}
-      <div className="panel">
+      <div className="panel" style={{ flex: '2 1 0' }}>
         <h3>配置中心</h3>
-        <table>
-          <thead><tr><th>配置项</th><th>值</th><th className="ops">操作</th></tr></thead>
-          <tbody>
-            {items.map(it => (
-              <tr key={it.key}>
-                <td>{it.label}</td>
-                <td>
-                  {it.type === 'time'
-                    ? <input type="time" value={it.value} onChange={e => setValue(it.key, e.target.value)} />
-                    : it.type === 'number'
-                      ? <input type="number" value={it.value} onChange={e => setValue(it.key, e.target.value)} />
-                      : <input value={it.value} onChange={e => setValue(it.key, e.target.value)} />}
-                </td>
-                <td className="ops"><button className="btn small primary" disabled={saving} onClick={() => save(it)}>保存</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="table-scroll">
+          <table>
+            <thead><tr><th>配置项</th><th>值</th><th className="ops">操作</th></tr></thead>
+            <tbody>
+              {items.map(it => (
+                <tr key={it.key}>
+                  <td>{it.label}</td>
+                  <td>
+                    {it.type === 'time'
+                      ? <input type="time" value={it.value} onChange={e => setValue(it.key, e.target.value)} />
+                      : it.type === 'number'
+                        ? <input type="number" value={it.value} onChange={e => setValue(it.key, e.target.value)} />
+                        : <input value={it.value} onChange={e => setValue(it.key, e.target.value)} />}
+                  </td>
+                  <td className="ops"><button className="btn small primary" disabled={saving} onClick={() => save(it)}>保存</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <div className="panel">
+      <div className="panel" style={{ flex: 'none' }}>
         <h3>预警数据重置</h3>
         <div className="row" style={{ alignItems: 'center', gap: 12 }}>
           <div className="field" style={{ flex: 'none' }}><label>清除日期（此日期之前的预警）</label>

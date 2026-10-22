@@ -2196,6 +2196,21 @@ def download_source_file(sid: int, db: Session = Depends(get_db), _=Depends(get_
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(s.filename)}"})
 
 
+@router.post("/source-files/upload")
+async def upload_source_file(file: UploadFile = File(...), category: str = Form("手动"),
+                             db: Session = Depends(get_db), _=Depends(get_current_user)):
+    fn = file.filename or ""
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="文件内容为空")
+    ext = fn.rsplit(".", 1)[-1].lower() if "." in fn else ""
+    cat = (category or "手动").strip() or "手动"
+    db.add(SourceFile(filename=fn, file_data=content, file_type=ext or "file",
+                      category=cat, size=len(content)))
+    db.commit()
+    return {"code": 0, "data": None, "msg": "上传成功"}
+
+
 @router.delete("/source-files/{sid}")
 def delete_source_file(sid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     s = db.query(SourceFile).filter(SourceFile.id == sid).first()
@@ -3067,13 +3082,6 @@ def set_alert_config(body: dict, db: Session = Depends(get_db), _=Depends(get_cu
             db.add(SysConfig(key="alert_days", value=str(days)))
     db.commit()
     return {"code": 0, "data": None, "msg": "已保存"}
-
-
-@router.post("/alerts/scan")
-def manual_scan(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    run_alert_scan(db)
-    count = db.query(func.count(Alert.id)).filter(Alert.status == "未处理").scalar() or 0
-    return {"code": 0, "data": {"unhandled": int(count)}, "msg": "预警扫描完成"}
 
 
 @router.post("/alerts/reset")

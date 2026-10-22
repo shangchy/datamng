@@ -33,6 +33,19 @@ def seed(db):
         ("master:view", "查看主数据", "master"), ("master:edit", "维护主数据", "master"),
         ("data:view", "查看数据", "data"), ("bill:view", "查看账单", "bill"),
         ("alert:view", "查看预警", "alert"), ("alert:handle", "处理预警", "alert"),
+        # 菜单级细粒度权限（每个菜单一项）
+        ("daily:view", "日活管理", "data"),
+        ("tidabiao:view", "提单历史", "order"),
+        ("wash:view", "洗名库", "data"),
+        ("fund:view", "公积金", "data"),
+        ("file:view", "文件管理", "data"),
+        ("parts:view", "配件管理", "master"),
+        ("category:view", "品类管理", "master"),
+        ("channel:view", "渠道管理", "master"),
+        ("operator:view", "运营商管理", "master"),
+        ("template:view", "模版管理", "master"),
+        ("config:view", "配置中心", "system"),
+        ("log:view", "日志管理", "system"),
     ]:
         p = db.query(SysPermission).filter(SysPermission.code == code).first()
         if not p:
@@ -43,6 +56,7 @@ def seed(db):
     db.commit()
 
     _backfill_role_permissions(db)
+    _backfill_granular_permissions(db)
 
     # 账户
     users = [("admin", "超级管理员", "admin"), ("lemon001", "柠檬一号", "operator"), ("lemon002", "柠檬二号", "operator")]
@@ -103,8 +117,10 @@ def seed(db):
 
 
 def _backfill_role_permissions(db):
-    """非 admin 角色默认开放除账户/日志外的所有菜单查看权限（保持既有行为，管理员可再收紧）"""
-    default_view = ["order:view", "customer:view", "master:view", "data:view", "bill:view", "alert:view"]
+    """非 admin 角色默认开放除系统管理外的所有菜单查看权限（保持既有行为，管理员可再收紧）"""
+    default_view = ["order:view", "customer:view", "bill:view", "alert:view",
+                    "daily:view", "tidabiao:view", "wash:view", "fund:view", "file:view",
+                    "parts:view", "category:view", "channel:view", "operator:view", "template:view"]
     perm_id = {p.code: p.id for p in db.query(SysPermission).all()}
     for r in db.query(SysRole).filter(SysRole.code != "admin").all():
         existing = db.query(sys_role_permission).filter(sys_role_permission.c.role_id == r.id).count()
@@ -113,6 +129,30 @@ def _backfill_role_permissions(db):
                 if code in perm_id:
                     db.execute(sys_role_permission.insert().values(role_id=r.id, permission_id=perm_id[code]))
     db.commit()
+
+
+def _backfill_granular_permissions(db):
+    """把旧的粗粒度菜单权限（data:view / master:view）细化到每个菜单，兼容已有角色"""
+    groups = {
+        "data:view": ["daily:view", "tidabiao:view", "wash:view", "fund:view", "file:view"],
+        "master:view": ["parts:view", "category:view", "channel:view", "operator:view", "template:view"],
+    }
+    perm_id = {p.code: p.id for p in db.query(SysPermission).all()}
+    changed = False
+    for r in db.query(SysRole).filter(SysRole.code != "admin").all():
+        rows = db.query(SysPermission.code).join(
+            sys_role_permission, sys_role_permission.c.permission_id == SysPermission.id
+        ).filter(sys_role_permission.c.role_id == r.id).all()
+        codes = {c[0] for c in rows}
+        for old, news in groups.items():
+            if old in codes:
+                for code in news:
+                    if code in perm_id and code not in codes:
+                        db.execute(sys_role_permission.insert().values(role_id=r.id, permission_id=perm_id[code]))
+                        codes.add(code)
+                        changed = True
+    if changed:
+        db.commit()
 
 
 def backfill_order_templates(db):

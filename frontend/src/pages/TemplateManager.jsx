@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { api, getToken, downloadFile } from '../api'
+import { api, getToken, downloadFile, getUser } from '../api'
 import { Modal, Badge, useToast, useConfirm, Loading, ClearableInput } from '../components/ui'
 
 function plainText(html) {
@@ -47,6 +47,8 @@ function RichTextEditor({ value, onChange }) {
 export default function TemplateManager() {
   const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
+  const user = getUser() || {}
+  const isAdmin = user.role_code === 'admin' || (user.permissions || []).includes('*')
   const [rows, setRows] = useState([])
   const [modal, setModal] = useState(null) // {isNew, form}
   const [q, setQ] = useState('')
@@ -149,7 +151,7 @@ export default function TemplateManager() {
                   <td className="ops">
                     <button className="btn small" onClick={() => openEdit(t)}>编辑</button>{' '}
                     {t.has_file && <button className="btn small green" onClick={() => downloadFile(`/api/templates/${t.id}/download`).catch(e => showError(e.message))}>下载</button>}{' '}
-                    <button className="btn small danger" onClick={() => del(t)}>删除</button>
+                    {isAdmin && <button className="btn small danger" onClick={() => del(t)}>删除</button>}
                   </td>
                 </tr>
               ))}
@@ -180,7 +182,7 @@ export default function TemplateManager() {
                   : <span style={{ fontSize: 13, color: 'var(--sub)' }}>未上传</span>}
                 <button className="btn small" onClick={() => fileRef.current.click()}>上传</button>
                 {modal.form.has_file && <button className="btn small green" onClick={() => downloadFile(`/api/templates/${modal.form.id}/download`).catch(e => showError(e.message))}>下载</button>}
-                {modal.form.has_file && <button className="btn small danger" onClick={deleteFile}>删除文件</button>}
+                {modal.form.has_file && isAdmin && <button className="btn small danger" onClick={deleteFile}>删除文件</button>}
               </div>
             </div>
           )}

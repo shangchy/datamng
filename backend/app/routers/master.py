@@ -425,6 +425,8 @@ CONFIG_ITEMS = [
     {"key": "daily_recent_days", "label": "日活列表默认最近天数", "type": "number", "default": "3"},
     {"key": "check_repeat_days", "label": "工单检查重复天数", "type": "number", "default": "30"},
     {"key": "order_alert_days", "label": "订单预警天数", "type": "number", "default": "0"},
+    {"key": "backup_time", "label": "数据库备份时间", "type": "time", "default": "12:00"},
+    {"key": "backup_keep_days", "label": "数据库备份保存天数", "type": "number", "default": "7"},
 ]
 
 

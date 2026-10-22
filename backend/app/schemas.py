@@ -36,6 +36,17 @@ class RolePermissionsBody(BaseModel):
     codes: list[str] = []
 
 
+class RoleCreate(BaseModel):
+    name: str
+    code: str
+    note: str = ""
+
+
+class RoleUpdate(BaseModel):
+    name: Optional[str] = None
+    note: Optional[str] = None
+
+
 class CustomerBody(BaseModel):
     code: str
     name: str
