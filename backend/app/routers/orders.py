@@ -24,15 +24,16 @@ router = APIRouter(prefix="/api/orders", tags=["orders"])
 
 ORDER_HEADER_MAP = {
     "甲方": "upstream", "上游": "upstream", "下游": "customer", "一级代理": "customer", "客户": "customer",
+    "代理": "customer",
     "二级代理": "secondary_agent",
-    "提单日": "order_date", "更新日期": "order_date", "日期": "order_date",
+    "提单日": "order_date", "更新日期": "order_date", "日期": "order_date", "更新": "order_date",
     "订单号": "order_no", "订单编号": "order_no", "编号": "order_no",
     "定价": "price", "单价": "price",
     "分组": "group_name", "小组": "group_name", "小组名": "group_name",
-    "模版编号": "tpl_code", "出数模版": "tpl_code",
+    "模版编号": "tpl_code", "出数模版": "tpl_code", "模版": "tpl_code",
     "导出文件名": "export_filename", "出数excel命名": "export_filename",
-    "是否加名": "add_name",
-    "是否撞库": "check_collision",
+    "是否加名": "add_name", "加名": "add_name",
+    "是否撞库": "check_collision", "撞库": "check_collision",
     "状态": "status",
     "平台": "platform",
     "渠道": "channel", "类型": "channel",
@@ -44,14 +45,15 @@ ORDER_HEADER_MAP = {
     "省份": "province", "地市": "city", "排除省": "excl_province", "排除市": "excl_city",
     "排除省份": "excl_province", "排除地市": "excl_city", "排除地": "excl_city",
     "年龄上限": "age_max", "年龄下限": "age_min", "PV": "pv",
+    "上限": "age_max", "下限": "age_min",
     "开始日期": "start_date", "截止日期": "end_date", "结束日期": "end_date",
     "开始时间": "start_date", "截止时间": "end_date",
+    "开始": "start_date", "截止": "end_date",
 }
 
-MB019_HEADERS = ["开始日期", "截止日期", "更新日期", "状态", "甲方", "订单号", "甲方订单号",
-                 "一级代理", "二级代理", "定价", "平台", "小组", "出数模版", "是否加名", "是否撞库",
-                 "渠道", "运营商", "任务名", "url", "数量", "时长",
-                 "年龄\n下限", "年龄\n上限", "pv", "省份", "排除省份", "地市", "排除地市"]
+MB019_HEADERS = ["开始", "截止", "更新", "状态", "甲方", "订单号", "代理", "定价", "平台",
+                 "小组", "模版", "加名", "撞库", "渠道", "运营商", "任务名", "url", "数量", "时长",
+                 "下限", "上限", "pv", "省份", "排除省份", "地市", "排除地市"]
 
 
 def match_template(db: Session, o) -> int:
@@ -541,6 +543,18 @@ def _find_dup_task(db, upstream_id, order_date, task_name, status="未提", excl
     return None
 
 
+def _find_dup_task_id(db, task_id, exclude_id=None):
+    """工单号唯一性校验（未停订单范围内）：task_id 为空则跳过"""
+    task_id = (task_id or "").strip()
+    if not task_id:
+        return None
+    q = db.query(Order).filter(Order.task_id == task_id,
+                               Order.status.in_(("未提", "在执", "改单", "待停")))
+    if exclude_id is not None:
+        q = q.filter(Order.id != exclude_id)
+    return q.first()
+
+
 @router.post("")
 def create_order(body: OrderBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
     _validate_region(body)
@@ -574,6 +588,8 @@ def create_order(body: OrderBody, db: Session = Depends(get_db), user=Depends(ge
                                body.province, body.city, body.excl_city)
         if gen:
             task_id = gen
+    if _find_dup_task_id(db, task_id):
+        raise HTTPException(status_code=409, detail=f"工单号「{task_id}」已存在，不能重复保存")
     warning = None
     dup = _find_dup_task(db, body.upstream_id, body.order_date, body.task_name, status="未提", operator_id=body.operator_id)
     if dup:
@@ -658,6 +674,9 @@ def update_order(oid: int, body: OrderBody, db: Session = Depends(get_db), user=
                                body.province, body.city, body.excl_city)
         if gen:
             body.task_id = gen
+
+    if _find_dup_task_id(db, body.task_id, exclude_id=oid):
+        raise HTTPException(status_code=409, detail=f"工单号「{body.task_id}」已存在，不能重复保存")
 
     warning = None
     dup = _find_dup_task(db, body.upstream_id, body.order_date, body.task_name, status=new_status, exclude_id=oid, operator_id=body.operator_id)
@@ -977,9 +996,7 @@ def _export_row(db, o):
         o.status or "",
         up.name if up else "",
         o.order_no or "",
-        o.task_id or "",
         cust.code if cust else "",
-        o.secondary_agent or "",
         (str(o.price) if o.price is not None else ""),
         o.platform or "",
         o.group_name or "",

@@ -6,12 +6,13 @@ export default function MultiSelect({ label, options, value, onChange, placehold
   const [kw, setKw] = useState('')
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
   const btnRef = useRef(null)
+  const items = (options || []).map(o => typeof o === 'object' && o !== null ? o : { value: o, label: String(o) })
   const selected = (value || '').split(',').filter(Boolean)
   const filtered = searchable && kw.trim()
-    ? options.filter(o => String(o).toLowerCase().includes(kw.trim().toLowerCase()))
-    : options
-  function toggle(o) {
-    const next = selected.includes(o) ? selected.filter(x => x !== o) : [...selected, o]
+    ? items.filter(it => String(it.label).toLowerCase().includes(kw.trim().toLowerCase()))
+    : items
+  function toggle(v) {
+    const next = selected.includes(v) ? selected.filter(x => x !== v) : [...selected, v]
     onChange(next.join(','))
   }
   function openDropdown() {
@@ -41,8 +42,8 @@ export default function MultiSelect({ label, options, value, onChange, placehold
             <input className="ms-search" placeholder="搜索..." value={kw} onChange={e => setKw(e.target.value)} />
           )}
           <div className="ms-list">
-            {filtered.map(o => (
-              <label key={o}><input type="checkbox" checked={selected.includes(o)} onChange={() => toggle(o)} /> {o}</label>
+            {filtered.map(it => (
+              <label key={it.value}><input type="checkbox" checked={selected.includes(it.value)} onChange={() => toggle(it.value)} /> {it.label}</label>
             ))}
             {filtered.length === 0 && <div className="ms-empty">无匹配结果</div>}
           </div>

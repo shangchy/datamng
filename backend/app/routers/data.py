@@ -2754,6 +2754,7 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     center = Alignment(horizontal="center", vertical="center")
     right = Alignment(horizontal="right", vertical="center")
+    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
     money_fmt = '#,##0.00'
 
     # ================= Sheet1 上游账单 =================
@@ -2792,7 +2793,7 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
                 for j, v in enumerate(vals, 1):
                     cell = ws1.cell(row=r, column=j, value=v)
                     cell.border = border
-                    cell.alignment = right if j in (3, 4, 5) else center
+                    cell.alignment = right if j in (3, 4, 5) else (left if j == 6 else center)
                     if j == 5:
                         cell.number_format = money_fmt
                 r += 1
@@ -2841,7 +2842,7 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
                     for j, v in enumerate(vals, 1):
                         cell = ws1.cell(row=r, column=j, value=v)
                         cell.border = border
-                        cell.alignment = right if j in (4, 5, 6) else center
+                        cell.alignment = right if j in (4, 5, 6) else (left if j == 7 else center)
                         if j == 6:
                             cell.number_format = money_fmt
                     r += 1
@@ -2883,7 +2884,7 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
             for j, v in enumerate(vals, 1):
                 cell = ws2.cell(row=r, column=j, value=v)
                 cell.border = border
-                cell.alignment = right if j in (3, 4, 5, 6) else center
+                cell.alignment = right if j in (3, 4, 5, 6) else (left if j == 7 else center)
                 if j in (4, 5, 6):
                     cell.number_format = money_fmt
             r += 1
@@ -2925,7 +2926,7 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
                 for j, v in enumerate(vals, 1):
                     cell = ws2.cell(row=r, column=j, value=v)
                     cell.border = border
-                    cell.alignment = right if j in (4, 5, 6, 7) else center
+                    cell.alignment = right if j in (4, 5, 6, 7) else (left if j == 8 else center)
                     if j in (5, 6, 7):
                         cell.number_format = money_fmt
                 r += 1

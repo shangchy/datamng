@@ -176,7 +176,7 @@ th .arr { color: var(--blue); font-size: 11px; }
 .modal .row { display: flex; gap: 12px; margin-bottom: 12px; }
 .modal .field { flex: 1; min-width: 0; }
 .modal .field label { display: block; font-size: 12px; color: var(--sub); margin-bottom: 4px; }
-.modal .field label.required::after { content: ' *'; color: var(--red); }
+.modal label.required::after { content: ' *'; color: var(--red); }
 .modal .field input, .modal .field select { width: 100%; }
 .modal .field .readonly { border: 1px solid var(--line); border-radius: 6px; padding: 0 13px; line-height: 30px; background: #fafbfd; color: var(--sub); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 32px; box-sizing: border-box; }
 .modal .foot { position: sticky; bottom: 0; z-index: 2; display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--line); background: #fff; }

@@ -275,7 +275,7 @@ def _migrate_mb019_collision():
                 "甲方": "新,牛",
                 "是否加名": "是,否",
                 "是否撞库": "是,否",
-                "渠道": "106,小程序,直播间,dpi-白,dpi-灰",
+                "渠道": "106,小程序,直播间,dpi-白,dpi-灰,dpi-黑",
                 "运营商": "移动,电信,联通",
             }
             new_headers = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
@@ -297,6 +297,135 @@ def _migrate_mb019_collision():
             db.close()
     except Exception as e:  # noqa
         print(f"[migrate mb019 collision] 跳过: {e}")
+
+
+def _sync_mb019_channel_dropdown():
+    """MB-019 模版「渠道」下拉框动态同步当前渠道（含后加的 dpi-黑 等），每次启动执行（幂等）"""
+    try:
+        import io as _io
+        import openpyxl
+        from openpyxl.utils import get_column_letter
+        from openpyxl.worksheet.datavalidation import DataValidation
+        from .models import Template, Channel
+        db = SessionLocal()
+        try:
+            t = db.query(Template).filter(Template.code == "MB-019").first()
+            if not t or not t.file_data:
+                return
+            channels = [c.name.strip() for c in db.query(Channel).order_by(Channel.id).all()
+                        if c.name and c.name.strip()]
+            if not channels:
+                return
+            wb = openpyxl.load_workbook(_io.BytesIO(bytes(t.file_data)))
+            ws = wb.active
+            headers = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+            if not any(h is not None and str(h).replace("\n", "").strip() == "渠道" for h in headers):
+                return
+            ch_col = next((c for c, h in enumerate(headers, 1) if h is not None and str(h).replace("\n", "").strip() == "渠道"), None)
+            ch_letter = get_column_letter(ch_col)
+            desired = ",".join(channels)
+            # 已一致则跳过，避免无谓写库
+            current = None
+            for dv in ws.data_validations.dataValidation:
+                sq = str(dv.sqref or "")
+                if sq.startswith(ch_letter + "2:") or (":" in sq and sq.split(":")[0].rstrip("0123456789") == ch_letter):
+                    current = (dv.formula1 or "").strip('"')
+                    break
+            if current == desired:
+                return
+            dropdowns = {
+                "状态": "未提,在执,改单,待停,已停",
+                "甲方": "新,牛",
+                "加名": "是,否",
+                "撞库": "是,否",
+                "渠道": desired,
+                "运营商": "移动,电信,联通",
+            }
+            ws.data_validations.dataValidation.clear()
+            for c, h in enumerate(headers, 1):
+                if not h:
+                    continue
+                hs = str(h).replace("\n", "").strip()
+                for label, formula in dropdowns.items():
+                    if hs == label:
+                        dv = DataValidation(type="list", formula1=f'"{formula}"', allow_blank=True)
+                        ws.add_data_validation(dv)
+                        dv.add(f"{get_column_letter(c)}2:{get_column_letter(c)}1001")
+                        break
+            bio = _io.BytesIO()
+            wb.save(bio)
+            t.file_data = bio.getvalue()
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:  # noqa
+        print(f"[sync mb019 channel dropdown] 跳过: {e}")
+
+
+def _migrate_mb019_remove_cols():
+    """MB-019 模版去掉「甲方订单号」「二级代理」两列，并把表头规范为简称，重建下拉框（幂等）"""
+    target_headers = ["开始", "截止", "更新", "状态", "甲方", "订单号", "代理", "定价", "平台",
+                      "小组", "模版", "加名", "撞库", "渠道", "运营商", "任务名", "url", "数量", "时长",
+                      "下限", "上限", "pv", "省份", "排除省份", "地市", "排除地市"]
+    try:
+        import io as _io
+        import openpyxl
+        from openpyxl.utils import get_column_letter
+        from openpyxl.worksheet.datavalidation import DataValidation
+        from .models import Template, Channel
+        db = SessionLocal()
+        try:
+            t = db.query(Template).filter(Template.code == "MB-019").first()
+            if not t or not t.file_data:
+                return
+            wb = openpyxl.load_workbook(_io.BytesIO(bytes(t.file_data)))
+            ws = wb.active
+            headers = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+
+            def _norm(h):
+                return str(h).replace("\n", "").strip() if h else ""
+
+            remove_names = {"甲方订单号", "二级代理"}
+            changed = False
+            for c in sorted([c for c, h in enumerate(headers, 1) if _norm(h) in remove_names], reverse=True):
+                ws.delete_cols(c, 1)
+                changed = True
+            # 表头规范为简称
+            cur = [_norm(ws.cell(row=1, column=c).value) for c in range(1, ws.max_column + 1)]
+            if cur != target_headers:
+                for i, name in enumerate(target_headers, 1):
+                    ws.cell(row=1, column=i, value=name)
+                changed = True
+            if not changed:
+                return
+            # 删列/改表头后数据验证范围会错位，重建下拉框
+            channels = [c.name.strip() for c in db.query(Channel).order_by(Channel.id).all()
+                        if c.name and c.name.strip()]
+            dropdowns = {
+                "状态": "未提,在执,改单,待停,已停",
+                "甲方": "新,牛",
+                "加名": "是,否",
+                "撞库": "是,否",
+                "渠道": ",".join(channels) if channels else "106,小程序,直播间,dpi-白,dpi-灰,dpi-黑",
+                "运营商": "移动,电信,联通",
+            }
+            ws.data_validations.dataValidation.clear()
+            for c, h in enumerate(target_headers, 1):
+                hs = _norm(h)
+                for label, formula in dropdowns.items():
+                    if hs == label:
+                        dv = DataValidation(type="list", formula1=f'"{formula}"', allow_blank=True)
+                        ws.add_data_validation(dv)
+                        dv.add(f"{get_column_letter(c)}2:{get_column_letter(c)}1001")
+                        break
+            bio = _io.BytesIO()
+            wb.save(bio)
+            t.file_data = bio.getvalue()
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:  # noqa
+        print(f"[migrate mb019 remove cols] 跳过: {e}")
 
 
 def _dedup_channels():
@@ -348,6 +477,8 @@ _migrate_schema()
 _ensure_indexes()
 _backfill_tpl_types()
 _migrate_mb019_collision()
+_migrate_mb019_remove_cols()
+_sync_mb019_channel_dropdown()
 _dedup_channels()
 
 app = FastAPI(title="LM订单管理系统")

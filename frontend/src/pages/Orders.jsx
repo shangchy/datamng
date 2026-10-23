@@ -47,7 +47,7 @@ function IconBtn({ title, color, onClick, children }) {
 const COLS = [
   { k: 'status', l: '状态' }, { k: 'task_name', l: '任务名' }, { k: 'order_date', l: '更新日期' }, { k: 'upstream', l: '甲方' },
   { k: 'order_no', l: '订单号' }, { k: 'task_id', l: '工单号' }, { k: 'dup_order_nos', l: '重复订单' },
-  { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' }, { k: 'price', l: '定价' },
+  { k: 'customer', l: '一级代理' }, { k: 'price', l: '定价' },
   { k: 'platform', l: '平台' }, { k: 'group_name', l: '小组' }, { k: 'tpl_code', l: '出数模版' },
   { k: 'add_name', l: '是否加名' }, { k: 'check_collision', l: '是否撞库' }, { k: 'channel', l: '渠道' }, { k: 'operator', l: '运营商' },
   { k: 'url', l: 'url' }, { k: 'qty', l: '数量' },
@@ -60,15 +60,15 @@ const COLS = [
 ]
 
 const DETAIL_REGIONS = [
-  { title: '基本信息', keys: ['order_no', 'task_id', 'upstream', 'task_name', 'status', 'customer', 'secondary_agent', 'dup_order_nos'] },
-  { title: '分数信息', keys: ['order_date', 'group_name', 'tpl_code', 'add_name', 'check_collision', 'price', 'start_date', 'end_date', 'first_output_date', 'last_output_date', 'duration'] },
-  { title: '提单信息', keys: ['channel', 'operator', 'platform', 'qty', 'pv', 'age_min', 'age_max', 'province', 'city', 'excl_province', 'excl_city', 'url'] },
+  { title: '基础信息', keys: ['order_date', 'order_no', 'task_id', 'upstream', 'status', 'customer', 'dup_order_nos', 'channel', 'operator', 'start_date', 'end_date'] },
+  { title: '分数信息', keys: ['task_name', 'platform', 'group_name', 'tpl_code', 'add_name', 'check_collision', 'price', 'first_output_date', 'last_output_date', 'duration'] },
+  { title: '提单信息', keys: ['qty', 'pv', 'age_min', 'age_max', 'province', 'city', 'excl_province', 'excl_city', 'url'] },
 ]
 
 const FILTER_COLS = [
   { k: 'status', l: '状态' }, { k: 'order_date', l: '更新日期' },
   { k: 'upstream', l: '甲方' }, { k: 'order_no', l: '订单号' }, { k: 'task_id', l: '工单号' }, { k: 'empty_task', l: '空工单' },
-  { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' },
+  { k: 'customer', l: '一级代理' },
   { k: 'platform', l: '平台' }, { k: 'empty_platform', l: '空平台' }, { k: 'group_name', l: '小组' }, { k: 'task_name', l: '任务名' },
   { k: 'add_name', l: '是否加名' }, { k: 'check_collision', l: '是否撞库' }, { k: 'has_alert', l: '是否预警' }, { k: 'channel', l: '渠道' }, { k: 'operator', l: '运营商' },
   { k: 'tpl_code', l: '出数模版' }, { k: 'url', l: 'url' },
@@ -92,6 +92,9 @@ function fmtRegion(val) {
 }
 function toComma(val) {
   return (val || '').split(REGION_SEP).map(s => s.trim()).filter(Boolean).join(',')
+}
+function fmtYymmdd(val) {
+  return String(val || '').replace(/\D/g, '').slice(2)
 }
 
 export default function Orders({ variant = 'orders' }) {
@@ -193,7 +196,8 @@ export default function Orders({ variant = 'orders' }) {
   }, [])
   useEffect(() => {
     api.get('/api/customers?per_page=1000').then(r => {
-      setCustomers(r.data.rows.filter(c => c.ctype === 'downstream'))
+      setCustomers(r.data.rows.filter(c => c.ctype === 'downstream')
+        .sort((a, b) => (parseInt(a.code, 10) || 0) - (parseInt(b.code, 10) || 0)))
       setUpstreams(r.data.rows.filter(c => c.ctype === 'upstream'))
     }).catch(() => {})
     api.get('/api/channels?per_page=1000').then(r => setChannels(r.data.rows)).catch(() => {})
@@ -237,6 +241,16 @@ export default function Orders({ variant = 'orders' }) {
   const computedDuration = (form.start_date && form.end_date)
     ? String(Math.round((new Date(form.end_date + 'T00:00:00') - new Date(form.start_date + 'T00:00:00')) / 86400000))
     : ''
+
+  const isModify = modal === 'modify'
+  const isEdit = modal === 'edit'
+  const editStatus = isEdit ? (origIdentity.current?.status || '未提') : ''
+  const isEditGai = isEdit && editStatus === '改单'
+  const isEditZhi = isEdit && editStatus === '在执'
+  const restrictEdit = isEditGai || isEditZhi
+  const showScore = !isModify
+  const showTidabiao = !restrictEdit
+  const disBase = isModify || restrictEdit
 
   function sorted() {
     const list = [...rows]
@@ -350,7 +364,7 @@ export default function Orders({ variant = 'orders' }) {
       province: toComma(o.province), city: toComma(o.city), excl_province: toComma(o.excl_province),
       excl_city: toComma(o.excl_city), age_min: o.age_min ?? '', age_max: o.age_max ?? '', pv: o.pv ?? '',
       start_date: toDateInput(o.start_date), end_date: toDateInput(o.end_date),
-      order_date: toDateInput(o.order_date), price: o.price ?? '', secondary_agent: o.secondary_agent || '',
+      order_date: m === 'modify' ? '' : toDateInput(o.order_date), price: o.price ?? '', secondary_agent: o.secondary_agent || '',
       platform: o.platform || '', tpl_id: o.tpl_id ?? '', group_name: o.group_name || '',
       export_filename: o.export_filename || '', add_name: !!o.add_name, check_collision: !!o.check_collision,
       template_id: o.template_id ?? '', filename_rule: o.filename_rule || '', dist_config: o.dist_config || null,
@@ -382,8 +396,8 @@ export default function Orders({ variant = 'orders' }) {
 
   async function save() {
     const missing = []
+    if (!form.order_date) missing.push('更新日期')
     if (modal !== 'modify') {
-      if (!form.order_date) missing.push('更新日期')
       if (!(form.task_name || '').trim()) missing.push('任务名')
       if (!form.start_date) missing.push('开始日期')
       if (!form.end_date) missing.push('截止日期')
@@ -618,6 +632,14 @@ export default function Orders({ variant = 'orders' }) {
     } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
+  async function exportTemplate() {
+    setBusy(true); setBusyMsg('正在导出模版…')
+    try {
+      await downloadFile('/api/orders/export-template')
+      toast('模版已导出')
+    } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
+  }
+
   return (
     <div className="page">
       {confirmEl}
@@ -626,14 +648,15 @@ export default function Orders({ variant = 'orders' }) {
       <div className="toolbar">
         <div className={`filter-wrap ${filterCollapsed ? 'collapsed' : ''}`}>
           <FilterBar cols={FILTER_COLS} filters={filters} setFilters={setFilters} onSearch={search} fieldOptions={fieldOptions} actions={false} />
-          <MultiSelect full searchable placeholder="开始日期" options={dateOptions.start_date} value={filters.start_date || ''} onChange={v => setFilters({ ...filters, start_date: v })} />
-          <MultiSelect full searchable placeholder="截止日期" options={dateOptions.end_date} value={filters.end_date || ''} onChange={v => setFilters({ ...filters, end_date: v })} />
+          <MultiSelect full searchable placeholder="开始日期" options={(dateOptions.start_date || []).map(d => ({ value: d, label: fmtYymmdd(d) }))} value={filters.start_date || ''} onChange={v => setFilters({ ...filters, start_date: v })} />
+          <MultiSelect full searchable placeholder="截止日期" options={(dateOptions.end_date || []).map(d => ({ value: d, label: fmtYymmdd(d) }))} value={filters.end_date || ''} onChange={v => setFilters({ ...filters, end_date: v })} />
         </div>
         <div className="toolbar-actions">
           <button className="btn primary" onClick={() => search()}>查询</button>
           <button className="btn" onClick={() => { setFilters({}); search({}) }}>重置</button>
           <button className="btn icon" title={filterCollapsed ? '展开查询条件' : '隐藏查询条件'} onClick={() => setFilterCollapsed(!filterCollapsed)}>{filterCollapsed ? IconChevronDown : IconChevronUp}</button>
           <button className="btn green" onClick={exportExcel}>导出订单</button>
+          {!isStop && <button className="btn" onClick={exportTemplate}>导出模版</button>}
           {!isStop && <button className="btn" onClick={() => { setImportResult(null); setImportModal(true) }}>导入订单</button>}
           {!isStop && <button className="btn" onClick={() => { setReceiptResult(null); setReceiptModal(true) }}>导入回执</button>}
           {!isStop && <button className="btn green" onClick={() => setGenModal(true)}>生成提单表</button>}
@@ -668,9 +691,9 @@ export default function Orders({ variant = 'orders' }) {
                 {!isStop && <td><input type="checkbox" checked={selected.includes(o.id)} onChange={() => toggleSelect(o.id)} onClick={e => e.stopPropagation()} /></td>}
                 {!isStop && (
                 <td className="ops">
-                  <IconBtn title="编辑" color="#2563eb" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconEdit}</IconBtn>
-                  {['在执', '待停', '已停', '改单'].includes(o.status) && <IconBtn title="改单" color="#7c3aed" onClick={e => { e.stopPropagation(); openModify(o) }}>{IconModify}</IconBtn>}
-                  {o.status === '已停' && o.upstream === '牛' && <IconBtn title="复提" color="#059669" onClick={e => { e.stopPropagation(); openReopen(o) }}>{IconReopen}</IconBtn>}
+                  {['在执', '未提', '改单'].includes(o.status) && <IconBtn title="编辑" color="#2563eb" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconEdit}</IconBtn>}
+                  {['在执', '待停', '改单'].includes(o.status) && <IconBtn title="改单" color="#7c3aed" onClick={e => { e.stopPropagation(); openModify(o) }}>{IconModify}</IconBtn>}
+                  {o.status === '已停' && <IconBtn title="复提" color="#059669" onClick={e => { e.stopPropagation(); openReopen(o) }}>{IconReopen}</IconBtn>}
                   {o.status === '待停' && <IconBtn title="取消停单" color="#059669" onClick={e => { e.stopPropagation(); cancelStop(o) }}>{IconUndo}</IconBtn>}
                   {['在执', '改单'].includes(o.status) && <IconBtn title="停单" color="#d97706" onClick={e => { e.stopPropagation(); const d = new Date(); setStopDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); setStopReason('业务调整'); setStopTarget(o) }}>{IconStop}</IconBtn>}
                   <IconBtn title="复制新增" color="#0891b2" onClick={e => { e.stopPropagation(); copyCreate(o) }}>{IconCopy}</IconBtn>
@@ -689,94 +712,102 @@ export default function Orders({ variant = 'orders' }) {
 
       {modal && (
         <Modal title={modal === 'create' ? '新建提单' : (modal === 'modify' ? '改单' : '编辑订单')} onClose={() => setModal(null)} wide>
-          <div className="region-title">基本信息</div>
-          <fieldset disabled={modal === 'modify'} style={{ border: 'none', padding: 0, margin: 0, minWidth: 0 }}>
-          <div className="row">
-            <div className="field"><label>订单编号</label><input value={form.order_no} disabled placeholder="自动生成" /></div>
-            <div className="field"><label>工单号</label><ClearableInput value={form.task_id} onChange={e => setForm({ ...form, task_id: e.target.value })} placeholder="自动生成" /></div>
-            <div className="field"><label className="required">上游</label>
-              <select value={form.upstream_id} onChange={e => setForm({ ...form, upstream_id: e.target.value })}>
-                <option value="">请选择</option>{upstreams.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select></div>
-            <div className="field"><label className="required">任务名</label><ClearableInput value={form.task_name} onChange={e => setForm({ ...form, task_name: e.target.value })} /></div>
+          <div className="region-title" style={{ display: 'flex', alignItems: 'center', gap: 24, paddingRight: 12 }}>
+            <span>基础信息</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <label className="required" style={{ margin: 0, fontSize: 12, color: 'var(--sub)', whiteSpace: 'nowrap' }}>更新日期</label>
+              <input type="date" value={form.order_date} onChange={e => setForm({ ...form, order_date: e.target.value })} style={{ width: 160, height: 32 }} />
+            </div>
           </div>
           <div className="row">
+            <div className="field"><label className="required">开始日期</label><input type="date" value={form.start_date} disabled={disBase} onChange={e => setForm({ ...form, start_date: e.target.value })} /></div>
+            <div className="field"><label className="required">截止日期</label><input type="date" value={form.end_date} onChange={e => setForm({ ...form, end_date: e.target.value })} /></div>
+            <div className="field"><label>订单编号</label><input value={form.order_no} disabled placeholder="自动生成" /></div>
+            <div className="field"><label>工单号</label><ClearableInput value={form.task_id} disabled={disBase} onChange={e => setForm({ ...form, task_id: e.target.value })} placeholder="自动生成" /></div>
+          </div>
+          <div className="row">
+            <div className="field"><label className="required">上游</label>
+              <select value={form.upstream_id} disabled={disBase} onChange={e => setForm({ ...form, upstream_id: e.target.value })}>
+                <option value="">请选择</option>{upstreams.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select></div>
             <div className="field"><label>状态</label>
-              <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+              <select value={form.status} disabled={disBase} onChange={e => setForm({ ...form, status: e.target.value })}>
                 {['未提', '在执', '待停', '已停', '改单'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div className="field"><label className="required">一级代理</label>
-              <select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}>
+              <select value={form.customer_id} disabled={disBase} onChange={e => setForm({ ...form, customer_id: e.target.value })}>
                 <option value="">请选择</option>{customers.map(c => <option key={c.id} value={c.id}>{c.code} {c.name}</option>)}
               </select></div>
-            <div className="field"><label>二级代理</label><ClearableInput value={form.secondary_agent} onChange={e => setForm({ ...form, secondary_agent: e.target.value })} placeholder="如 罗/无" /></div>
-          </div>
-          </fieldset>
-
-          <div className="region-title">分数信息</div>
-          <div className="row">
-            <div className="field"><label className="required">更新日期</label><input type="date" value={form.order_date} onChange={e => setForm({ ...form, order_date: e.target.value })} /></div>
-            <div className="field"><label>分组</label><ClearableInput value={form.group_name} onChange={e => setForm({ ...form, group_name: e.target.value })} placeholder="分组文本" /></div>
-            <div className="field"><label>模版编号</label>
-              <select value={form.tpl_id} onChange={e => setForm({ ...form, tpl_id: e.target.value })}>
-                <option value="">请选择模版</option>
-                {tpls.map(t => <option key={t.id} value={t.id}>{t.code} {t.name}</option>)}
-              </select></div>
-          </div>
-          <div className="row">
-            <div className="field"><label>是否加名</label>
-              <select value={form.add_name ? '是' : '否'} onChange={e => setForm({ ...form, add_name: e.target.value === '是' })}>
-                <option>否</option><option>是</option>
-              </select></div>
-            <div className="field"><label>是否撞库</label>
-              <select value={form.check_collision ? '是' : '否'} onChange={e => setForm({ ...form, check_collision: e.target.value === '是' })}>
-                <option>否</option><option>是</option>
-              </select></div>
-            <div className="field"><label>定价</label><input type="number" step="0.0001" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} placeholder="元/条" /></div>
-          </div>
-          <div className="row">
-            <div className="field"><label className="required">开始日期</label><input type="date" value={form.start_date} onChange={e => setForm({ ...form, start_date: e.target.value })} /></div>
-            <div className="field"><label className="required">截止日期</label><input type="date" value={form.end_date} onChange={e => setForm({ ...form, end_date: e.target.value })} /></div>
-            <div className="field"><label>时长（自动）</label><input value={computedDuration} disabled placeholder="自动计算" /></div>
-          </div>
-
-          <div className="region-title">提单信息</div>
-          <div className="row">
             <div className="field"><label>渠道</label>
-              <select value={form.channel_id} onChange={e => setForm({ ...form, channel_id: e.target.value })}>
+              <select value={form.channel_id} disabled={disBase} onChange={e => setForm({ ...form, channel_id: e.target.value })}>
                 <option value="">请选择</option>{channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select></div>
+          </div>
+          <div className="row">
             <div className="field"><label>运营商</label>
-              <select value={form.operator_id} onChange={e => setForm({ ...form, operator_id: e.target.value })}>
+              <select value={form.operator_id} disabled={disBase} onChange={e => setForm({ ...form, operator_id: e.target.value })}>
                 <option value="">请选择</option>{operators.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select></div>
-            <div className="field"><label>平台</label>
-              <ClearableInput list="platform-list" value={form.platform} onChange={e => setForm({ ...form, platform: e.target.value })} placeholder="输入搜索或选择平台" />
-              <datalist id="platform-list">{platforms.map(p => <option key={p.id} value={p.name} />)}</datalist>
-            </div>
           </div>
-          <div className="row">
-            <div className="field"><label className="required">数量</label><input type="number" value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })} /></div>
-            <div className="field"><label>PV</label><input type="number" value={form.pv} onChange={e => setForm({ ...form, pv: e.target.value })} /></div>
-            <div className="field"><label>年龄下限</label><input type="number" value={form.age_min} onChange={e => setForm({ ...form, age_min: e.target.value })} /></div>
-            <div className="field"><label>年龄上限</label><input type="number" value={form.age_max} onChange={e => setForm({ ...form, age_max: e.target.value })} /></div>
-          </div>
-          <div className="row">
-            <div className="field"><label>省份（含全国）</label><MultiSelect full searchable options={provinceOptions} value={form.province} onChange={v => {
-              let provs = v.split(',').filter(Boolean)
-              const national = provs.includes('全国')
-              if (national) provs = ['全国']
-              setForm({ ...form, province: provs.join(','), city: '', excl_city: '', excl_province: national ? form.excl_province : '' })
-            }} placeholder="选择省份" /></div>
-            <div className="field"><label>地市（随省份联动）</label><MultiSelect full searchable disabled={isNational} options={cityOptions} value={form.city} onChange={v => setForm({ ...form, city: v })} placeholder={isNational ? '省份为全国不可选' : (cityOptions.length ? '选择地市' : '请先选择省份')} /></div>
-          </div>
-          <div className="row">
-            <div className="field"><label>排除省（仅全国）</label><MultiSelect full searchable disabled={!isNational} options={geo.provinces} value={form.excl_province} onChange={v => setForm({ ...form, excl_province: v })} placeholder={isNational ? '选择排除省' : '省份非全国不可选'} /></div>
-            <div className="field"><label>排除市（随省份联动）</label><MultiSelect full searchable disabled={!exclCityOptions.length} options={exclCityOptions} value={form.excl_city} onChange={v => setForm({ ...form, excl_city: v })} placeholder={exclCityOptions.length ? '选择排除市' : '请先选择省份'} /></div>
-          </div>
-          <div className="field" style={{ marginBottom: 12 }}><label className="required">URL（多行，一行一个）</label>
-            <textarea rows={3} value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} placeholder="https://..." /></div>
+
+          {showScore && (
+            <>
+              <div className="region-title">分数信息</div>
+              <div className="row">
+                <div className="field"><label className="required">任务名</label><ClearableInput value={form.task_name} disabled={isModify} onChange={e => setForm({ ...form, task_name: e.target.value })} /></div>
+                <div className="field"><label>平台</label>
+                  <ClearableInput list="platform-list" value={form.platform} onChange={e => setForm({ ...form, platform: e.target.value })} placeholder="输入搜索或选择平台" />
+                  <datalist id="platform-list">{platforms.map(p => <option key={p.id} value={p.name} />)}</datalist>
+                </div>
+                <div className="field"><label>分组</label><ClearableInput value={form.group_name} onChange={e => setForm({ ...form, group_name: e.target.value })} placeholder="分组文本" /></div>
+                <div className="field"><label>模版编号</label>
+                  <select value={form.tpl_id} onChange={e => setForm({ ...form, tpl_id: e.target.value })}>
+                    <option value="">请选择模版</option>
+                    {tpls.map(t => <option key={t.id} value={t.id}>{t.code} {t.name}</option>)}
+                  </select></div>
+              </div>
+              <div className="row">
+                <div className="field"><label>是否加名</label>
+                  <select value={form.add_name ? '是' : '否'} onChange={e => setForm({ ...form, add_name: e.target.value === '是' })}>
+                    <option>否</option><option>是</option>
+                  </select></div>
+                <div className="field"><label>是否撞库</label>
+                  <select value={form.check_collision ? '是' : '否'} onChange={e => setForm({ ...form, check_collision: e.target.value === '是' })}>
+                    <option>否</option><option>是</option>
+                  </select></div>
+                <div className="field"><label>定价</label><input type="number" step="0.0001" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} placeholder="元/条" /></div>
+                <div className="field"><label>时长（自动）</label><input value={computedDuration} disabled placeholder="自动计算" /></div>
+              </div>
+            </>
+          )}
+
+          {showTidabiao && (
+            <>
+              <div className="region-title">提单信息</div>
+              <div className="row">
+                <div className="field"><label className="required">数量</label><input type="number" value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })} /></div>
+                <div className="field"><label>PV</label><input type="number" value={form.pv} onChange={e => setForm({ ...form, pv: e.target.value })} /></div>
+                <div className="field"><label>年龄下限</label><input type="number" value={form.age_min} onChange={e => setForm({ ...form, age_min: e.target.value })} /></div>
+                <div className="field"><label>年龄上限</label><input type="number" value={form.age_max} onChange={e => setForm({ ...form, age_max: e.target.value })} /></div>
+              </div>
+              <div className="row">
+                <div className="field"><label>省份（含全国）</label><MultiSelect full searchable options={provinceOptions} value={form.province} onChange={v => {
+                  let provs = v.split(',').filter(Boolean)
+                  const national = provs.includes('全国')
+                  if (national) provs = ['全国']
+                  setForm({ ...form, province: provs.join(','), city: '', excl_city: '', excl_province: national ? form.excl_province : '' })
+                }} placeholder="选择省份" /></div>
+                <div className="field"><label>地市（随省份联动）</label><MultiSelect full searchable disabled={isNational} options={cityOptions} value={form.city} onChange={v => setForm({ ...form, city: v })} placeholder={isNational ? '省份为全国不可选' : (cityOptions.length ? '选择地市' : '请先选择省份')} /></div>
+              </div>
+              <div className="row">
+                <div className="field"><label>排除省（仅全国）</label><MultiSelect full searchable disabled={!isNational} options={geo.provinces} value={form.excl_province} onChange={v => setForm({ ...form, excl_province: v })} placeholder={isNational ? '选择排除省' : '省份非全国不可选'} /></div>
+                <div className="field"><label>排除市（随省份联动）</label><MultiSelect full searchable disabled={!exclCityOptions.length} options={exclCityOptions} value={form.excl_city} onChange={v => setForm({ ...form, excl_city: v })} placeholder={exclCityOptions.length ? '选择排除市' : '请先选择省份'} /></div>
+              </div>
+              <div className="field" style={{ marginBottom: 12 }}><label className="required">URL（多行，一行一个）</label>
+                <textarea rows={3} value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} placeholder="https://..." /></div>
+            </>
+          )}
           <div className="foot">
             <button className="btn" onClick={() => setModal(null)}>取消</button>
             <button className="btn primary" onClick={save}>保存</button>
@@ -914,7 +945,7 @@ export default function Orders({ variant = 'orders' }) {
 
       {importModal && (
         <Modal title="批量导入原始订单" onClose={() => setImportModal(false)}>
-          <div className="note">支持 csv / xlsx。表头参考【模版】提单表.xlsx：提单日、甲方、一级代理、二级代理、订单号、定价、分组、平台、任务名、类型/渠道、url、数量、开始日期、截止日期、时长、年龄上下限、PV、省份、排除省、地市、排除地等。</div>
+          <div className="note">支持 csv / xlsx。表头参考【模版】提单表.xlsx：开始、截止、更新、状态、甲方、订单号、代理、定价、平台、小组、模版、加名、撞库、渠道、运营商、任务名、url、数量、时长、下限、上限、pv、省份、排除省份、地市、排除地市。</div>
           <input type="file" accept=".csv,.xlsx,.xls" ref={importFileRef} />
           {importResult && (
             <div>
