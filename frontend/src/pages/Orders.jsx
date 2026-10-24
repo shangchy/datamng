@@ -249,8 +249,8 @@ export default function Orders({ variant = 'orders' }) {
   const isEditZhi = isEdit && editStatus === '在执'
   const restrictEdit = isEditGai || isEditZhi
   const showScore = !isModify
-  const showTidabiao = !restrictEdit
-  const disBase = isModify || restrictEdit
+  const showTidabiao = isAdmin || !restrictEdit
+  const disBase = isModify || (restrictEdit && !isAdmin)
 
   function sorted() {
     const list = [...rows]
@@ -691,7 +691,7 @@ export default function Orders({ variant = 'orders' }) {
                 {!isStop && <td><input type="checkbox" checked={selected.includes(o.id)} onChange={() => toggleSelect(o.id)} onClick={e => e.stopPropagation()} /></td>}
                 {!isStop && (
                 <td className="ops">
-                  {['在执', '未提', '改单'].includes(o.status) && <IconBtn title="编辑" color="#2563eb" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconEdit}</IconBtn>}
+                  {(isAdmin || ['在执', '未提', '改单'].includes(o.status)) && <IconBtn title="编辑" color="#2563eb" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconEdit}</IconBtn>}
                   {['在执', '待停', '改单'].includes(o.status) && <IconBtn title="改单" color="#7c3aed" onClick={e => { e.stopPropagation(); openModify(o) }}>{IconModify}</IconBtn>}
                   {o.status === '已停' && <IconBtn title="复提" color="#059669" onClick={e => { e.stopPropagation(); openReopen(o) }}>{IconReopen}</IconBtn>}
                   {o.status === '待停' && <IconBtn title="取消停单" color="#059669" onClick={e => { e.stopPropagation(); cancelStop(o) }}>{IconUndo}</IconBtn>}

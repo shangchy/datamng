@@ -884,10 +884,12 @@ def batch_extend(body: dict, db: Session = Depends(get_db), user=Depends(get_cur
     except ValueError:
         raise HTTPException(status_code=422, detail="截止日期格式错误")
     rows = db.query(Order).filter(Order.id.in_(ids)).all()
+    from ..routers.data import _sync_order_stop_alert
     for o in rows:
         o.end_date = ed
         o.updated_at = datetime.now()
         o.updated_by = _user_label(user)
+        _sync_order_stop_alert(db, o)
     _op_log(db, user, "batch_extend_orders", f"批量延期 {len(rows)} 单，截止日期 {end_date}", None, {"ids": ids})
     db.commit()
     return {"code": 0, "data": {"updated": len(rows)}, "msg": f"已延期 {len(rows)} 单，截止日期 {end_date}"}

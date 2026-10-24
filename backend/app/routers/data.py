@@ -3348,10 +3348,9 @@ def run_alert_scan(db: Session):
 
 
 def _sync_order_stop_alert(db: Session, o):
-    """同步订单的停单提醒（预警）状态：截止日期在预警天数内到期仍在执则创建，否则标记已处理"""
-    days = _order_alert_days(db)
-    target = date.today() + timedelta(days=days)
-    should = o.status == "在执" and o.end_date is not None and o.end_date <= target
+    """同步订单停单提醒：数据变化后，截止日期>今天则取消预警；在执且截止日期<=今天则创建预警"""
+    today = date.today()
+    should = o.status == "在执" and o.end_date is not None and o.end_date <= today
     existing = db.query(Alert).filter(Alert.type == "停单提醒", Alert.status == "未处理",
                                       Alert.order_id == o.id).first()
     if should and not existing:
