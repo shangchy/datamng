@@ -2,6 +2,7 @@
 -- 由 SQLAlchemy models.py 自动生成
 
 
+
 CREATE TABLE category (
 	id SERIAL NOT NULL, 
 	name VARCHAR(100) NOT NULL, 
@@ -15,7 +16,9 @@ CREATE TABLE category (
 	FOREIGN KEY(parent_id) REFERENCES category (id)
 )
 
+
 ;
+
 
 
 CREATE TABLE channel (
@@ -28,31 +31,25 @@ CREATE TABLE channel (
 	UNIQUE (name)
 )
 
+
 ;
 
 
-CREATE TABLE customer (
+
+CREATE TABLE daily_bill (
 	id SERIAL NOT NULL, 
-	code VARCHAR(50) NOT NULL, 
-	name VARCHAR(100) NOT NULL, 
-	ctype VARCHAR(20) NOT NULL, 
-	tg_id VARCHAR(100), 
-	wash_mode VARCHAR(20), 
-	is_accounted BOOLEAN, 
-	discount NUMERIC(5, 4), 
-	balance NUMERIC(14, 2), 
-	warn_amount NUMERIC(14, 2), 
-	start_date DATE, 
-	end_date DATE, 
-	note TEXT, 
-	status SMALLINT, 
+	biz_date DATE NOT NULL, 
+	bill_balance NUMERIC(14, 2), 
+	wallet_balance NUMERIC(18, 4), 
 	created_at TIMESTAMP WITHOUT TIME ZONE, 
 	updated_at TIMESTAMP WITHOUT TIME ZONE, 
 	PRIMARY KEY (id), 
-	UNIQUE (code)
+	UNIQUE (biz_date)
 )
 
+
 ;
+
 
 
 CREATE TABLE daily_data (
@@ -79,7 +76,9 @@ CREATE TABLE daily_data (
 	PRIMARY KEY (id)
 )
 
+
 ;
+
 
 
 CREATE TABLE fund (
@@ -105,7 +104,24 @@ CREATE TABLE fund (
 	PRIMARY KEY (id)
 )
 
+
 ;
+
+
+
+CREATE TABLE notification (
+	id SERIAL NOT NULL, 
+	content TEXT NOT NULL, 
+	order_no VARCHAR(50), 
+	task_id VARCHAR(100), 
+	order_id INTEGER, 
+	notify_time TIMESTAMP WITHOUT TIME ZONE, 
+	PRIMARY KEY (id)
+)
+
+
+;
+
 
 
 CREATE TABLE operation_log (
@@ -121,7 +137,9 @@ CREATE TABLE operation_log (
 	PRIMARY KEY (id)
 )
 
+
 ;
+
 
 
 CREATE TABLE operator (
@@ -134,7 +152,9 @@ CREATE TABLE operator (
 	UNIQUE (name)
 )
 
+
 ;
+
 
 
 CREATE TABLE order_template (
@@ -153,7 +173,30 @@ CREATE TABLE order_template (
 	UNIQUE (code)
 )
 
+
 ;
+
+
+
+CREATE TABLE product (
+	id SERIAL NOT NULL, 
+	name VARCHAR(200) NOT NULL, 
+	category VARCHAR(50), 
+	source VARCHAR(20), 
+	purchase_price NUMERIC(14, 4), 
+	default_sales_price NUMERIC(14, 4), 
+	note TEXT, 
+	status SMALLINT, 
+	created_by VARCHAR(50), 
+	updated_by VARCHAR(50), 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE, 
+	PRIMARY KEY (id)
+)
+
+
+;
+
 
 
 CREATE TABLE source_file (
@@ -161,6 +204,7 @@ CREATE TABLE source_file (
 	filename VARCHAR(500), 
 	file_data BYTEA, 
 	file_type VARCHAR(20), 
+	category VARCHAR(20), 
 	biz_date VARCHAR(50), 
 	party VARCHAR(50), 
 	size INTEGER, 
@@ -168,7 +212,9 @@ CREATE TABLE source_file (
 	PRIMARY KEY (id)
 )
 
+
 ;
+
 
 
 CREATE TABLE sys_config (
@@ -178,7 +224,9 @@ CREATE TABLE sys_config (
 	PRIMARY KEY (key)
 )
 
+
 ;
+
 
 
 CREATE TABLE sys_permission (
@@ -190,7 +238,9 @@ CREATE TABLE sys_permission (
 	UNIQUE (code)
 )
 
+
 ;
+
 
 
 CREATE TABLE sys_role (
@@ -203,12 +253,15 @@ CREATE TABLE sys_role (
 	UNIQUE (code)
 )
 
+
 ;
+
 
 
 CREATE TABLE template (
 	id SERIAL NOT NULL, 
 	ttype VARCHAR(50), 
+	tpl_type VARCHAR(20), 
 	code VARCHAR(100) NOT NULL, 
 	name VARCHAR(200) NOT NULL, 
 	file_data BYTEA, 
@@ -221,7 +274,9 @@ CREATE TABLE template (
 	UNIQUE (code)
 )
 
+
 ;
+
 
 
 CREATE TABLE tidabiao_history (
@@ -255,11 +310,14 @@ CREATE TABLE tidabiao_history (
 	group_name VARCHAR(100), 
 	tpl_code VARCHAR(100), 
 	add_name VARCHAR(10), 
+	check_collision VARCHAR(10), 
 	created_at TIMESTAMP WITHOUT TIME ZONE, 
 	PRIMARY KEY (id)
 )
 
+
 ;
+
 
 
 CREATE TABLE wash_name (
@@ -275,7 +333,104 @@ CREATE TABLE wash_name (
 	UNIQUE (phone)
 )
 
+
 ;
+
+
+
+CREATE TABLE customer (
+	id SERIAL NOT NULL, 
+	code VARCHAR(50) NOT NULL, 
+	name VARCHAR(100) NOT NULL, 
+	ctype VARCHAR(20) NOT NULL, 
+	tg_id VARCHAR(100), 
+	wash_mode VARCHAR(20), 
+	is_accounted BOOLEAN, 
+	discount NUMERIC(5, 4), 
+	balance NUMERIC(14, 2), 
+	warn_amount NUMERIC(14, 2), 
+	start_date DATE, 
+	end_date DATE, 
+	bill_tpl_id INTEGER, 
+	note TEXT, 
+	status SMALLINT, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE, 
+	PRIMARY KEY (id), 
+	UNIQUE (code), 
+	FOREIGN KEY(bill_tpl_id) REFERENCES template (id)
+)
+
+
+;
+
+
+
+CREATE TABLE platform (
+	id SERIAL NOT NULL, 
+	name VARCHAR(100) NOT NULL, 
+	cat_id INTEGER NOT NULL, 
+	sort_no SMALLINT, 
+	status SMALLINT, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(cat_id) REFERENCES category (id)
+)
+
+
+;
+
+
+
+CREATE TABLE sys_role_permission (
+	role_id INTEGER NOT NULL, 
+	permission_id INTEGER NOT NULL, 
+	PRIMARY KEY (role_id, permission_id), 
+	FOREIGN KEY(role_id) REFERENCES sys_role (id), 
+	FOREIGN KEY(permission_id) REFERENCES sys_permission (id)
+)
+
+
+;
+
+
+
+CREATE TABLE sys_user (
+	id SERIAL NOT NULL, 
+	username VARCHAR(50) NOT NULL, 
+	password_hash VARCHAR(200) NOT NULL, 
+	nickname VARCHAR(50), 
+	role_id INTEGER, 
+	status SMALLINT, 
+	must_change_pwd BOOLEAN, 
+	last_login_at TIMESTAMP WITHOUT TIME ZONE, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE, 
+	PRIMARY KEY (id), 
+	UNIQUE (username), 
+	FOREIGN KEY(role_id) REFERENCES sys_role (id)
+)
+
+
+;
+
+
+
+CREATE TABLE ai_session (
+	id SERIAL NOT NULL, 
+	user_id INTEGER, 
+	title VARCHAR(100), 
+	archived BOOLEAN, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(user_id) REFERENCES sys_user (id)
+)
+
+
+;
+
 
 
 CREATE TABLE alert (
@@ -284,6 +439,8 @@ CREATE TABLE alert (
 	type VARCHAR(20) NOT NULL, 
 	customer_id INTEGER, 
 	task_name VARCHAR(200), 
+	order_no VARCHAR(50), 
+	order_id INTEGER, 
 	content TEXT, 
 	trigger_time TIMESTAMP WITHOUT TIME ZONE, 
 	status VARCHAR(20), 
@@ -292,38 +449,51 @@ CREATE TABLE alert (
 	FOREIGN KEY(customer_id) REFERENCES customer (id)
 )
 
+
 ;
+
 
 
 CREATE TABLE bill (
 	id SERIAL NOT NULL, 
-	customer_id INTEGER NOT NULL, 
+	customer_id INTEGER, 
 	biz_date DATE NOT NULL, 
 	purchase_qty INTEGER, 
 	sales NUMERIC(14, 2), 
 	balance NUMERIC(14, 2), 
 	profit NUMERIC(14, 2), 
+	bill_type VARCHAR(20), 
+	target_name VARCHAR(200), 
 	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	created_by VARCHAR(50), 
+	updated_at TIMESTAMP WITHOUT TIME ZONE, 
+	updated_by VARCHAR(50), 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(customer_id) REFERENCES customer (id)
 )
 
+
 ;
+
 
 
 CREATE TABLE customer_price (
 	id SERIAL NOT NULL, 
 	customer_id INTEGER NOT NULL, 
 	channel_id INTEGER NOT NULL, 
+	operator_id INTEGER, 
 	price NUMERIC(8, 4) NOT NULL, 
 	created_at TIMESTAMP WITHOUT TIME ZONE, 
 	updated_at TIMESTAMP WITHOUT TIME ZONE, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(customer_id) REFERENCES customer (id), 
-	FOREIGN KEY(channel_id) REFERENCES channel (id)
+	FOREIGN KEY(channel_id) REFERENCES channel (id), 
+	FOREIGN KEY(operator_id) REFERENCES operator (id)
 )
 
+
 ;
+
 
 
 CREATE TABLE customer_recharge (
@@ -333,12 +503,18 @@ CREATE TABLE customer_recharge (
 	amount_u NUMERIC(14, 2) NOT NULL, 
 	amount_rmb NUMERIC(14, 2), 
 	note TEXT, 
+	recharge_type VARCHAR(20), 
+	reason TEXT, 
+	rate NUMERIC(14, 4), 
 	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	created_by VARCHAR(50), 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(customer_id) REFERENCES customer (id)
 )
 
+
 ;
+
 
 
 CREATE TABLE orders (
@@ -377,6 +553,9 @@ CREATE TABLE orders (
 	group_name VARCHAR(100), 
 	export_filename VARCHAR(200), 
 	add_name BOOLEAN, 
+	check_collision BOOLEAN, 
+	created_by VARCHAR(50), 
+	updated_by VARCHAR(50), 
 	created_at TIMESTAMP WITHOUT TIME ZONE, 
 	updated_at TIMESTAMP WITHOUT TIME ZONE, 
 	PRIMARY KEY (id), 
@@ -389,79 +568,34 @@ CREATE TABLE orders (
 	FOREIGN KEY(tpl_id) REFERENCES template (id)
 )
 
+
 ;
 
 
-CREATE TABLE platform (
+
+CREATE TABLE product_sale (
 	id SERIAL NOT NULL, 
-	name VARCHAR(100) NOT NULL, 
-	cat_id INTEGER NOT NULL, 
-	sort_no SMALLINT, 
-	status SMALLINT, 
+	sale_date DATE NOT NULL, 
+	customer_id INTEGER, 
+	product_id INTEGER, 
+	qty INTEGER, 
+	purchase_price NUMERIC(14, 4), 
+	sales_price NUMERIC(14, 4), 
+	sales_amount NUMERIC(14, 2), 
+	profit NUMERIC(14, 2), 
+	note TEXT, 
+	created_by VARCHAR(50), 
+	updated_by VARCHAR(50), 
 	created_at TIMESTAMP WITHOUT TIME ZONE, 
 	updated_at TIMESTAMP WITHOUT TIME ZONE, 
 	PRIMARY KEY (id), 
-	FOREIGN KEY(cat_id) REFERENCES category (id)
+	FOREIGN KEY(customer_id) REFERENCES customer (id), 
+	FOREIGN KEY(product_id) REFERENCES product (id)
 )
+
 
 ;
 
-
-CREATE TABLE sys_role_permission (
-	role_id INTEGER NOT NULL, 
-	permission_id INTEGER NOT NULL, 
-	PRIMARY KEY (role_id, permission_id), 
-	FOREIGN KEY(role_id) REFERENCES sys_role (id), 
-	FOREIGN KEY(permission_id) REFERENCES sys_permission (id)
-)
-
-;
-
-
-CREATE TABLE sys_user (
-	id SERIAL NOT NULL, 
-	username VARCHAR(50) NOT NULL, 
-	password_hash VARCHAR(200) NOT NULL, 
-	nickname VARCHAR(50), 
-	role_id INTEGER, 
-	status SMALLINT, 
-	must_change_pwd BOOLEAN, 
-	last_login_at TIMESTAMP WITHOUT TIME ZONE, 
-	created_at TIMESTAMP WITHOUT TIME ZONE, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE, 
-	PRIMARY KEY (id), 
-	UNIQUE (username), 
-	FOREIGN KEY(role_id) REFERENCES sys_role (id)
-)
-
-;
-
-
-CREATE TABLE ai_session (
-	id SERIAL NOT NULL, 
-	user_id INTEGER, 
-	title VARCHAR(100), 
-	archived BOOLEAN, 
-	created_at TIMESTAMP WITHOUT TIME ZONE, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE, 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(user_id) REFERENCES sys_user (id)
-)
-
-;
-
-
-CREATE TABLE order_url (
-	id SERIAL NOT NULL, 
-	order_id INTEGER NOT NULL, 
-	url TEXT NOT NULL, 
-	level VARCHAR(10), 
-	sort_no SMALLINT, 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(order_id) REFERENCES orders (id)
-)
-
-;
 
 
 CREATE TABLE url (
@@ -485,7 +619,9 @@ CREATE TABLE url (
 	FOREIGN KEY(channel_id) REFERENCES channel (id)
 )
 
+
 ;
+
 
 
 CREATE TABLE ai_message (
@@ -500,7 +636,24 @@ CREATE TABLE ai_message (
 	FOREIGN KEY(session_id) REFERENCES ai_session (id)
 )
 
+
 ;
+
+
+
+CREATE TABLE order_url (
+	id SERIAL NOT NULL, 
+	order_id INTEGER NOT NULL, 
+	url TEXT NOT NULL, 
+	level VARCHAR(10), 
+	sort_no SMALLINT, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(order_id) REFERENCES orders (id)
+)
+
+
+;
+
 
 
 CREATE TABLE ai_tool_call (
@@ -520,4 +673,6 @@ CREATE TABLE ai_tool_call (
 	FOREIGN KEY(message_id) REFERENCES ai_message (id)
 )
 
+
 ;
+
