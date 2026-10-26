@@ -26,6 +26,9 @@ router = APIRouter(prefix="/api", tags=["data"])
 
 _DISTRIBUTE_TASKS = {}
 
+# 甲方账单模版编号（在模版中心上传对应模版文件；MB-028 已被生产占用，改用 MB-029）
+UPSTREAM_BILL_TPL_CODE = "MB-029"
+
 
 class DistributeCancelled(Exception):
     pass
@@ -3282,7 +3285,7 @@ def _build_summary_wb_day(db, date_obj, customer_ids=None):
 
 
 def _build_upstream_bill_files(db, date_obj, customer_ids=None):
-    """按甲方生成当日独立账单（MB-028 模版，以工单为单位的明细 + 汇总），返回 [(filename, bytes)]"""
+    """按甲方生成当日独立账单（甲方账单模版，以工单为单位的明细 + 汇总），返回 [(filename, bytes)]"""
     from collections import defaultdict
 
     selected_ids = list(customer_ids) if customer_ids else []
@@ -3317,7 +3320,7 @@ def _build_upstream_bill_files(db, date_obj, customer_ids=None):
             s += f"（{reason}）"
         recharge_map[rec.customer_id].append(s)
 
-    tpl = db.query(Template).filter(Template.code == "MB-028").first()
+    tpl = db.query(Template).filter(Template.code == UPSTREAM_BILL_TPL_CODE).first()
     tpl_bytes = bytes(tpl.file_data) if tpl and tpl.file_data else None
     date_str = date_obj.strftime("%m%d")
     files = []
