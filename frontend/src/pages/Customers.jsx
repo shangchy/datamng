@@ -175,7 +175,7 @@ export default function Customers() {
             <th onClick={() => toggleSort('name')}>客户名称{sort?.k === 'name' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
             <th onClick={() => toggleSort('ctype')}>类型{sort?.k === 'ctype' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
             <th onClick={() => toggleSort('tg_id')}>飞机账号ID{sort?.k === 'tg_id' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
-            <th className="num" onClick={() => toggleSort('balance')}>余额{sort?.k === 'balance' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
+            <th className="num" onClick={() => toggleSort('balance')}>余额（元）{sort?.k === 'balance' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
             <th className="num" onClick={() => toggleSort('warn_amount')}>预警额度{sort?.k === 'warn_amount' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
             <th onClick={() => toggleSort('note')}>备注{sort?.k === 'note' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
             <th onClick={() => toggleSort('status')}>状态{sort?.k === 'status' ? <span className="arr">{sort.dir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
@@ -206,13 +206,13 @@ export default function Customers() {
           <div className="sticky-head">
             <div className="cards" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
               <div className="card"><div className="t">总供货量</div><div className="v">{detail.total_supply}</div></div>
-              <div className="card"><div className="t">总销售额</div><div className="v">¥{detail.total_sales}</div></div>
-              <div className="card"><div className="t">总利润</div><div className="v" style={{ color: 'var(--green)' }}>¥{detail.total_profit}</div></div>
-              <div className="card"><div className="t">余额</div><div className="v">¥{detail.balance}</div></div>
+              <div className="card"><div className="t">总销售额（元）</div><div className="v">¥{detail.total_sales}</div></div>
+              <div className="card"><div className="t">总利润（元）</div><div className="v" style={{ color: 'var(--green)' }}>¥{detail.total_profit}</div></div>
+              <div className="card"><div className="t">余额（元）</div><div className="v">¥{detail.balance}</div></div>
             </div>
             <table className="kv"><tbody>
               <tr><td>客户编号</td><td>{detail.code}</td><td>客户名称</td><td>{detail.name}</td></tr>
-              <tr><td>类型</td><td>{detail.ctype}</td><td>飞机账号ID</td><td>{detail.tg_id || '—'}</td></tr>
+              <tr><td>类型</td><td>{detail.ctype === 'upstream' ? '上游' : '下游'}</td><td>飞机账号ID</td><td>{detail.tg_id || '—'}</td></tr>
               <tr><td>是否记账</td><td>{detail.is_accounted ? '是' : '否'}</td><td>预警额度</td><td>¥{detail.warn_amount}</td></tr>
               <tr><td>开始日期</td><td>{detail.start_date || '—'}</td><td>结束日期</td><td>{detail.end_date || '—'}</td></tr>
               <tr><td>状态</td><td>{detail.status === 1 ? '启用' : '停用'}</td><td>备注</td><td style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{detail.note || '—'}</td></tr>
@@ -251,8 +251,8 @@ export default function Customers() {
             <div className="field"><label>代理信息</label><div className="readonly">{recharge.customer_label || '—'}</div></div>
           </div>
           <div className="row">
-            <div className="field"><label>充值前余额</label><div className="readonly">¥{(recharge.balance ?? 0)}</div></div>
-            <div className="field"><label>充值后余额</label><div className="readonly">¥{((recharge.balance ?? 0) + (Number(recharge.amount_rmb) || 0) - (Number(recharge.old_rmb) || 0)).toFixed(2)}</div></div>
+            <div className="field"><label>充值前余额（元）</label><div className="readonly">¥{(recharge.balance ?? 0)}</div></div>
+            <div className="field"><label>充值后余额（元）</label><div className="readonly">¥{((recharge.balance ?? 0) + (Number(recharge.amount_rmb) || 0) - (Number(recharge.old_rmb) || 0)).toFixed(2)}</div></div>
           </div>
           <div className="row">
             <div className="field"><label>充值金额 (U)</label>
@@ -397,8 +397,8 @@ function TabContent({ tab, customerId, onEditRecharge, refreshKey }) {
       <tbody>{data.map((o, i) => <tr key={i}><td>{o.order_no}</td><td><Badge value={o.status} /></td><td>{o.start_date}</td><td>{o.end_date || '—'}</td><td>{o.upstream}</td><td>{o.channel}</td><td>{o.task_name}</td><td>{o.url}</td><td className="num">{o.qty}</td></tr>)}</tbody></table>
   )
   if (tab === 'recharges') return (
-    <table><thead><tr><th>日期</th><th className="num">充值(U)</th><th className="num">折算RMB</th><th className="num">汇率</th><th>类型</th><th>备注/理由</th><th className="ops">操作</th></tr></thead>
-      <tbody>{data.map((r, i) => <tr key={i}><td>{r.recharge_date}</td><td className="num">{r.amount_u}</td><td className="num">¥{r.amount_rmb}</td><td className="num">{r.rate != null ? r.rate : '—'}</td><td>{r.recharge_type || '转账'}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{(r.recharge_type || '转账') === '补数' ? (r.reason || '—') : (r.note || '—')}</td><td className="ops"><button className="btn small" onClick={() => onEditRecharge(r)}>编辑</button></td></tr>)}</tbody></table>
+    <table><thead><tr><th>日期</th><th className="num">充值(U)</th><th className="num">折算RMB（元）</th><th className="num">汇率</th><th>类型</th><th>备注/理由</th><th>充值时间</th><th>充值人</th><th className="ops">操作</th></tr></thead>
+      <tbody>{data.map((r, i) => <tr key={i}><td>{r.recharge_date}</td><td className="num">{r.amount_u}</td><td className="num">¥{r.amount_rmb}</td><td className="num">{r.rate != null ? r.rate : '—'}</td><td>{r.recharge_type || '转账'}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{(r.recharge_type || '转账') === '补数' ? (r.reason || '—') : (r.note || '—')}</td><td>{r.created_at || '—'}</td><td>{r.created_by || '—'}</td><td className="ops"><button className="btn small" onClick={() => onEditRecharge(r)}>编辑</button></td></tr>)}</tbody></table>
   )
   return (
     <div>

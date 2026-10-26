@@ -145,11 +145,12 @@ def list_recharges(cid: int, db: Session = Depends(get_db), _=Depends(get_curren
         "amount_rmb": float(r.amount_rmb) if r.amount_rmb is not None else None, "note": r.note,
         "recharge_type": r.recharge_type or "转账", "reason": r.reason or "",
         "rate": float(r.rate) if r.rate is not None else None,
+        "created_at": fmt_dt(r.created_at), "created_by": r.created_by or "",
     } for r in rows], "msg": "ok"}
 
 
 @router.post("/{cid}/recharges")
-def create_recharge(cid: int, body: RechargeBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def create_recharge(cid: int, body: RechargeBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
     c = db.query(Customer).filter(Customer.id == cid).first()
     if not c:
         raise HTTPException(status_code=404, detail="客户不存在")
@@ -170,7 +171,7 @@ def create_recharge(cid: int, body: RechargeBody, db: Session = Depends(get_db),
     db.add(CustomerRecharge(customer_id=cid, recharge_date=body.recharge_date,
                             amount_u=u, amount_rmb=rmb, note=body.note,
                             recharge_type=recharge_type, reason=(body.reason or "").strip(),
-                            rate=rate))
+                            rate=rate, created_by=(user.nickname or user.username)))
     c.balance = (c.balance if c.balance is not None else Decimal("0")) + Decimal(str(rmb))
     db.query(Alert).filter(Alert.type == "账单预警", Alert.customer_id == cid, Alert.status == "未处理").delete()
     db.commit()

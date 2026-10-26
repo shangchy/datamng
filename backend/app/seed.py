@@ -44,6 +44,7 @@ def seed(db):
         ("channel:view", "渠道管理", "master"),
         ("operator:view", "运营商管理", "master"),
         ("template:view", "模版管理", "master"),
+        ("product:view", "产品管理", "master"),
         ("config:view", "配置中心", "system"),
         ("log:view", "日志管理", "system"),
     ]:
@@ -57,6 +58,10 @@ def seed(db):
 
     _backfill_role_permissions(db)
     _backfill_granular_permissions(db)
+
+    # 产品销售导入模版（配置到模版中心）
+    from .routers.products import ensure_product_sale_template
+    ensure_product_sale_template(db)
 
     # 账户
     users = [("admin", "超级管理员", "admin"), ("lemon001", "柠檬一号", "operator"), ("lemon002", "柠檬二号", "operator")]
@@ -120,7 +125,8 @@ def _backfill_role_permissions(db):
     """非 admin 角色默认开放除系统管理外的所有菜单查看权限（保持既有行为，管理员可再收紧）"""
     default_view = ["order:view", "customer:view", "bill:view", "alert:view",
                     "daily:view", "tidabiao:view", "wash:view", "fund:view", "file:view",
-                    "parts:view", "category:view", "channel:view", "operator:view", "template:view"]
+                    "parts:view", "category:view", "channel:view", "operator:view", "template:view",
+                    "product:view"]
     perm_id = {p.code: p.id for p in db.query(SysPermission).all()}
     for r in db.query(SysRole).filter(SysRole.code != "admin").all():
         existing = db.query(sys_role_permission).filter(sys_role_permission.c.role_id == r.id).count()

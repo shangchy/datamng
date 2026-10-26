@@ -427,6 +427,7 @@ CONFIG_ITEMS = [
     {"key": "order_alert_days", "label": "订单预警天数", "type": "number", "default": "0"},
     {"key": "backup_time", "label": "数据库备份时间", "type": "time", "default": "12:00"},
     {"key": "backup_keep_days", "label": "数据库备份保存天数", "type": "number", "default": "7"},
+    {"key": "usdt_rate", "label": "USDT 汇率（元/U）", "type": "number", "default": "7"},
 ]
 
 

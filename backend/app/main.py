@@ -15,7 +15,7 @@ from sqlalchemy import text
 
 from .config import CORS_ORIGINS
 from .database import Base, engine, SessionLocal
-from .routers import auth, users, customers, orders, master, data, dashboard, ai, order_templates, templates, logs
+from .routers import auth, users, customers, orders, master, data, dashboard, ai, order_templates, templates, logs, products
 from .seed import seed
 
 
@@ -69,6 +69,7 @@ def _migrate_schema():
         bill_cols = {c["name"] for c in insp.get_columns("bill")} if "bill" in insp.get_table_names() else set()
         cr_cols = {c["name"] for c in insp.get_columns("customer_recharge")} if "customer_recharge" in insp.get_table_names() else set()
         sf_cols = {c["name"] for c in insp.get_columns("source_file")} if "source_file" in insp.get_table_names() else set()
+        prod_cols = {c["name"] for c in insp.get_columns("product")} if "product" in insp.get_table_names() else set()
         with engine.begin() as conn:
             for col, ddl in [
                 ("task_id", "VARCHAR(100)"),
@@ -151,6 +152,9 @@ def _migrate_schema():
             for col, ddl in [
                 ("bill_type", "VARCHAR(20)"),
                 ("target_name", "VARCHAR(200)"),
+                ("created_by", "VARCHAR(50)"),
+                ("updated_at", "TIMESTAMP"),
+                ("updated_by", "VARCHAR(50)"),
             ]:
                 if col not in bill_cols:
                     conn.execute(text(f"ALTER TABLE bill ADD COLUMN {col} {ddl}"))
@@ -158,6 +162,7 @@ def _migrate_schema():
                 ("recharge_type", "VARCHAR(20)"),
                 ("reason", "TEXT"),
                 ("rate", "NUMERIC(14, 4)"),
+                ("created_by", "VARCHAR(50)"),
             ]:
                 if col not in cr_cols:
                     conn.execute(text(f"ALTER TABLE customer_recharge ADD COLUMN {col} {ddl}"))
@@ -169,6 +174,13 @@ def _migrate_schema():
             ]:
                 if col not in sf_cols:
                     conn.execute(text(f"ALTER TABLE source_file ADD COLUMN {col} {ddl}"))
+            for col, ddl in [
+                ("category", "VARCHAR(50)"),
+                ("source", "VARCHAR(20)"),
+                ("purchase_price", "NUMERIC(14, 4)"),
+            ]:
+                if col not in prod_cols:
+                    conn.execute(text(f"ALTER TABLE product ADD COLUMN {col} {ddl}"))
             # bill.customer_id 改为可空（给「其他人」单独抽取）
             bill_customer_col = next((c for c in insp.get_columns("bill") if c["name"] == "customer_id"), None) if "bill" in insp.get_table_names() else None
             if bill_customer_col is not None and not bill_customer_col.get("nullable"):
@@ -502,6 +514,7 @@ app.include_router(ai.router)
 app.include_router(order_templates.router)
 app.include_router(templates.router)
 app.include_router(logs.router)
+app.include_router(products.router)
 
 
 def _scheduler_loop():
@@ -533,6 +546,25 @@ def _scheduler_loop():
             print(f"[scheduler] 预警扫描完成（触发时间 {trigger}）")
         except Exception as e:  # noqa
             print(f"[scheduler] 执行异常: {e}")
+        time.sleep(60)  # 防止重复触发
+
+
+def _daily_bill_loop():
+    """每天 23:50 快照当日账单余额（=-(代理余额合计-甲方余额)）写入每日账单"""
+    from .routers.dashboard import snapshot_daily_bill
+    while True:
+        now = datetime.now()
+        next_run = now.replace(hour=23, minute=50, second=0, microsecond=0)
+        if next_run <= now:
+            next_run += timedelta(days=1)
+        time.sleep((next_run - now).total_seconds())
+        try:
+            db = SessionLocal()
+            bal = snapshot_daily_bill(db)
+            db.close()
+            print(f"[daily-bill] 每日账单快照完成：账单余额={bal}")
+        except Exception as e:  # noqa
+            print(f"[daily-bill] 快照异常: {e}")
         time.sleep(60)  # 防止重复触发
 
 
@@ -598,6 +630,7 @@ def on_startup():
         db.close()
     threading.Thread(target=_scheduler_loop, daemon=True).start()
     threading.Thread(target=_backup_loop, daemon=True).start()
+    threading.Thread(target=_daily_bill_loop, daemon=True).start()
 
 
 @app.get("/healthz")

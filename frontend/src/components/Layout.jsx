@@ -13,6 +13,8 @@ const TITLE_MAP = {
   '/tidabiao-history': '提单历史',
   '/logs': '日志管理',
   '/config-center': '配置中心',
+  '/products': '产品管理',
+  '/workflow': '快速出货',
 }
 
 const MENUS = [
@@ -34,6 +36,7 @@ const MENUS = [
     { key: '/channels', name: '渠道管理', perm: 'channel:view' },
     { key: '/operators', name: '运营商管理', perm: 'operator:view' },
     { key: '/templates', name: '模版管理', perm: 'template:view' },
+    { key: '/products', name: '产品管理', perm: 'product:view' },
   ] },
   { key: 'system', name: '系统管理', icon: '⚙️', children: [
     { key: '/accounts', name: '账户管理', perm: 'account:view' },
@@ -114,6 +117,7 @@ export default function Layout() {
         <div className="content"><Outlet /></div>
       </div>
       <AiChat />
+      {location.pathname !== '/workflow' && <button className="wf-fab" onClick={() => nav('/workflow')}>快速出货</button>}
     </div>
   )
 }

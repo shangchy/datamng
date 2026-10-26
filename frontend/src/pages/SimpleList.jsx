@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, getToken, getUser, downloadFile, uploadFile } from '../api'
 import { Modal, Badge, useToast, useConfirm, Loading, ClearableInput } from '../components/ui'
 import { useColumnConfig, downloadCsv } from '../components/columns'
@@ -54,8 +54,8 @@ const KINDS = {
     cols: [
       { k: 'phone', l: '手机号' }, { k: 'name', l: '姓名' }, { k: 'id_card', l: '身份证号' }, { k: 'gender', l: '性别' },
       { k: 'province', l: '省份' }, { k: 'city', l: '地市' }, { k: 'company', l: '单位名称' }, { k: 'company_type', l: '单位性质' },
-      { k: 'base', l: '缴存基数', num: true }, { k: 'ratio', l: '缴存比例' }, { k: 'monthly', l: '月缴存额', num: true },
-      { k: 'balance', l: '账户余额', num: true }, { k: 'deposit_status', l: '缴存状态' }, { k: 'open_date', l: '开户日期' },
+      { k: 'base', l: '缴存基数（元）', num: true }, { k: 'ratio', l: '缴存比例' }, { k: 'monthly', l: '月缴存额（元）', num: true },
+      { k: 'balance', l: '账户余额（元）', num: true }, { k: 'deposit_status', l: '缴存状态' }, { k: 'open_date', l: '开户日期' },
       { k: 'pay_to', l: '缴至年月' }, { k: 'operator', l: '运营商' },
     ], del: true, imp: true, exp: true,
   },
@@ -78,7 +78,8 @@ const KINDS = {
     title: '账单', endpoint: '/api/bills',
     cols: [
       { k: 'customer', l: '客户' }, { k: 'biz_date', l: '业务日期' }, { k: 'purchase_qty', l: '进货量', num: true },
-      { k: 'sales', l: '销售金额', num: true }, { k: 'balance', l: '余额', num: true }, { k: 'profit', l: '利润', num: true }, { k: 'created_at', l: '创建日期' },
+      { k: 'sales', l: '销售金额（元）', num: true }, { k: 'balance', l: '余额（元）', num: true }, { k: 'profit', l: '利润（元）', num: true },
+      { k: 'created_by', l: '创建人' }, { k: 'updated_at', l: '更新时间' }, { k: 'updated_by', l: '更新人' },
     ], batchDel: true, batchDelAdmin: true, detail: true, imp: true, impEndpoint: '/api/bills/import', billExp: true,
   },
   alerts: {
@@ -105,6 +106,7 @@ export default function SimpleList({ kind }) {
   const hasRowOps = !!(cfg.simple || cfg.editUrl || cfg.del || cfg.dl || cfg.handle || cfg.reset || cfg.pwd || cfg.detail || cfg.dailyEdit)
   const { toast, showError } = useToast()
   const nav = useNavigate()
+  const [searchParams] = useSearchParams()
   const [confirm, confirmEl] = useConfirm()
   const { visible: cols, picker, openPicker } = useColumnConfig(cfg.cols, `cols_${kind}_v2`, cfg.defaultHidden || [])
   const fileRef = useRef(null)
@@ -294,6 +296,19 @@ export default function SimpleList({ kind }) {
       load(1, pp, {})
     }
   }, [kind])
+
+  const actionDone = useRef(false)
+  useEffect(() => {
+    const action = searchParams.get('action')
+    if (kind !== 'daily' || actionDone.current) return
+    if (action === 'daily') { setDailyModal(true); actionDone.current = true }
+    if (action === 'wash') { setWashModal(true); actionDone.current = true }
+    if (action === 'washimport') { toast('请点击「③ 导入洗名」上传洗名文件'); actionDone.current = true }
+    if (action === 'dist' && customers.length) {
+      setDistCustomerIds(customers.filter(c => c.ctype === 'downstream').map(c => c.id))
+      setDistModal(true); actionDone.current = true
+    }
+  }, [searchParams, kind, customers])
 
   // 加载下拉选项（渠道/客户/品类/省市等）
   useEffect(() => {
@@ -1455,25 +1470,27 @@ export default function SimpleList({ kind }) {
             <div className="field"><label>代理</label><div className="readonly">{billDetail.customer || '—'}</div></div>
             <div className="field"><label>业务日期</label><div className="readonly">{billDetail.biz_date || '—'}</div></div>
             <div className="field"><label>进货量</label><div className="readonly">{billDetail.purchase_qty ?? '—'}</div></div>
-            <div className="field"><label>销售金额</label><div className="readonly">{billDetail.sales != null ? billDetail.sales : '—'}</div></div>
+            <div className="field"><label>销售金额（元）</label><div className="readonly">{billDetail.sales != null ? billDetail.sales : '—'}</div></div>
           </div>
           <div className="row">
-            <div className="field"><label>余额</label><div className="readonly">{billDetail.balance != null ? billDetail.balance : '—'}</div></div>
-            <div className="field"><label>利润</label><div className="readonly">{billDetail.profit != null ? billDetail.profit : '—'}</div></div>
+            <div className="field"><label>余额（元）</label><div className="readonly">{billDetail.balance != null ? billDetail.balance : '—'}</div></div>
+            <div className="field"><label>利润（元）</label><div className="readonly">{billDetail.profit != null ? billDetail.profit : '—'}</div></div>
           </div>
           <div className="panel" style={{ marginTop: 8 }}>
             <div className="table-scroll">
               <table>
-                <thead><tr><th>任务名</th><th className="num">手机号数量</th><th className="num">金额(元)</th></tr></thead>
+                <thead><tr><th>任务/产品</th><th className="num">数量</th><th className="num">进货单价（元）</th><th className="num">出货单价（元）</th><th className="num">金额（元）</th></tr></thead>
                 <tbody>
                   {(billDetail.groups || []).map(g => (
-                    <tr key={g.task_name}>
+                    <tr key={g.task_name + g.order_no}>
                       <td>{g.task_name}</td>
                       <td className="num">{g.qty}</td>
+                      <td className="num">{g.purchase_price}</td>
+                      <td className="num">{g.sales_price}</td>
                       <td className="num">{g.amount}</td>
                     </tr>
                   ))}
-                  {(billDetail.groups || []).length === 0 && <tr><td colSpan={3} className="empty">暂无明细</td></tr>}
+                  {(billDetail.groups || []).length === 0 && <tr><td colSpan={5} className="empty">暂无明细</td></tr>}
                 </tbody>
               </table>
             </div>

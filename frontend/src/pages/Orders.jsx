@@ -47,7 +47,7 @@ function IconBtn({ title, color, onClick, children }) {
 const COLS = [
   { k: 'status', l: '状态' }, { k: 'task_name', l: '任务名' }, { k: 'order_date', l: '更新日期' }, { k: 'upstream', l: '甲方' },
   { k: 'order_no', l: '订单号' }, { k: 'task_id', l: '工单号' }, { k: 'dup_order_nos', l: '重复订单' },
-  { k: 'customer', l: '一级代理' }, { k: 'price', l: '定价' },
+  { k: 'customer', l: '一级代理' }, { k: 'price', l: '定价（元）' },
   { k: 'platform', l: '平台' }, { k: 'group_name', l: '小组' }, { k: 'tpl_code', l: '出数模版' },
   { k: 'add_name', l: '是否加名' }, { k: 'check_collision', l: '是否撞库' }, { k: 'channel', l: '渠道' }, { k: 'operator', l: '运营商' },
   { k: 'url', l: 'url' }, { k: 'qty', l: '数量' },
@@ -187,6 +187,9 @@ export default function Orders({ variant = 'orders' }) {
   }
   useEffect(() => {
     const on = searchParams.get('order_no')
+    if (searchParams.get('receipt') === '1') {
+      setReceiptResult(null); setReceiptModal(true)
+    }
     if (on) {
       setFilters({ order_no: on })
       load(1, perPage, { order_no: on })
@@ -776,7 +779,7 @@ export default function Orders({ variant = 'orders' }) {
                   <select value={form.check_collision ? '是' : '否'} onChange={e => setForm({ ...form, check_collision: e.target.value === '是' })}>
                     <option>否</option><option>是</option>
                   </select></div>
-                <div className="field"><label>定价</label><input type="number" step="0.0001" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} placeholder="元/条" /></div>
+                <div className="field"><label>定价（元）</label><input type="number" step="0.0001" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} placeholder="元/条" /></div>
                 <div className="field"><label>时长（自动）</label><input value={computedDuration} disabled placeholder="自动计算" /></div>
               </div>
             </>
@@ -978,9 +981,9 @@ export default function Orders({ variant = 'orders' }) {
 
       {receiptModal && (
         <Modal title="导入回执（按任务名更新工单号）" onClose={() => setReceiptModal(false)} wide>
-          <div className="note">回执文件需包含「任务名」「任务ID/工单号」「运营商」「渠道（类型）」列，将按 甲方 + 任务名 + 运营商 + 渠道 且工单号为空 匹配订单并更新工单号；未匹配或多匹配会提示且不更新。</div>
+          <div className="note">回执文件需包含「任务名」「任务ID/工单号」「运营商」「渠道（类型）」列，将按 回执来源 + 任务名 + 运营商 + 渠道 且工单号为空 匹配订单并更新工单号；未匹配或多匹配会提示且不更新。</div>
           <div className="row">
-            <div className="field"><label>甲方</label>
+            <div className="field"><label>回执来源</label>
               <select value={receiptParty} onChange={e => setReceiptParty(e.target.value)}>
                 {upstreams.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
               </select></div>
@@ -991,7 +994,7 @@ export default function Orders({ variant = 'orders' }) {
               <div className="note" style={{ background: '#ecfdf5', border: '1px solid #a7f3d0' }}>
                 更新 {receiptResult.updated} 条
                 <table style={{ marginTop: 6, width: '100%' }}>
-                  <thead><tr><th>甲方</th><th>工单号</th><th>任务名</th><th>运营商</th><th>类型</th></tr></thead>
+                  <thead><tr><th>回执来源</th><th>工单号</th><th>任务名</th><th>运营商</th><th>类型</th></tr></thead>
                   <tbody>
                     {(receiptResult.updated_list || []).map((e, i) => (
                       <tr key={i}><td>{e.party}</td><td>{e.task_id}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{e.task_name}</td><td>{e.operator}</td><td>{e.channel}</td></tr>

@@ -12,6 +12,8 @@ import TemplateManager from './pages/TemplateManager'
 import TidabiaoHistory from './pages/TidabiaoHistory'
 import Logs from './pages/Logs'
 import ConfigCenter from './pages/ConfigCenter'
+import Products from './pages/Products'
+import Workflow from './pages/Workflow'
 
 function RequireAuth({ children }) {
   if (!getToken()) return <Navigate to="/login" replace />
@@ -41,6 +43,8 @@ export default function App() {
         <Route path="accounts" element={<SimpleList kind="users" />} />
         <Route path="logs" element={<Logs />} />
         <Route path="config-center" element={<ConfigCenter />} />
+        <Route path="products" element={<Products />} />
+        <Route path="workflow" element={<Workflow />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

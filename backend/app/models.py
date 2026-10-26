@@ -13,6 +13,11 @@ class TimestampMixin:
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
+class AuditMixin(TimestampMixin):
+    created_by = Column(String(50))               # 创建人
+    updated_by = Column(String(50))               # 更新人
+
+
 # ============ 系统：账户与权限 ============
 
 class SysRole(Base):
@@ -88,6 +93,7 @@ class CustomerRecharge(Base):
     reason = Column(Text)                                 # 补数理由
     rate = Column(Numeric(14, 4))                         # 充值时的汇率（U→RMB）
     created_at = Column(DateTime, default=datetime.now)
+    created_by = Column(String(50))                       # 充值人
 
 
 class CustomerPrice(Base, TimestampMixin):
@@ -362,6 +368,9 @@ class Bill(Base):
     bill_type = Column(String(20), default="分数据")   # 分数据 / 单独抽取
     target_name = Column(String(200))                  # 收款对象（给其他人时用）
     created_at = Column(DateTime, default=datetime.now)
+    created_by = Column(String(50))                    # 创建人
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    updated_by = Column(String(50))                    # 更新人
 
 
 # ============ 业务：预警 ============
@@ -451,3 +460,41 @@ class AiToolCall(Base):
     result_json = Column(Text)
     error = Column(Text)
     created_at = Column(DateTime, default=datetime.now)
+
+
+# ============ 业务：产品信息 + 产品销售 ============
+
+class Product(Base, AuditMixin):
+    __tablename__ = "product"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(200), nullable=False)            # 产品名
+    category = Column(String(50))                         # 产品类别
+    source = Column(String(20))                           # 产品来源：系统/购买/本地文件
+    purchase_price = Column(Numeric(14, 4), default=0)    # 进货单价
+    default_sales_price = Column(Numeric(14, 4), default=0)     # 默认出货单价
+    note = Column(Text)                                    # 说明
+    status = Column(SmallInteger, default=1)
+
+
+class ProductSale(Base, AuditMixin):
+    __tablename__ = "product_sale"
+    id = Column(Integer, primary_key=True)
+    sale_date = Column(Date, nullable=False)               # 日期
+    customer_id = Column(Integer, ForeignKey("customer.id"))  # 客户
+    product_id = Column(Integer, ForeignKey("product.id"))    # 产品
+    qty = Column(Integer, default=0)                       # 数量
+    purchase_price = Column(Numeric(14, 4), default=0)     # 进货单价
+    sales_price = Column(Numeric(14, 4), default=0)        # 出货单价
+    sales_amount = Column(Numeric(14, 2), default=0)       # 销售金额（计算）
+    profit = Column(Numeric(14, 2), default=0)             # 利润（计算）
+    note = Column(Text)
+
+
+# ============ 业务：每日账单（工作台） ============
+
+class DailyBill(Base, TimestampMixin):
+    __tablename__ = "daily_bill"
+    id = Column(Integer, primary_key=True)
+    biz_date = Column(Date, nullable=False, unique=True)  # 日期
+    bill_balance = Column(Numeric(14, 2))                 # 账单余额（元）= -(代理余额合计-甲方余额)
+    wallet_balance = Column(Numeric(18, 4))               # 钱包余额（U，USDT）手动录入
