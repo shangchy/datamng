@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { api, uploadFile, downloadFile } from '../api'
-import { useToast, Modal } from '../components/ui'
+import { useToast, useConfirm, Modal } from '../components/ui'
 import Chart from '../components/Chart'
 
 const MEDALS = ['🥇', '🥈', '🥉']
@@ -12,6 +12,7 @@ function fmt(d) {
 
 export default function Dashboard() {
   const { toast, showError } = useToast()
+  const [confirm, confirmEl] = useConfirm()
   const [s, setS] = useState(null)
   const [rank, setRank] = useState([])
   const [trend, setTrend] = useState([])
@@ -24,6 +25,8 @@ export default function Dashboard() {
   const [products, setProducts] = useState([])
   const [customers, setCustomers] = useState([])
   const [psImportResult, setPsImportResult] = useState(null)
+  const [psExportModal, setPsExportModal] = useState(false)
+  const [psDate, setPsDate] = useState(() => fmt(new Date()))
   const psFileRef = useRef(null)
 
   function loadCharts(start = '', end = '') {
@@ -67,12 +70,15 @@ export default function Dashboard() {
     setProductSales(list => list.map(r => r.id === id ? { ...r, ...patch } : r))
   }
   function addPsRow() {
-    const d = new Date()
-    setProductSales(list => [{ id: 'new_' + Date.now(), isNew: true, sale_date: fmt(d), customer_id: '', product_id: '', qty: '', purchase_price: '', sales_price: '', note: '' }, ...list])
+    setProductSales(list => [{ id: 'new_' + Date.now(), isNew: true, sale_date: psDate, customer_id: '', customer: '', product_id: '', product: '', qty: '', purchase_price: '', sales_price: '', note: '' }, ...list])
   }
-  function onPickPsProduct(row, pid) {
-    const prod = products.find(x => x.id === Number(pid))
-    updatePs(row.id, { product_id: pid, sales_price: prod ? prod.default_sales_price : row.sales_price })
+  function onPickPsCustomer(row, text) {
+    const c = customers.find(x => `${x.code} ${x.name}` === text) || customers.find(x => x.code === text) || customers.find(x => x.name === text)
+    updatePs(row.id, { customer: text, customer_id: c ? c.id : '' })
+  }
+  function onPickPsProduct(row, text) {
+    const prod = products.find(x => x.name === text)
+    updatePs(row.id, { product: text, product_id: prod ? prod.id : '', sales_price: prod ? prod.default_sales_price : row.sales_price })
   }
   function psCalc(p) {
     const qty = Number(p.qty) || 0
@@ -80,15 +86,25 @@ export default function Dashboard() {
     const pp = Number(p.purchase_price) || 0
     return { sales_amount: qty * sp, profit: qty * (sp - pp) }
   }
-  async function savePsRow(p) {
-    if (!p.sale_date) { showError('请选择日期'); return }
-    if (!p.customer_id) { showError('请选择客户'); return }
-    if (!p.product_id) { showError('请选择产品'); return }
-    if (!(p.qty !== '' && p.qty != null)) { showError('请填写数量'); return }
+  const filteredSales = productSales.filter(p => !psDate || p.sale_date === psDate)
+
+  async function saveAll() {
+    const rows = filteredSales
+    if (rows.length === 0) { showError('当前日期下暂无数据可保存'); return }
+    const invalid = []
+    rows.forEach((p, i) => {
+      if (!p.customer_id) invalid.push(`第 ${i + 1} 行：请选择客户`)
+      if (!p.product_id) invalid.push(`第 ${i + 1} 行：请选择产品`)
+      if (p.qty === '' || p.qty == null || !(Number(p.qty) > 0)) invalid.push(`第 ${i + 1} 行：请填写有效的数量`)
+    })
+    if (invalid.length) { showError(invalid.join('；')); return }
+    if (!(await confirm(`确认批量保存当前 ${rows.length} 条产品销售数据？`))) return
     try {
-      const body = { sale_date: p.sale_date, customer_id: Number(p.customer_id), product_id: Number(p.product_id), qty: Number(p.qty), purchase_price: p.purchase_price === '' ? null : Number(p.purchase_price), sales_price: p.sales_price === '' ? null : Number(p.sales_price), note: p.note || '' }
-      if (p.isNew) await api.post('/api/product-sales', body)
-      else await api.put(`/api/product-sales/${p.id}`, body)
+      for (const p of rows) {
+        const body = { sale_date: psDate, customer_id: Number(p.customer_id), product_id: Number(p.product_id), qty: Number(p.qty), purchase_price: p.purchase_price === '' ? null : Number(p.purchase_price), sales_price: p.sales_price === '' ? null : Number(p.sales_price), note: p.note || '' }
+        if (p.isNew) await api.post('/api/product-sales', body)
+        else await api.put(`/api/product-sales/${p.id}`, body)
+      }
       toast('已保存'); loadProductSales()
     } catch (e) { showError(e.message) }
   }
@@ -104,6 +120,8 @@ export default function Dashboard() {
       fd.append('file', file)
       const data = await uploadFile('/api/product-sales/import', fd)
       loadProductSales()
+      const dates = data.data?.dates || []
+      if (dates.length === 1) setPsDate(dates[0])
       const errors = data.data?.errors || []
       if (errors.length > 0) {
         setPsImportResult({ imported: data.data?.imported || 0, errors })
@@ -115,6 +133,12 @@ export default function Dashboard() {
 
   function exportPsTemplate() {
     downloadFile('/api/product-sales/template').catch(e => showError(e.message))
+  }
+
+  function exportPs(scope) {
+    const url = scope === 'all' ? '/api/product-sales/export' : `/api/product-sales/export?date=${psDate}`
+    downloadFile(url).catch(e => showError(e.message))
+    setPsExportModal(false)
   }
 
   function pick7() { setRange('7'); loadCharts() }
@@ -164,6 +188,7 @@ export default function Dashboard() {
 
   return (
     <div className="page-scroll">
+      {confirmEl}
       <div className="cards">
         {kpis.map((k, i) => (
           <div className="card kpi" key={i}>
@@ -232,45 +257,46 @@ export default function Dashboard() {
 
       <div className="panel">
         <h3 style={{ justifyContent: 'space-between' }}>
-          <span>产品销售</span>
+          <span>
+            产品销售
+            <input type="date" value={psDate} onChange={e => setPsDate(e.target.value)} style={{ marginLeft: 10, height: 30 }} />
+          </span>
           <span>
             <input type="file" accept=".xlsx,.xls" style={{ display: 'none' }} ref={psFileRef} onChange={e => { if (e.target.files[0]) importProductSales(e.target.files[0]).catch(err => showError(err.message)); e.target.value = '' }} />
+            <button className="btn small" onClick={() => setPsExportModal(true)}>导出 Excel</button>{' '}
             <button className="btn small" onClick={exportPsTemplate}>导出模版</button>{' '}
             <button className="btn small" onClick={() => psFileRef.current.click()}>导入 Excel</button>{' '}
-            <button className="btn primary small" onClick={addPsRow}>+ 新增</button>
+            <button className="btn primary small" onClick={addPsRow}>+ 新增</button>{' '}
+            <button className="btn primary small" onClick={saveAll}>保存</button>
           </span>
         </h3>
+        <datalist id="ps-customers">{customers.map(c => <option key={c.id} value={`${c.code} ${c.name}`} />)}</datalist>
+        <datalist id="ps-products">{products.map(p => <option key={p.id} value={p.name} />)}</datalist>
         <div style={{ maxHeight: 205, overflowY: 'auto', overflowX: 'auto' }}>
           <table className="ps-table">
             <colgroup>
-              <col style={{ width: '10%' }} />
-              <col style={{ width: '11%' }} />
               <col style={{ width: '14%' }} />
+              <col style={{ width: '16%' }} />
+              <col style={{ width: '7%' }} />
+              <col style={{ width: '7%' }} />
+              <col style={{ width: '7%' }} />
               <col style={{ width: '7%' }} />
               <col style={{ width: '6%' }} />
-              <col style={{ width: '6%' }} />
-              <col style={{ width: '7%' }} />
-              <col style={{ width: '6%' }} />
-              <col style={{ width: '12%' }} />
-              <col style={{ width: '6%' }} />
+              <col style={{ width: '13%' }} />
+              <col style={{ width: '8%' }} />
               <col style={{ width: '15%' }} />
             </colgroup>
-            <thead><tr><th>日期</th><th>客户</th><th>产品</th><th className="num">数量</th><th className="center">进货单价<br/>（元）</th><th className="center">出货单价<br/>（元）</th><th className="center">销售金额<br/>（元）</th><th className="center">利润<br/>（元）</th><th>更新时间</th><th>更新人</th><th className="ops">操作</th></tr></thead>
+            <thead><tr><th>客户</th><th>产品</th><th className="num">数量</th><th className="center">进货单价<br/>（元）</th><th className="center">出货单价<br/>（元）</th><th className="center">销售金额<br/>（元）</th><th className="center">利润<br/>（元）</th><th>更新时间</th><th>更新人</th><th className="ops">操作</th></tr></thead>
             <tbody>
-              {productSales.map(p => {
+              {filteredSales.map(p => {
                 const calc = psCalc(p)
                 return (
                   <tr key={p.id}>
-                    <td><input type="date" value={p.sale_date} onChange={e => updatePs(p.id, { sale_date: e.target.value })} /></td>
                     <td>
-                      <select value={p.customer_id} onChange={e => updatePs(p.id, { customer_id: e.target.value === '' ? '' : Number(e.target.value) })}>
-                        <option value="">请选择</option>{customers.map(c => <option key={c.id} value={c.id}>{c.code} {c.name}</option>)}
-                      </select>
+                      <input list="ps-customers" value={p.customer || ''} placeholder="输入或选择客户" onChange={e => onPickPsCustomer(p, e.target.value)} />
                     </td>
                     <td>
-                      <select value={p.product_id} onChange={e => onPickPsProduct(p, e.target.value === '' ? '' : Number(e.target.value))}>
-                        <option value="">请选择</option>{products.map(pr => <option key={pr.id} value={pr.id}>{pr.name}</option>)}
-                      </select>
+                      <input list="ps-products" value={p.product || ''} placeholder="输入或选择产品" onChange={e => onPickPsProduct(p, e.target.value)} />
                     </td>
                     <td className="num"><input type="number" value={p.qty} onChange={e => updatePs(p.id, { qty: e.target.value })} /></td>
                     <td className="num"><input type="number" step="0.0001" value={p.purchase_price} onChange={e => updatePs(p.id, { purchase_price: e.target.value })} /></td>
@@ -280,7 +306,6 @@ export default function Dashboard() {
                     <td className="audit-time">{p.updated_at || '—'}</td>
                     <td className="audit-who">{p.updated_by || '—'}</td>
                     <td className="ops">
-                      <button className="btn small primary" onClick={() => savePsRow(p)}>保存</button>
                       <button className="btn small danger" onClick={() => delPs(p)}>删除</button>
                     </td>
                   </tr>
@@ -289,7 +314,7 @@ export default function Dashboard() {
             </tbody>
           </table>
         </div>
-        {productSales.length === 0 && <div className="empty">暂无产品销售</div>}
+        {filteredSales.length === 0 && <div className="empty">该日期暂无产品销售</div>}
       </div>
 
       <div className="panel">
@@ -344,6 +369,16 @@ export default function Dashboard() {
           </div>
           <div className="foot">
             <button className="btn primary" onClick={() => setPsImportResult(null)}>关闭</button>
+          </div>
+        </Modal>
+      )}
+
+      {psExportModal && (
+        <Modal title="导出产品销售" onClose={() => setPsExportModal(false)}>
+          <div style={{ marginBottom: 16, fontSize: 14 }}>请选择导出范围：</div>
+          <div className="foot">
+            <button className="btn" onClick={() => exportPs('current')}>导出当前日期数据</button>
+            <button className="btn primary" onClick={() => exportPs('all')}>导出全部数据</button>
           </div>
         </Modal>
       )}

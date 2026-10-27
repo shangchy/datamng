@@ -247,7 +247,9 @@ async def import_product_sales(file: UploadFile = File(...), db: Session = Depen
     prod_by_name = {p.name: p for p in products if p.name}
 
     imported = 0
+    updated = 0
     errors = []
+    imported_dates = set()
     for values in rows:
         def getv(i):
             return values[i] if i is not None and i < len(values) else None
@@ -300,18 +302,64 @@ async def import_product_sales(file: UploadFile = File(...), db: Session = Depen
 
         sales_amount = round(qty * sp, 2)
         profit = round(qty * (sp - pp), 2)
-        s = ProductSale(sale_date=sale_date, customer_id=cust.id, product_id=prod.id,
-                        qty=qty, purchase_price=pp, sales_price=sp,
-                        sales_amount=sales_amount, profit=profit)
-        s.created_by = _ulabel(user)
-        s.updated_by = _ulabel(user)
-        db.add(s)
-        imported += 1
+        existing = db.query(ProductSale).filter(ProductSale.sale_date == sale_date,
+                                                 ProductSale.customer_id == cust.id,
+                                                 ProductSale.product_id == prod.id).first()
+        if existing:
+            existing.qty = qty
+            existing.purchase_price = pp
+            existing.sales_price = sp
+            existing.sales_amount = sales_amount
+            existing.profit = profit
+            existing.updated_by = _ulabel(user)
+            updated += 1
+        else:
+            s = ProductSale(sale_date=sale_date, customer_id=cust.id, product_id=prod.id,
+                            qty=qty, purchase_price=pp, sales_price=sp,
+                            sales_amount=sales_amount, profit=profit)
+            s.created_by = _ulabel(user)
+            s.updated_by = _ulabel(user)
+            db.add(s)
+            imported += 1
+        imported_dates.add(sale_date)
     db.commit()
-    msg = f"导入 {imported} 条"
+    msg = f"导入 {imported} 条，更新 {updated} 条"
     if errors:
         msg += f"，失败 {len(errors)} 条：{'；'.join(errors[:10])}"
-    return {"code": 0, "data": {"imported": imported, "errors": errors}, "msg": msg}
+    return {"code": 0, "data": {"imported": imported, "updated": updated, "errors": errors,
+                                "dates": sorted([d.strftime("%Y-%m-%d") for d in imported_dates])}, "msg": msg}
+
+
+@router.get("/product-sales/export")
+def export_product_sales(db: Session = Depends(get_db), _=Depends(get_current_user), date: str = ""):
+    """导出产品销售为 Excel（基于导入模版 MB-PS-IMPORT 文件，保留其格式，可再导入）：传 date 只导该日期，不传导全部"""
+    qy = db.query(ProductSale)
+    if date:
+        try:
+            d = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=422, detail="日期格式错误")
+        qy = qy.filter(ProductSale.sale_date == d)
+    rows = qy.order_by(ProductSale.id).all()
+    import openpyxl
+    tpl = ensure_product_sale_template(db)
+    data = tpl.file_data if tpl.file_data else _build_product_sale_template_xlsx()
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    ws = wb.active
+    if ws.max_row > 1:
+        ws.delete_rows(2, ws.max_row - 1)  # 删除示例行，保留表头与格式
+    prod_map = {p.id: p.name for p in db.query(Product).all()}
+    cust_code = {c.id: c.code for c in db.query(Customer).all()}
+    for s in rows:
+        ws.append([s.sale_date.strftime("%Y-%m-%d") if s.sale_date else "",
+                   cust_code.get(s.customer_id, ""), prod_map.get(s.product_id, ""),
+                   float(s.purchase_price or 0), float(s.sales_price or 0), s.qty])
+    buf = io.BytesIO()
+    wb.save(buf)
+    filename = f"产品销售{('_' + date) if date else ''}.xlsx"
+    return Response(content=buf.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
 
 
 PS_IMPORT_TEMPLATE_CODE = "MB-PS-IMPORT"
