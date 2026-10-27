@@ -1390,7 +1390,9 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
             cust_id = cust.id if cust else None
             order_no = (r.get("order_no") or "").strip()
             existing = existing_order_no.get(order_no) if order_no else None
-            if gname:
+            raw_status = str(r.get("status") or "").strip()
+            import_status = _map_import_status(raw_status)
+            if gname and import_status == "在执":
                 gkey = (cust_id, gname)
                 known = group_consistency.get(gkey)
                 if known:
@@ -1409,8 +1411,6 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
                         conflict_codes = "、".join(sorted({tpl_code_map.get(i) for i in conflict_ids if tpl_code_map.get(i)}))
                         errors.append({"row": idx + 2, "reason": f"小组「{gname}」的出数模版与系统不一致（系统已有 {conflict_codes}，本次 {tpl_code}）"})
                         continue
-            raw_status = str(r.get("status") or "").strip()
-            import_status = _map_import_status(raw_status)
             up_id = up.id
             op_id = op.id if op else None
             duration = _duration_days(start_date, end_date) or r.get("duration")
