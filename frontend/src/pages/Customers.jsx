@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { api } from '../api'
+import { api, getUser } from '../api'
 import { Modal, Badge, useToast, useConfirm, ClearableInput } from '../components/ui'
 import FilterBar, { buildQuery } from '../components/FilterBar'
 import Pagination from '../components/Pagination'
@@ -27,6 +27,8 @@ export default function Customers() {
   const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
   const [searchParams] = useSearchParams()
+  const user = getUser() || {}
+  const isAdmin = user.role_code === 'admin' || (user.permissions || []).includes('*')
   const [rows, setRows] = useState([])
   const [detail, setDetail] = useState(null)
   const [tab, setTab] = useState('recharges')
@@ -89,6 +91,14 @@ export default function Customers() {
   async function openDetail(c) {
     const r = await api.get(`/api/customers/${c.id}`)
     setDetail(r.data); setTab('recharges')
+  }
+
+  async function delCustomer(c) {
+    if (!(await confirm(`确认删除客户「${c.code} ${c.name}」？`))) return
+    try {
+      await api.del(`/api/customers/${c.id}`)
+      toast('已删除'); load()
+    } catch (e) { showError(e.message) }
   }
 
   async function saveRecharge() {
@@ -191,6 +201,7 @@ export default function Customers() {
                   <button className="btn small" onClick={() => openDetail(c)}>详情</button>{' '}
                   <button className="btn small primary" onClick={() => { setRecharge({ customer_id: c.id, customer_label: `${c.code} ${c.name}`, balance: c.balance ?? 0, old_rmb: 0, amount_u: '', amount_rmb: '', recharge_date: '', note: '', recharge_type: '转账', reason: '', from_detail: false }) }}>充值</button>{' '}
                   <button className="btn small" onClick={() => openEdit(c)}>编辑</button>
+                  {isAdmin && <button className="btn small danger" onClick={() => delCustomer(c)}>删除</button>}
                 </td>
               </tr>
             ))}

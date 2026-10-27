@@ -7,9 +7,9 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import get_current_user, require_admin
 from ..models import (Customer, CustomerRecharge, CustomerPrice, Channel,
-                      Bill, Order, Url, Category, Alert, SysConfig, Operator)
+                      Bill, Order, Url, Category, Alert, SysConfig, Operator, ProductSale)
 from ..schemas import CustomerBody, RechargeBody, PriceBody
 from ..pagination import paginate, ok_page
 from ..utils import fmt_dt, fmt_date
@@ -126,15 +126,19 @@ def update_customer_balance(cid: int, body: dict, db: Session = Depends(get_db),
 
 
 @router.delete("/{cid}")
-def delete_customer(cid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def delete_customer(cid: int, db: Session = Depends(get_db), _=Depends(require_admin)):
     c = db.query(Customer).filter(Customer.id == cid).first()
     if not c:
         raise HTTPException(status_code=404, detail="客户不存在")
-    if db.query(Order).filter(Order.customer_id == cid).first() or db.query(Bill).filter(Bill.customer_id == cid).first():
+    if (db.query(Order).filter(or_(Order.customer_id == cid, Order.upstream_id == cid)).first()
+            or db.query(Bill).filter(Bill.customer_id == cid).first()
+            or db.query(CustomerRecharge).filter(CustomerRecharge.customer_id == cid).first()
+            or db.query(CustomerPrice).filter(CustomerPrice.customer_id == cid).first()
+            or db.query(ProductSale).filter(ProductSale.customer_id == cid).first()):
         raise HTTPException(status_code=409, detail="存在关联数据，不可删除")
     db.delete(c)
     db.commit()
-    return {"code": 0, "data": None, "msg": "ok"}
+    return {"code": 0, "data": None, "msg": "已删除"}
 
 
 @router.get("/{cid}/recharges")
