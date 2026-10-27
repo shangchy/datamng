@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, aliased
 
 from ..database import get_db
 from ..deps import get_current_user, require_admin
-from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator, Platform, Category, SourceFile
+from ..models import Order, OrderUrl, Channel, Customer, Alert, OrderTemplate, Template, TidabiaoHistory, OperationLog, Operator, Platform, Category, SourceFile, SysConfig
 from ..schemas import OrderBody, StopBody, BatchStopBody, OrderDistConfigBody, GenerateBody, BatchGroupBody, ReopenBody
 from ..pagination import paginate, ok_page
 from ..utils import fmt_dt, fmt_date, norm_region
@@ -298,6 +298,22 @@ def _validate_entity_fields(db, body, exclude_order_id=None):
     if gmsg:
         errors.append(gmsg)
     return errors
+
+
+@router.get("/business-date")
+def business_date(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """默认更新日期：营业截止时间之前为前一天，之后为当天"""
+    cfg = db.query(SysConfig).filter(SysConfig.key == "business_cutoff_time").first()
+    cutoff = (cfg.value if cfg and cfg.value else "06:00").strip()
+    try:
+        hh, mm = [int(x) for x in cutoff.split(":")[:2]]
+    except (TypeError, ValueError):
+        hh, mm = 6, 0
+    now = datetime.now()
+    now_min = now.hour * 60 + now.minute
+    cutoff_min = hh * 60 + mm
+    d = date.today() - timedelta(days=1) if now_min < cutoff_min else date.today()
+    return {"code": 0, "data": {"date": d.strftime("%Y-%m-%d")}, "msg": "ok"}
 
 
 @router.get("")

@@ -428,6 +428,7 @@ CONFIG_ITEMS = [
     {"key": "backup_time", "label": "数据库备份时间", "type": "time", "default": "12:00"},
     {"key": "backup_keep_days", "label": "数据库备份保存天数", "type": "number", "default": "7"},
     {"key": "usdt_rate", "label": "USDT 汇率（元/U）", "type": "number", "default": "7"},
+    {"key": "business_cutoff_time", "label": "营业截止时间", "type": "time", "default": "06:00"},
 ]
 
 

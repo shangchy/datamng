@@ -123,6 +123,9 @@ export default function Orders({ variant = 'orders' }) {
   const [stopTarget, setStopTarget] = useState(null)
   const [stopDate, setStopDate] = useState('')
   const [stopReason, setStopReason] = useState('业务调整')
+  const [bizDate, setBizDate] = useState('')
+
+  function defaultOrderDate() { return bizDate || todayStr() }
   const [reopenTarget, setReopenTarget] = useState(null)
   const [reopenDate, setReopenDate] = useState('')
   const [extendTarget, setExtendTarget] = useState(null)
@@ -151,10 +154,7 @@ export default function Orders({ variant = 'orders' }) {
   const [busyMsg, setBusyMsg] = useState('')
   const [busyProgress, setBusyProgress] = useState(null)
   const [genModal, setGenModal] = useState(false)
-  const [genDate, setGenDate] = useState(() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  })
+  const [genDate, setGenDate] = useState('')
   const [confirmModal, setConfirmModal] = useState(false)
   const [confirmDate, setConfirmDate] = useState(() => {
     const d = new Date()
@@ -212,6 +212,7 @@ export default function Orders({ variant = 'orders' }) {
     api.get('/api/platforms').then(r => setPlatforms(r.data || [])).catch(() => {})
     api.get('/api/distinct?model=orders&field=start_date').then(r => setDateOptions(o => ({ ...o, start_date: r.data || [] }))).catch(() => {})
     api.get('/api/distinct?model=orders&field=end_date').then(r => setDateOptions(o => ({ ...o, end_date: r.data || [] }))).catch(() => {})
+    api.get('/api/orders/business-date').then(r => setBizDate(r.data?.date || '')).catch(() => {})
   }, [])
 
   const allCities = [...new Set(Object.values(geo.citiesMap).flat())]
@@ -272,8 +273,7 @@ export default function Orders({ variant = 'orders' }) {
   }
   function batchStop() {
     if (!selected.length) { showError('请先勾选要停单的订单'); return }
-    const d = new Date()
-    setStopDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
+    setStopDate(defaultOrderDate())
     setStopReason('业务调整')
     setStopTarget({ ids: selected, batch: true })
   }
@@ -290,8 +290,7 @@ export default function Orders({ variant = 'orders' }) {
 
   async function batchReopen() {
     if (!selected.length) { showError('请先勾选要复提的订单'); return }
-    const d = new Date()
-    setReopenDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
+    setReopenDate(defaultOrderDate())
     setReopenTarget({ ids: selected })
   }
 
@@ -324,10 +323,8 @@ export default function Orders({ variant = 'orders' }) {
   }
 
   function openReopen(o) {
-    const d = new Date()
-    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     setReopenOrder(o)
-    setReopenForm({ order_date: today, start_date: toDateInput(o.start_date), end_date: toDateInput(o.end_date) })
+    setReopenForm({ order_date: defaultOrderDate(), start_date: toDateInput(o.start_date), end_date: toDateInput(o.end_date) })
   }
 
   async function doReopenOrder() {
@@ -367,7 +364,7 @@ export default function Orders({ variant = 'orders' }) {
       province: toComma(o.province), city: toComma(o.city), excl_province: toComma(o.excl_province),
       excl_city: toComma(o.excl_city), age_min: o.age_min ?? '', age_max: o.age_max ?? '', pv: o.pv ?? '',
       start_date: toDateInput(o.start_date), end_date: toDateInput(o.end_date),
-      order_date: m === 'modify' ? '' : toDateInput(o.order_date), price: o.price ?? '', secondary_agent: o.secondary_agent || '',
+      order_date: m === 'modify' ? defaultOrderDate() : toDateInput(o.order_date), price: o.price ?? '', secondary_agent: o.secondary_agent || '',
       platform: o.platform || '', tpl_id: o.tpl_id ?? '', group_name: o.group_name || '',
       export_filename: o.export_filename || '', add_name: !!o.add_name, check_collision: !!o.check_collision,
       template_id: o.template_id ?? '', filename_rule: o.filename_rule || '', dist_config: o.dist_config || null,
@@ -662,7 +659,7 @@ export default function Orders({ variant = 'orders' }) {
           {!isStop && <button className="btn" onClick={exportTemplate}>导出模版</button>}
           {!isStop && <button className="btn" onClick={() => { setImportResult(null); setImportModal(true) }}>导入订单</button>}
           {!isStop && <button className="btn" onClick={() => { setReceiptResult(null); setReceiptModal(true) }}>导入回执</button>}
-          {!isStop && <button className="btn green" onClick={() => setGenModal(true)}>生成提单表</button>}
+          {!isStop && <button className="btn green" onClick={() => { setGenDate(defaultOrderDate()); setGenModal(true) }}>生成提单表</button>}
           {!isStop && <button className="btn orange" onClick={() => setConfirmModal(true)}>提单确认</button>}
           {!isStop && <button className="btn" onClick={checkDuplicates}>订单验重</button>}
           <button className={`btn ${filters.plat_issue ? 'primary' : ''}`} onClick={() => setCatCheckModal(true)}>品类检查</button>
@@ -698,7 +695,7 @@ export default function Orders({ variant = 'orders' }) {
                   {['在执', '待停', '改单'].includes(o.status) && <IconBtn title="改单" color="#7c3aed" onClick={e => { e.stopPropagation(); openModify(o) }}>{IconModify}</IconBtn>}
                   {o.status === '已停' && <IconBtn title="复提" color="#059669" onClick={e => { e.stopPropagation(); openReopen(o) }}>{IconReopen}</IconBtn>}
                   {o.status === '待停' && <IconBtn title="取消停单" color="#059669" onClick={e => { e.stopPropagation(); cancelStop(o) }}>{IconUndo}</IconBtn>}
-                  {['在执', '改单'].includes(o.status) && <IconBtn title="停单" color="#d97706" onClick={e => { e.stopPropagation(); const d = new Date(); setStopDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); setStopReason('业务调整'); setStopTarget(o) }}>{IconStop}</IconBtn>}
+                  {['在执', '改单'].includes(o.status) && <IconBtn title="停单" color="#d97706" onClick={e => { e.stopPropagation(); setStopDate(defaultOrderDate()); setStopReason('业务调整'); setStopTarget(o) }}>{IconStop}</IconBtn>}
                   <IconBtn title="复制新增" color="#0891b2" onClick={e => { e.stopPropagation(); copyCreate(o) }}>{IconCopy}</IconBtn>
                   {isAdmin && <IconBtn title="删除" color="#dc2626" onClick={e => { e.stopPropagation(); delOrder(o) }}>{IconDelete}</IconBtn>}
                 </td>
