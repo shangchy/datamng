@@ -1300,7 +1300,8 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
             elif c not in city_valid:
                 precheck.append({"row": row_no, "reason": f"排除地市「{c}」不存在"})
         gname = str(r.get("group_name") or "").strip()
-        if gname:
+        row_status = _map_import_status(str(r.get("status") or "").strip())
+        if gname and row_status == "在执":
             cval = str(r.get("customer") or "").strip()
             gkey = (down_code_map.get(cval), gname)
             prev = precheck_group.get(gkey)
