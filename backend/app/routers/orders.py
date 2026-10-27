@@ -241,11 +241,11 @@ def _validate_region(body: OrderBody):
 
 
 def _check_group_tpl_consistency(db, group_name, tpl_id, customer_id, exclude_order_id=None):
-    """同代理同小组不能有不同出数模版：返回错误文案或 None"""
+    """同代理同小组不能有不同出数模版：仅查在执订单（已停订单不参与查重），返回错误文案或 None"""
     if not group_name or not tpl_id:
         return None
     q = db.query(Order.tpl_id).filter(Order.group_name == group_name, Order.tpl_id.isnot(None),
-                                      Order.customer_id == customer_id)
+                                      Order.customer_id == customer_id, Order.status == "在执")
     if exclude_order_id:
         q = q.filter(Order.id != exclude_order_id)
     other_ids = {r[0] for r in q.all()}
@@ -1328,9 +1328,10 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
     group_consistency = {}
     # 预加载已有订单号，导入按订单号匹配（订单号相同才更新，无订单号则插入）
     existing_order_no = {o.order_no: o for o in db.query(Order).all() if o.order_no}
-    # 预加载已有订单的小组出数模版（(一级代理id, 小组) -> [(订单id, tpl_id)]），用于同代理同小组一致性校验
+    # 预加载已有订单的小组出数模版（(一级代理id, 小组) -> [(订单id, tpl_id)]），用于同代理同小组一致性校验（仅查在执订单）
     db_group_tpls = {}
-    for _o in db.query(Order).filter(Order.group_name.isnot(None), Order.group_name != "").all():
+    for _o in db.query(Order).filter(Order.group_name.isnot(None), Order.group_name != "",
+                                     Order.status == "在执").all():
         _g = (_o.group_name or "").strip()
         if _g:
             db_group_tpls.setdefault((_o.customer_id, _g), []).append((_o.id, _o.tpl_id))
