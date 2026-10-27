@@ -92,6 +92,8 @@ def _migrate_schema():
                 ("change_fields_json", "TEXT"),
                 ("created_by", "VARCHAR(50)"),
                 ("updated_by", "VARCHAR(50)"),
+                ("stop_prev_order_date", "DATE"),
+                ("stop_prev_end_date", "DATE"),
             ]:
                 if col not in order_cols:
                     conn.execute(text(f"ALTER TABLE orders ADD COLUMN {col} {ddl}"))

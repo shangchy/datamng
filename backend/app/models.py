@@ -182,6 +182,8 @@ class Order(Base, TimestampMixin):
     start_date = Column(Date)
     end_date = Column(Date)
     stop_date = Column(Date)
+    stop_prev_order_date = Column(Date)          # 停单前的更新日期（取消停单时还原）
+    stop_prev_end_date = Column(Date)            # 停单前的截止日期（取消停单时还原）
     status = Column(String(20), default="未提")  # 未提/在执/已停/改单
     batch_no = Column(String(50))                # 提单批次（如 20260921-01）
     dup_order_nos = Column(Text)                 # 重复订单编号（多个换行分隔）

@@ -755,6 +755,8 @@ def stop_order(oid: int, body: StopBody, db: Session = Depends(get_db), user=Dep
     o = db.query(Order).filter(Order.id == oid).first()
     if not o:
         raise HTTPException(status_code=404, detail="订单不存在")
+    o.stop_prev_order_date = o.order_date  # 保存停单前的更新日期
+    o.stop_prev_end_date = o.end_date      # 保存停单前的截止日期
     if body.order_date:
         if body.order_date > date.today():
             raise HTTPException(status_code=400, detail="更新日期不能是未来日期，请修改更新日期")
@@ -777,6 +779,12 @@ def cancel_stop(oid: int, db: Session = Depends(get_db), user=Depends(get_curren
         raise HTTPException(status_code=404, detail="订单不存在")
     if o.status != "待停":
         raise HTTPException(status_code=400, detail="仅「待停」订单可取消停单")
+    if o.stop_prev_order_date is not None:
+        o.order_date = o.stop_prev_order_date  # 还原停单前的更新日期
+    if o.stop_prev_end_date is not None:
+        o.end_date = o.stop_prev_end_date      # 还原停单前的截止日期
+    o.stop_prev_order_date = None
+    o.stop_prev_end_date = None
     o.status = "在执"
     o.stop_date = None
     o.updated_at = datetime.now()
@@ -793,6 +801,8 @@ def batch_stop(body: BatchStopBody, db: Session = Depends(get_db), user=Depends(
     rows = db.query(Order).filter(Order.id.in_(body.ids)).all()
     ids = [o.id for o in rows]
     for o in rows:
+        o.stop_prev_order_date = o.order_date  # 保存停单前的更新日期
+        o.stop_prev_end_date = o.end_date      # 保存停单前的截止日期
         if body.order_date:
             o.order_date = body.order_date
         o.end_date = o.order_date

@@ -538,6 +538,8 @@ CREATE TABLE orders (
 	start_date DATE, 
 	end_date DATE, 
 	stop_date DATE, 
+	stop_prev_order_date DATE, 
+	stop_prev_end_date DATE, 
 	status VARCHAR(20), 
 	batch_no VARCHAR(50), 
 	dup_order_nos TEXT, 
