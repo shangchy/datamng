@@ -111,6 +111,7 @@ class Category(Base, TimestampMixin):
     __tablename__ = "category"
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
+    code = Column(String(50))                       # 编号（二级品类用拼音首字母）
     parent_id = Column(Integer, ForeignKey("category.id"))
     level = Column(SmallInteger, nullable=False)  # 1 一级 / 2 二级
     sort_no = Column(SmallInteger, default=0)
@@ -153,6 +154,7 @@ class Platform(Base, TimestampMixin):
     __tablename__ = "platform"
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
+    code = Column(String(10))                       # 平台编号（4 位数字，全局唯一）
     cat_id = Column(Integer, ForeignKey("category.id"), nullable=False)  # 二级品类
     sort_no = Column(SmallInteger, default=0)
     status = Column(SmallInteger, default=1)

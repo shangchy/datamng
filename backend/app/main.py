@@ -70,6 +70,8 @@ def _migrate_schema():
         cr_cols = {c["name"] for c in insp.get_columns("customer_recharge")} if "customer_recharge" in insp.get_table_names() else set()
         sf_cols = {c["name"] for c in insp.get_columns("source_file")} if "source_file" in insp.get_table_names() else set()
         prod_cols = {c["name"] for c in insp.get_columns("product")} if "product" in insp.get_table_names() else set()
+        cat_cols = {c["name"] for c in insp.get_columns("category")} if "category" in insp.get_table_names() else set()
+        plat_cols = {c["name"] for c in insp.get_columns("platform")} if "platform" in insp.get_table_names() else set()
         with engine.begin() as conn:
             for col, ddl in [
                 ("task_id", "VARCHAR(100)"),
@@ -183,6 +185,10 @@ def _migrate_schema():
             ]:
                 if col not in prod_cols:
                     conn.execute(text(f"ALTER TABLE product ADD COLUMN {col} {ddl}"))
+            if "code" not in cat_cols:
+                conn.execute(text("ALTER TABLE category ADD COLUMN code VARCHAR(50)"))
+            if "code" not in plat_cols:
+                conn.execute(text("ALTER TABLE platform ADD COLUMN code VARCHAR(10)"))
             # bill.customer_id 改为可空（给「其他人」单独抽取）
             bill_customer_col = next((c for c in insp.get_columns("bill") if c["name"] == "customer_id"), None) if "bill" in insp.get_table_names() else None
             if bill_customer_col is not None and not bill_customer_col.get("nullable"):
@@ -224,6 +230,7 @@ def _ensure_indexes():
         ("idx_daily_data_phone", "daily_data", "phone"),
         ("idx_daily_data_biz_date", "daily_data", "biz_date"),
         ("idx_daily_data_task_id", "daily_data", "task_id"),
+        ("idx_orders_task_id", "orders", "task_id"),
     ]
     try:
         with engine.begin() as conn:
@@ -623,11 +630,44 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"code": 500, "data": None, "msg": "服务器内部错误，详情见日志"})
 
 
+def _backfill_cat_plat_codes(db):
+    """给二级品类补拼音首字母编号、平台补 4 位数字编号（已有编号的跳过）"""
+    from .models import Category, Platform
+    from pypinyin import pinyin, Style
+    # 二级品类编号
+    used = set()
+    for c in db.query(Category).filter(Category.level == 2).order_by(Category.id).all():
+        if c.code:
+            used.add(c.code)
+            continue
+        base = "".join((p[0] if p else "") for p in pinyin(c.name or "", style=Style.FIRST_LETTER)).lower()
+        code = base or f"c{c.id}"
+        n = 2
+        while code in used:
+            code = f"{base}{n}"
+            n += 1
+        c.code = code
+        used.add(code)
+    # 平台编号（4 位数字，全局唯一）
+    plat_used = {p.code for p in db.query(Platform).filter(Platform.code.isnot(None), Platform.code != "").all()}
+    for p in db.query(Platform).filter((Platform.code.is_(None)) | (Platform.code == "")).order_by(Platform.id).all():
+        code = ""
+        for num in range(1, 10000):
+            c = f"{num:04d}"
+            if c not in plat_used:
+                code = c
+                plat_used.add(c)
+                break
+        p.code = code or None
+    db.commit()
+
+
 @app.on_event("startup")
 def on_startup():
     db = SessionLocal()
     try:
         seed(db)
+        _backfill_cat_plat_codes(db)
     finally:
         db.close()
     threading.Thread(target=_scheduler_loop, daemon=True).start()

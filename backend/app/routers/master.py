@@ -17,6 +17,25 @@ from ..regions import PROVINCES, CITIES
 router = APIRouter(prefix="/api", tags=["master"])
 
 
+def _pinyin_initials(name):
+    """中文名称转拼音首字母连写（消费金融 -> xfjr），非中文取原字符"""
+    try:
+        from pypinyin import pinyin, Style
+        return "".join((p[0] if p else "") for p in pinyin(str(name or ""), style=Style.FIRST_LETTER)).lower()
+    except Exception:  # noqa
+        return ""
+
+
+def _next_platform_code(db):
+    """分配一个未使用的 4 位数字平台编号（全局唯一）"""
+    used = {p.code for p in db.query(Platform).filter(Platform.code.isnot(None), Platform.code != "").all()}
+    for n in range(1, 10000):
+        code = f"{n:04d}"
+        if code not in used:
+            return code
+    return ""
+
+
 def _norm_header(h):
     return re.sub(r"\s+", "", str(h)).lower()
 
@@ -58,18 +77,25 @@ def list_categories(db: Session = Depends(get_db), _=Depends(get_current_user)):
     parents = [r for r in rows if r.level == 1]
     data = []
     for p in parents:
-        children = [{"id": c.id, "name": c.name, "status": c.status}
+        children = [{"id": c.id, "name": c.name, "code": c.code or "", "status": c.status}
                     for c in rows if c.parent_id == p.id]
-        data.append({"id": p.id, "name": p.name, "status": p.status, "children": children})
+        data.append({"id": p.id, "name": p.name, "code": p.code or "", "status": p.status, "children": children})
     return {"code": 0, "data": data, "msg": "ok"}
 
 
 @router.post("/categories")
 def create_category(body: CategoryBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    c = Category(name=body.name, parent_id=body.parent_id, level=body.level, sort_no=body.sort_no, status=body.status)
+    code = (body.code or "").strip()
+    if body.level == 2 and not code:
+        code = _pinyin_initials(body.name)
+    if code:
+        if db.query(Category).filter(Category.code == code, Category.code != "").first():
+            raise HTTPException(status_code=409, detail=f"品类编号「{code}」已存在")
+    c = Category(name=body.name, code=code or None, parent_id=body.parent_id, level=body.level,
+                 sort_no=body.sort_no, status=body.status)
     db.add(c)
     db.commit()
-    return {"code": 0, "data": {"id": c.id}, "msg": "ok"}
+    return {"code": 0, "data": {"id": c.id, "code": code}, "msg": "ok"}
 
 
 @router.put("/categories/{cid}")
@@ -77,7 +103,14 @@ def update_category(cid: int, body: CategoryBody, db: Session = Depends(get_db),
     c = db.query(Category).filter(Category.id == cid).first()
     if not c:
         raise HTTPException(status_code=404, detail="品类不存在")
-    c.name, c.status = body.name, body.status
+    code = (body.code or "").strip()
+    if c.level == 2 and not code:
+        code = _pinyin_initials(body.name)
+    if code:
+        dup = db.query(Category).filter(Category.code == code, Category.code != "", Category.id != cid).first()
+        if dup:
+            raise HTTPException(status_code=409, detail=f"品类编号「{code}」已存在")
+    c.name, c.code, c.status = body.name, code or None, body.status
     db.commit()
     return {"code": 0, "data": None, "msg": "ok"}
 
@@ -309,17 +342,21 @@ def list_platforms(db: Session = Depends(get_db), _=Depends(get_current_user), c
     data = []
     for p in rows:
         cat = db.query(Category).filter(Category.id == p.cat_id).first()
-        data.append({"id": p.id, "name": p.name, "cat_id": p.cat_id,
+        data.append({"id": p.id, "name": p.name, "code": p.code or "", "cat_id": p.cat_id,
                      "cat_name": cat.name if cat else "", "sort_no": p.sort_no, "status": p.status})
     return {"code": 0, "data": data, "msg": "ok"}
 
 
 @router.post("/platforms")
 def create_platform(body: PlatformBody, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    p = Platform(name=body.name, cat_id=body.cat_id, sort_no=body.sort_no, status=body.status)
+    code = (body.code or "").strip() or _next_platform_code(db)
+    if code:
+        if db.query(Platform).filter(Platform.code == code).first():
+            raise HTTPException(status_code=409, detail=f"平台编号「{code}」已存在")
+    p = Platform(name=body.name, code=code or None, cat_id=body.cat_id, sort_no=body.sort_no, status=body.status)
     db.add(p)
     db.commit()
-    return {"code": 0, "data": {"id": p.id}, "msg": "ok"}
+    return {"code": 0, "data": {"id": p.id, "code": code}, "msg": "ok"}
 
 
 @router.put("/platforms/{pid}")
@@ -327,7 +364,12 @@ def update_platform(pid: int, body: PlatformBody, db: Session = Depends(get_db),
     p = db.query(Platform).filter(Platform.id == pid).first()
     if not p:
         raise HTTPException(status_code=404, detail="平台不存在")
-    p.name, p.cat_id, p.sort_no, p.status = body.name, body.cat_id, body.sort_no, body.status
+    code = (body.code or "").strip() or p.code or _next_platform_code(db)
+    if code:
+        dup = db.query(Platform).filter(Platform.code == code, Platform.id != pid).first()
+        if dup:
+            raise HTTPException(status_code=409, detail=f"平台编号「{code}」已存在")
+    p.name, p.cat_id, p.code, p.sort_no, p.status = body.name, body.cat_id, code or None, body.sort_no, body.status
     db.commit()
     return {"code": 0, "data": None, "msg": "ok"}
 
@@ -363,13 +405,18 @@ async def import_categories(file: UploadFile = File(...), db: Session = Depends(
             cat2 = db.query(Category).filter(Category.name == r["cat2"], Category.level == 2,
                                              Category.parent_id == cat1.id).first()
             if not cat2:
-                cat2 = Category(name=r["cat2"], level=2, parent_id=cat1.id)
+                code = _pinyin_initials(r["cat2"])
+                base, n = code, 2
+                while code and db.query(Category).filter(Category.code == code, Category.code != "").first():
+                    code = f"{base}{n}"
+                    n += 1
+                cat2 = Category(name=r["cat2"], level=2, parent_id=cat1.id, code=code or None)
                 db.add(cat2)
                 db.flush()
                 created_cat += 1
         if r.get("platform") and cat2:
             if not db.query(Platform).filter(Platform.name == r["platform"], Platform.cat_id == cat2.id).first():
-                db.add(Platform(name=r["platform"], cat_id=cat2.id))
+                db.add(Platform(name=r["platform"], cat_id=cat2.id, code=_next_platform_code(db)))
                 created_plat += 1
     db.commit()
     return {"code": 0, "data": {"categories": created_cat, "platforms": created_plat},

@@ -170,6 +170,11 @@ export default function SimpleList({ kind }) {
   const [billSummaryDate, setBillSummaryDate] = useState('')
   const [billSummaryStart, setBillSummaryStart] = useState('')
   const [billSummaryEnd, setBillSummaryEnd] = useState('')
+  const [genBillModal, setGenBillModal] = useState(false)
+  const [genBillDate, setGenBillDate] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
   const [checkModal, setCheckModal] = useState(false)
   const [checkDate, setCheckDate] = useState(() => {
     const d = new Date()
@@ -786,17 +791,20 @@ export default function SimpleList({ kind }) {
   async function doDistribute() {
     if (!distDate) { showError('请选择数据日期'); return }
     setDistModal(false)
+    setBusy(true); setBusyMsg('正在准备分数据…')
     try {
       const body = { date: distDate }
       if (distCustomerIds.length) body.customer_ids = distCustomerIds
       let r = await api.post('/api/daily-data/distribute', body)
       if (r.data.needs_confirm) {
+        setBusy(false)
         const issues = r.data.issues || []
         const detail = issues.map(i => `「${i.group_name}」${i.unset_count} 个订单未设定出数模版（将按 ${i.tpl_code} 出数）`).join('、')
         if (!(await confirm(`以下小组存在未设定出数模版的订单：${detail}。\n\n是否继续分数据（未设定的订单将按小组已设定的出数模版处理）？`))) return
+        setBusy(true); setBusyMsg('正在分数据…')
         r = await api.post('/api/daily-data/distribute', { ...body, confirm: true })
       }
-      setBusy(true); setBusyMsg('正在分数据…'); setBusyProgress(0)
+      setBusyMsg('正在分数据…'); setBusyProgress(0)
       const taskId = r.data.task_id
       const total = r.data.total
       while (true) {
@@ -859,6 +867,17 @@ export default function SimpleList({ kind }) {
         await downloadFile(`/api/bills/summary-export?${params}`)
         toast('账单汇总已导出')
       }, '正在导出账单汇总…')
+    } catch (e) { showError(e.message) }
+  }
+
+  async function doGenerateBill() {
+    if (!genBillDate) { showError('请选择日期'); return }
+    setGenBillModal(false)
+    try {
+      await withBusy(async () => {
+        await downloadFile(`/api/bills/generate-bill?date=${genBillDate}`)
+        toast('代理账单已生成')
+      }, '正在生成代理账单…')
     } catch (e) { showError(e.message) }
   }
 
@@ -1017,6 +1036,7 @@ export default function SimpleList({ kind }) {
         {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
         {cfg.export && <button className="btn green" onClick={() => setExportModal(true)}>导出数据</button>}
         {kind === 'daily' && isAdmin && <button className="btn danger" onClick={() => setBatchDelModal(true)}>批量删除</button>}
+        {cfg.billExp && <button className="btn primary" onClick={() => setGenBillModal(true)}>生成账单</button>}
         {cfg.billExp && <button className="btn green" onClick={() => setBillSummaryModal(true)}>导出账单</button>}
         {cfg.simple && <button className="btn primary" onClick={() => setSimpleModal({ name: '', status: 1 })}>+ 新增</button>}
         {cfg.addUrl && <button className="btn primary" onClick={openAddUrl}>+ 新增 URL</button>}
@@ -1383,6 +1403,18 @@ export default function SimpleList({ kind }) {
           <div className="foot">
             <button className="btn" onClick={() => setBillSummaryModal(false)}>取消</button>
             <button className="btn primary" onClick={() => doBillSummaryExport().catch(e => showError(e.message))}>导出</button>
+          </div>
+        </Modal>
+      )}
+
+      {genBillModal && (
+        <Modal title="生成代理账单" onClose={() => setGenBillModal(false)}>
+          <div className="note">使用 MB-031 账单模版，为全部下游代理生成账单文件（含每日账单与当月账单两个 sheet），打包 ZIP 下载。</div>
+          <div className="field" style={{ marginBottom: 12 }}><label className="required">日期</label>
+            <input type="date" value={genBillDate} onChange={e => setGenBillDate(e.target.value)} /></div>
+          <div className="foot">
+            <button className="btn" onClick={() => setGenBillModal(false)}>取消</button>
+            <button className="btn primary" onClick={() => doGenerateBill().catch(e => showError(e.message))}>生成</button>
           </div>
         </Modal>
       )}

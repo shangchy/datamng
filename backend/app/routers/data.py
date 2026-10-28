@@ -445,7 +445,7 @@ def _import_niu_excel(db, content, biz_date, source_file, source_file_id, errors
             "biz_date": biz_date,
             "upstream": info.get("upstream") or "",
             "task_id": task_id,
-            "task_name": task_name or info.get("task_name") or "",
+            "task_name": info.get("task_name") or task_name or "",
             "phone": phone,
             "name": _ctx_wash(ctx, phone) if ctx else _wash_name_by_phone(db, phone),
             "province": province,
@@ -1482,9 +1482,73 @@ def _pinyin_key(s):
         return str(s or "")
 
 
-def _fill_distribute_file(tpl_bytes, records):
+def _fill_mb030_file(db, tpl_bytes, records):
+    """MB-030 产品出数模版：数据代码/本次申请平台/联系方式/客户名称/本次状态/近期申请平台A/B/C。
+    数据代码 = LeMon_ + 二级品类编号 + 四位平台编号；数据按数据代码排序；数据单元格绿色背景+边框。"""
+    from openpyxl import load_workbook
+    from openpyxl.styles import Alignment, Border, Side, Font, PatternFill
+    wb = load_workbook(io.BytesIO(tpl_bytes))
+    ws = wb.active
+    green = PatternFill(start_color="408110", end_color="408110", fill_type="solid")
+    black_font = Font(color="000000")
+    thin = Side(style="thin", color="000000")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    plat_by_name = {p.name: p for p in db.query(Platform).all() if p.name}
+    cat_by_id = {c.id: c for c in db.query(Category).all()}
+
+    def platform_codes(name):
+        p = plat_by_name.get((name or "").strip())
+        if not p:
+            return "", ""
+        cat = cat_by_id.get(p.cat_id)
+        return (p.code or ""), (cat.code if cat else "")
+
+    rows = []
+    for rec in records:
+        pcode, ccode = platform_codes(rec.get("platform") or "")
+        data_code = "LeMon_" + ccode + pcode
+        hist = [h for h in (rec.get("history") or []) if h and h != "无"]
+        row = [
+            data_code,
+            rec.get("platform") or "",
+            rec.get("url") or "",
+            rec.get("name") or "-",
+            "申请成功",
+            hist[0] if len(hist) > 0 else "-",
+            hist[1] if len(hist) > 1 else "-",
+            hist[2] if len(hist) > 2 else "-",
+        ]
+        rows.append((data_code, row))
+    rows.sort(key=lambda x: x[0])
+
+    header_row = 1
+    if ws.max_row > header_row:
+        ws.delete_rows(header_row + 1, ws.max_row - header_row)
+
+    r = header_row + 1
+    for _, row in rows:
+        for j, v in enumerate(row, 1):
+            cell = ws.cell(row=r, column=j, value=v)
+            cell.fill = green
+            cell.border = border
+            cell.alignment = center
+            cell.font = black_font
+        r += 1
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio
+
+
+def _fill_distribute_file(db, tpl_bytes, tpl_code, records):
     """用模版字节 + 日活数据记录（含手机号/省市/运营商/渠道/平台/任务名）生成单个文件；
-    若存在「是否撞库」的记录，则在末尾追加「近期申请记录」列（该类记录填历史，无历史填「无」，其余为空）。"""
+    若存在「是否撞库」的记录，则在末尾追加「近期申请记录」列（该类记录填历史，无历史填「无」，其余为空）。
+    tpl_code == MB-030 时走产品出数专用填充。"""
+    if tpl_code == "MB-030":
+        return _fill_mb030_file(db, tpl_bytes, records)
     from openpyxl import load_workbook, Workbook
     from openpyxl.styles import Alignment, Border, Side, Font, PatternFill
     from openpyxl.utils import get_column_letter
@@ -1858,7 +1922,7 @@ def _attach_history(db, jobs, date_obj):
             rec["history"] = [f"{bd.strftime('%Y%m%d')} {pf or '未知'}" for bd, pf in lst] or ["无"]
 
 
-def _build_distribute_zip(jobs, bills, date_str, progress_cb, bill_tpls=None, should_cancel=None):
+def _build_distribute_zip(db, jobs, date_str, progress_cb, should_cancel=None):
     import zipfile
     buf = io.BytesIO()
     used_names = set()
@@ -1882,24 +1946,10 @@ def _build_distribute_zip(jobs, bills, date_str, progress_cb, bill_tpls=None, sh
                 filename = f"{base}-{n}.xlsx"
             used_names.add(filename)
             folder = folder_of[job["cust_code"]]
-            bio = _fill_distribute_file(job["tpl_bytes"], job["records"])
+            bio = _fill_distribute_file(db, job["tpl_bytes"], job.get("tpl_code") or "", job["records"])
             zf.writestr(f"{folder}/{filename}", bio.read())
             if progress_cb:
                 progress_cb(i + 1)
-        # 各代理账单 excel
-        for cc, bill in bills.items():
-            if should_cancel and should_cancel():
-                raise DistributeCancelled()
-            folder = folder_of.get(cc)
-            if not folder:
-                continue
-            tpl = (bill_tpls or {}).get(cc)
-            bio = _fill_bill_file(bill.get("cust_label") or cc, date_str, bill, tpl)
-            bal = float(bill.get("balance") or 0)
-            sign = "正" if bal >= 0 else "负"
-            abs_bal = round(abs(bal), 2)
-            filename = f"账单-{date_str}（余额{sign}{abs_bal}）.xlsx"
-            zf.writestr(f"{folder}/{filename}", bio.read())
     buf.seek(0)
     return buf
 
@@ -2020,29 +2070,35 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), user=Dep
     if not rows:
         raise HTTPException(status_code=404, detail=f"数据日期 {body.date} 没有可分发的数据")
 
+    # 预加载参考数据，消除逐工单 N+1 查询
+    task_ids = {d.task_id for d in rows if d.task_id}
+    orders_by_tid = {o.task_id: o for o in db.query(Order).filter(Order.task_id.in_(task_ids)).all()}
+    customers = {c.id: c for c in db.query(Customer).all()}
+    channels = {c.id: c for c in db.query(Channel).all()}
+    operators = {o.id: o for o in db.query(Operator).all()}
+    templates = {t.id: t for t in db.query(Template).all()}
+    prices = {}
+    for p in db.query(CustomerPrice).all():
+        prices[(p.customer_id, p.channel_id, p.operator_id)] = float(p.price)
+
     # 1. 先把分数据对象（日活数据）全部与订单数据关联（按任务id）
     orders_info = {}
-    for d in rows:
-        if not d.task_id or d.task_id in orders_info:
-            continue
-        order = db.query(Order).filter(Order.task_id == d.task_id).first()
+    for tid in task_ids:
+        order = orders_by_tid.get(tid)
         if not order:
             continue
-        cust = db.query(Customer).filter(Customer.id == order.customer_id).first()
-        tpl = db.query(Template).filter(Template.id == order.tpl_id).first() if order.tpl_id else None
-        ch = db.query(Channel).filter(Channel.id == order.channel_id).first()
-        op = db.query(Operator).filter(Operator.id == order.operator_id).first()
+        cust = customers.get(order.customer_id)
+        tpl = templates.get(order.tpl_id) if order.tpl_id else None
+        ch = channels.get(order.channel_id)
+        op = operators.get(order.operator_id)
         # 上游单价（成本）：客户管理里「上游」客户按渠道（dpi 渠道再按运营商）设定的单价
         up_price = 0.0
         if order.upstream_id and order.channel_id:
-            up_q = db.query(CustomerPrice).filter(CustomerPrice.customer_id == order.upstream_id,
-                                                  CustomerPrice.channel_id == order.channel_id)
-            up_cp = up_q.filter(CustomerPrice.operator_id == order.operator_id).first()
-            if not up_cp:
-                up_cp = up_q.filter(CustomerPrice.operator_id.is_(None)).first()
-            if up_cp:
-                up_price = float(up_cp.price)
-        orders_info[d.task_id] = {
+            v = prices.get((order.upstream_id, order.channel_id, order.operator_id))
+            if v is None:
+                v = prices.get((order.upstream_id, order.channel_id, None))
+            up_price = v or 0.0
+        orders_info[tid] = {
             "tpl_code": tpl.code if tpl else "",
             "group_name": order.group_name or "",
             "task_name": order.task_name or "",
@@ -2139,6 +2195,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), user=Dep
                 "sec_agent": src["sec_agent"],
                 "group_name": g,
                 "tpl_bytes": src["tpl_bytes"],
+                "tpl_code": src["tpl_code"],
             }
         jobs[g]["records"].append({
             "url": d.phone or "",
@@ -2167,7 +2224,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), user=Dep
             cc = info["cust_code"]
             if cc not in bills:
                 label = (f"{cc} {info['cust_name']}".strip() if info["cust_name"] else cc)
-                cust = db.query(Customer).filter(Customer.id == info["customer_id"]).first()
+                cust = customers.get(info["customer_id"])
                 bills[cc] = {"customer_id": info["customer_id"], "cust_label": label,
                              "qty": 0, "sales": 0.0, "cost": 0.0,
                              "balance": float(cust.balance) if cust and cust.balance is not None else 0,
@@ -2193,7 +2250,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), user=Dep
                 continue
             cc = next((_cc for _cc, b in bills.items() if b.get("customer_id") == cid), None)
             if cc is None:
-                cust = db.query(Customer).filter(Customer.id == cid).first()
+                cust = customers.get(cid)
                 label = (f"{cust.code} {cust.name}".strip() if cust and cust.name else (cust.code or str(cid)))
                 cc = cust.code if cust and cust.code else str(cid)
                 bills[cc] = {"customer_id": cid, "cust_label": label,
@@ -2225,47 +2282,7 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), user=Dep
         for cc, b in bills.items():
             b["recharge_info"] = recharge_map.get(b.get("customer_id"), [])
 
-        # 7. 保存账单（按客户+日期 upsert；余额 = 客户余额 - 销售金额），并同步客户余额
-        for cc, b in bills.items():
-            cid = b.get("customer_id")
-            if not cid:
-                continue
-            cust = db.query(Customer).filter(Customer.id == cid).first()
-            existing = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == date_obj).first()
-            balance = float(cust.balance) if cust and cust.balance is not None else 0
-            # 重复分发时：把上次已扣的销售金额加回来，恢复到扣减前的基础余额，避免重复扣减
-            if existing and existing.sales is not None:
-                balance = round(balance + float(existing.sales), 2)
-            bill_balance = round(balance - float(b["sales"]), 2)
-            b["balance"] = bill_balance
-            profit = round(float(b["sales"]) - float(b["cost"]), 2)
-            if existing:
-                existing.purchase_qty = b["qty"]
-                existing.sales = b["sales"]
-                existing.balance = bill_balance
-                existing.profit = profit
-                existing.updated_by = user.nickname or user.username
-            else:
-                db.add(Bill(customer_id=cid, biz_date=date_obj, purchase_qty=b["qty"],
-                            sales=b["sales"], balance=bill_balance, profit=profit,
-                            created_by=user.nickname or user.username,
-                            updated_by=user.nickname or user.username))
-            if cust is not None:
-                cust.balance = bill_balance
-        db.commit()
-
-    # 7.5 各代理账单模版（客户配置了账单模版则按模版生成）
-    bill_tpls = {}
-    for cc, b in bills.items():
-        cid = b.get("customer_id")
-        if not cid:
-            continue
-        cust = db.query(Customer).filter(Customer.id == cid).first()
-        if cust and cust.bill_tpl_id:
-            tpl = db.query(Template).filter(Template.id == cust.bill_tpl_id).first()
-            if tpl and tpl.file_data:
-                bill_tpls[cc] = bytes(tpl.file_data)
-
+    user_label = user.nickname or user.username
     task_id = uuid.uuid4().hex
     _DISTRIBUTE_TASKS[task_id] = {"total": len(jobs), "done": 0, "status": "running",
                                   "error": "", "buffer": None, "cancel": False,
@@ -2274,10 +2291,38 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), user=Dep
     def run():
         db2 = SessionLocal()
         try:
+            # 7. 保存账单（按客户+日期 upsert；余额 = 客户余额 - 销售金额），并同步客户余额
+            if not body.files_only:
+                for cc, b in bills.items():
+                    cid = b.get("customer_id")
+                    if not cid:
+                        continue
+                    cust = db2.query(Customer).filter(Customer.id == cid).first()
+                    existing = db2.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == date_obj).first()
+                    balance = float(cust.balance) if cust and cust.balance is not None else 0
+                    # 重复分发时：把上次已扣的销售金额加回来，恢复到扣减前的基础余额，避免重复扣减
+                    if existing and existing.sales is not None:
+                        balance = round(balance + float(existing.sales), 2)
+                    bill_balance = round(balance - float(b["sales"]), 2)
+                    b["balance"] = bill_balance
+                    profit = round(float(b["sales"]) - float(b["cost"]), 2)
+                    if existing:
+                        existing.purchase_qty = b["qty"]
+                        existing.sales = b["sales"]
+                        existing.balance = bill_balance
+                        existing.profit = profit
+                        existing.updated_by = user_label
+                    else:
+                        db2.add(Bill(customer_id=cid, biz_date=date_obj, purchase_qty=b["qty"],
+                                     sales=b["sales"], balance=bill_balance, profit=profit,
+                                     created_by=user_label, updated_by=user_label))
+                    if cust is not None:
+                        cust.balance = bill_balance
+                db2.commit()
+
             _attach_history(db2, jobs, date_obj)
-            buf = _build_distribute_zip(jobs, bills, date_obj.strftime("%m%d"),
+            buf = _build_distribute_zip(db2, jobs, date_obj.strftime("%m%d"),
                                         lambda done: _DISTRIBUTE_TASKS[task_id].update(done=done),
-                                        bill_tpls,
                                         should_cancel=lambda: _DISTRIBUTE_TASKS[task_id].get("cancel"))
             data = buf.getvalue()
             db2.add(SourceFile(filename=f"分发数据-{date_obj.strftime('%Y-%m-%d')}.zip",
@@ -3404,6 +3449,218 @@ def generate_bills_zip(db: Session = Depends(get_db), _=Depends(get_current_user
     buf.seek(0)
     return Response(content=buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('账单-' + date_obj.strftime('%Y%m%d') + '.zip')}"})
+
+
+def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
+    """用 MB-031 模版生成代理账单：sheet1 每日账单 + sheet2 当月每日统计"""
+    from openpyxl import load_workbook
+    from openpyxl.styles import Border, Side, Alignment
+    wb = load_workbook(io.BytesIO(tpl_bytes))
+    if len(wb.sheetnames) < 2:
+        raise ValueError("MB-031 模版缺少第二个 sheet")
+    ws1 = wb.worksheets[0]
+    ws2 = wb.worksheets[1]
+    thin = Side(style="thin", color="000000")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    cust_label = bill.get("cust_label") or f"{cust.code} {cust.name}"
+    sales = round(float(bill.get("sales") or 0), 2)
+    balance = round(float(bill.get("balance")), 2) if bill.get("balance") is not None else 0.0
+    recharge_info = bill.get("recharge_info") or []
+    prev = db.query(Bill).filter(Bill.customer_id == cust.id, Bill.biz_date < date_obj).order_by(Bill.biz_date.desc()).first()
+    yesterday_balance = round(float(prev.balance), 2) if prev and prev.balance is not None else 0.0
+
+    summary = {
+        "客户": cust_label,
+        "业务日期": date_obj.strftime("%m%d"),
+        "昨日余额": yesterday_balance,
+        "销售金额": sales,
+        "今日充值": "；".join(recharge_info),
+        "剩余余额": balance,
+    }
+
+    def _field(s):
+        s = str(s).strip()
+        if s in ("客户", "客户名称", "代理", "代理名称"):
+            return "客户"
+        if "日期" in s:
+            return "业务日期"
+        if "昨日" in s:
+            return "昨日余额"
+        if "销售" in s:
+            return "销售金额"
+        if "充值" in s or "补数" in s:
+            return "今日充值"
+        if "剩余" in s or "余额" in s:
+            return "剩余余额"
+        return None
+
+    for row in ws1.iter_rows(min_col=1, max_col=1):
+        for cell in row:
+            if cell.value is None:
+                continue
+            f = _field(str(cell.value))
+            if f:
+                ws1.cell(row=cell.row, column=cell.column + 1, value=summary[f])
+
+    detail_header_row = None
+    detail_cols = {}
+    for row in ws1.iter_rows():
+        vals = [str(c.value).strip() if c.value is not None else "" for c in row]
+        if any("任务名" in v for v in vals) and any("订单" in v for v in vals):
+            detail_header_row = row[0].row
+            for j, h in enumerate(vals, 1):
+                if "任务名" in h:
+                    detail_cols["task_name"] = j
+                elif "订单" in h:
+                    detail_cols["order_no"] = j
+                elif "数量" in h:
+                    detail_cols["qty"] = j
+                elif "单价" in h:
+                    detail_cols["unit"] = j
+                elif "洗名" in h:
+                    detail_cols["add_name"] = j
+                elif "金额" in h:
+                    detail_cols["amount"] = j
+            break
+    if detail_header_row is None:
+        raise ValueError("MB-031 模版第一个 sheet 缺少明细表头")
+
+    note_text = None
+    for row in ws1.iter_rows(min_row=detail_header_row + 1):
+        v = row[0].value
+        if v is not None and "洗名" in str(v) and "单价" in str(v):
+            note_text = v
+            break
+    if ws1.max_row > detail_header_row:
+        ws1.delete_rows(detail_header_row + 1, ws1.max_row - detail_header_row)
+
+    groups = sorted(bill.get("groups", {}).items(),
+                    key=lambda kv: _pinyin_key(kv[1].get("task_name") or kv[0]))
+    r = detail_header_row + 1
+    total_qty = 0
+    total_amount = 0.0
+    for g_key, g in groups:
+        rowvals = ["", "", "", "", "", ""]
+        rowvals[detail_cols.get("task_name", 1) - 1] = g.get("task_name") or g_key
+        rowvals[detail_cols.get("order_no", 2) - 1] = g.get("order_no") or ""
+        rowvals[detail_cols.get("qty", 3) - 1] = int(g.get("qty") or 0)
+        rowvals[detail_cols.get("unit", 4) - 1] = round(float(g["unit"]), 4) if g.get("unit") is not None else ""
+        rowvals[detail_cols.get("add_name", 5) - 1] = "是" if g.get("add_name") else "否"
+        amt = round(float(g.get("amount") or 0), 2)
+        rowvals[detail_cols.get("amount", 6) - 1] = amt
+        for j, v in enumerate(rowvals, 1):
+            cell = ws1.cell(row=r, column=j, value=v)
+            cell.border = border
+            cell.alignment = center
+        total_qty += int(g.get("qty") or 0)
+        total_amount = round(total_amount + amt, 2)
+        r += 1
+    rowvals = ["", "", "", "", "", ""]
+    rowvals[0] = "合计"
+    rowvals[detail_cols.get("qty", 3) - 1] = total_qty
+    rowvals[detail_cols.get("amount", 6) - 1] = total_amount
+    for j, v in enumerate(rowvals, 1):
+        cell = ws1.cell(row=r, column=j, value=v)
+        cell.border = border
+        cell.alignment = center
+    if note_text is not None:
+        r += 1
+        ws1.cell(row=r, column=1, value=note_text)
+
+    # ---- sheet2 当月每日统计 ----
+    month_start = date_obj.replace(day=1)
+    if date_obj.month == 12:
+        month_end = date(date_obj.year + 1, 1, 1) - timedelta(days=1)
+    else:
+        month_end = date(date_obj.year, date_obj.month + 1, 1) - timedelta(days=1)
+    bills_month = {b.biz_date: b for b in db.query(Bill).filter(
+        Bill.customer_id == cust.id, Bill.biz_date >= month_start, Bill.biz_date <= month_end).all()}
+    recharge_by_date = defaultdict(list)
+    for rec in db.query(CustomerRecharge).filter(
+            CustomerRecharge.customer_id == cust.id,
+            CustomerRecharge.recharge_date >= month_start,
+            CustomerRecharge.recharge_date <= month_end).all():
+        recharge_by_date[rec.recharge_date].append(rec)
+    if ws2.max_row > 1:
+        ws2.delete_rows(2, ws2.max_row - 1)
+
+    def _fmt_bu(r):
+        amt = float(r.amount_rmb or 0)
+        reason = (r.reason or "").strip()
+        return f"{amt:g}元" + (f"（{reason}）" if reason else "")
+
+    def _fmt_chong(r):
+        amt = float(r.amount_u or 0)
+        reason = (r.note or r.reason or "").strip()
+        return f"{amt:g}U" + (f"（{reason}）" if reason else "")
+
+    running = None
+    d = month_start
+    r2 = 2
+    while d <= month_end:
+        b = bills_month.get(d)
+        if b is not None and b.balance is not None:
+            running = float(b.balance)
+        sales_day = round(float(b.sales), 2) if b is not None and b.sales is not None else ""
+        recs = recharge_by_date.get(d, [])
+        bu = "；".join(_fmt_bu(x) for x in recs if (x.recharge_type or "转账") == "补数")
+        chong = "；".join(_fmt_chong(x) for x in recs if (x.recharge_type or "转账") != "补数")
+        rowvals = [d.strftime("%Y-%m-%d"), sales_day, bu, chong, (round(running, 2) if running is not None else "")]
+        for j, v in enumerate(rowvals, 1):
+            cell = ws2.cell(row=r2, column=j, value=v)
+            cell.border = border
+            cell.alignment = center
+        r2 += 1
+        d += timedelta(days=1)
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio
+
+
+@router.get("/bills/generate-bill")
+def generate_bill_files(db: Session = Depends(get_db), _=Depends(get_current_user), date: str = ""):
+    """生成代理账单（MB-031 模版，两个 sheet），为全部下游代理分别生成并打包 ZIP"""
+    from urllib.parse import quote
+    from fastapi.responses import Response
+    import zipfile
+    if not date:
+        raise HTTPException(status_code=422, detail="请选择日期")
+    date_obj = _parse_biz_date(date)
+    if not date_obj:
+        raise HTTPException(status_code=422, detail="日期格式错误")
+    tpl = db.query(Template).filter(Template.code == "MB-031").first()
+    if not tpl or not tpl.file_data:
+        raise HTTPException(status_code=404, detail="MB-031 账单模版不存在或未上传文件")
+    tpl_bytes = bytes(tpl.file_data)
+    bills = _build_daily_bills(db, date_obj, None)
+    down_customers = db.query(Customer).filter(Customer.ctype == "downstream").order_by(Customer.code).all()
+
+    buf = io.BytesIO()
+    used_names = set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for cust in down_customers:
+            bill = bills.get(cust.code)
+            if bill is None:
+                bill = {"customer_id": cust.id, "cust_label": f"{cust.code} {cust.name}",
+                        "qty": 0, "sales": 0.0, "cost": 0.0,
+                        "balance": float(cust.balance) if cust.balance is not None else 0.0,
+                        "groups": {}, "recharge_info": []}
+            bio = _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes)
+            base = f"【账单】{cust.code}-{date_obj.strftime('%Y%m%d')}"
+            filename = f"{base}.xlsx"
+            n = 1
+            while filename in used_names:
+                n += 1
+                filename = f"{base}-{n}.xlsx"
+            used_names.add(filename)
+            zf.writestr(filename, bio.read())
+    buf.seek(0)
+    return Response(content=buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('代理账单-' + date_obj.strftime('%Y%m%d') + '.zip')}"})
 
 
 @router.get("/bills/{bid}")

@@ -1638,7 +1638,7 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
             errors.append({"task_id": new_task_id, "task_name": task_name, "reason": f"渠道「{channel_val}」在系统中不存在"})
             continue
         base = db.query(Order).filter(
-            Order.task_name == task_name,
+            or_(Order.task_name == task_name, Order.order_no == task_name),
             Order.upstream_id == up_id,
             Order.operator_id == (op.id if op else None),
             Order.channel_id == (ch.id if ch else None),
@@ -1658,7 +1658,7 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
                     matched.append(o)
             base = matched
         if not base:
-            errors.append({"task_id": new_task_id, "task_name": task_name, "reason": "未找到匹配订单（甲方+任务名+运营商+渠道+url）"})
+            errors.append({"task_id": new_task_id, "task_name": task_name, "reason": "未找到匹配订单（甲方+任务名/订单编号+运营商+渠道+url）"})
             continue
         # 只有工单号为空的才需要更新；匹配到多个时若仅一个工单号为空则更新该条
         pending = [o for o in base if not o.task_id]

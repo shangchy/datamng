@@ -43,7 +43,6 @@ export default function ConfigCenter() {
     <div className="page">
       {confirmEl}
       <div className="panel" style={{ flex: '2 1 0' }}>
-        <h3>配置中心</h3>
         <div className="table-scroll">
           <table>
             <thead><tr><th>配置项</th><th>值</th><th className="ops">操作</th></tr></thead>

@@ -10,6 +10,23 @@ function fmt(d) {
   return `${y}-${m}-${dd}`
 }
 
+function blankPsRow(date) {
+  return { id: 'new_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), isNew: true, sale_date: date,
+           customer_id: '', customer: '', product_id: '', product: '', qty: '', purchase_price: '', sales_price: '', note: '' }
+}
+
+function isBlankRow(p) {
+  return !p.customer_id && !p.product_id && (p.qty === '' || p.qty == null)
+    && (p.purchase_price === '' || p.purchase_price == null) && (p.sales_price === '' || p.sales_price == null)
+}
+
+function withBlankRows(list, date) {
+  const current = list.filter(p => p.sale_date === date)
+  if (current.length >= 10) return list
+  const blanks = Array(10 - current.length).fill(0).map(() => blankPsRow(date))
+  return [...blanks, ...list]
+}
+
 export default function Dashboard() {
   const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
@@ -28,6 +45,11 @@ export default function Dashboard() {
   const [psExportModal, setPsExportModal] = useState(false)
   const [psDate, setPsDate] = useState(() => fmt(new Date()))
   const psFileRef = useRef(null)
+  const today = fmt(new Date())
+  const isToday = psDate === today
+  const isPast = psDate < today
+  const isFuture = psDate > today
+  const daysAhead = isFuture ? Math.round((new Date(psDate + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000) : 0
 
   function loadCharts(start = '', end = '') {
     api.get(`/api/dashboard/trend?start=${start}&end=${end}`).then(r => setTrend(r.data)).catch(() => {})
@@ -51,9 +73,13 @@ export default function Dashboard() {
   function loadProductSales() {
     api.get('/api/product-sales?per_page=1000').then(r => {
       const rows = (r.data?.rows || []).slice().sort((a, b) => (a.sale_date < b.sale_date ? 1 : a.sale_date > b.sale_date ? -1 : (b.id - a.id)))
-      setProductSales(rows)
+      setProductSales(isToday ? withBlankRows(rows, psDate) : rows)
     }).catch(() => {})
   }
+
+  useEffect(() => {
+    setProductSales(list => isToday ? withBlankRows(list, psDate) : list)
+  }, [psDate])
 
   async function saveWallet(row, val) {
     const v = val === '' ? null : val
@@ -70,7 +96,7 @@ export default function Dashboard() {
     setProductSales(list => list.map(r => r.id === id ? { ...r, ...patch } : r))
   }
   function addPsRow() {
-    setProductSales(list => [{ id: 'new_' + Date.now(), isNew: true, sale_date: psDate, customer_id: '', customer: '', product_id: '', product: '', qty: '', purchase_price: '', sales_price: '', note: '' }, ...list])
+    setProductSales(list => [blankPsRow(psDate), ...list])
   }
   function onPickPsCustomer(row, text) {
     const c = customers.find(x => `${x.code} ${x.name}` === text) || customers.find(x => x.code === text) || customers.find(x => x.name === text)
@@ -86,11 +112,13 @@ export default function Dashboard() {
     const pp = Number(p.purchase_price) || 0
     return { sales_amount: qty * sp, profit: qty * (sp - pp) }
   }
-  const filteredSales = productSales.filter(p => !psDate || p.sale_date === psDate)
+  const filteredSales = productSales
+    .filter(p => !psDate || p.sale_date === psDate)
+    .sort((a, b) => (isBlankRow(a) ? 1 : 0) - (isBlankRow(b) ? 1 : 0))
 
   async function saveAll() {
-    const rows = filteredSales
-    if (rows.length === 0) { showError('当前日期下暂无数据可保存'); return }
+    const rows = filteredSales.filter(p => !isBlankRow(p))
+    if (rows.length === 0) { showError('没有可保存的数据'); return }
     const invalid = []
     rows.forEach((p, i) => {
       if (!p.customer_id) invalid.push(`第 ${i + 1} 行：请选择客户`)
@@ -266,55 +294,62 @@ export default function Dashboard() {
             <button className="btn small" onClick={() => setPsExportModal(true)}>导出 Excel</button>{' '}
             <button className="btn small" onClick={exportPsTemplate}>导出模版</button>{' '}
             <button className="btn small" onClick={() => psFileRef.current.click()}>导入 Excel</button>{' '}
-            <button className="btn primary small" onClick={addPsRow}>+ 新增</button>{' '}
-            <button className="btn primary small" onClick={saveAll}>保存</button>
+            {isToday && <button className="btn primary small" onClick={addPsRow}>+ 新增</button>}{' '}
+            {isToday && <button className="btn primary small" onClick={saveAll}>保存</button>}
           </span>
         </h3>
-        <datalist id="ps-customers">{customers.map(c => <option key={c.id} value={`${c.code} ${c.name}`} />)}</datalist>
-        <datalist id="ps-products">{products.map(p => <option key={p.id} value={p.name} />)}</datalist>
-        <div style={{ maxHeight: 205, overflowY: 'auto', overflowX: 'auto' }}>
-          <table className="ps-table">
-            <colgroup>
-              <col style={{ width: '14%' }} />
-              <col style={{ width: '16%' }} />
-              <col style={{ width: '7%' }} />
-              <col style={{ width: '7%' }} />
-              <col style={{ width: '7%' }} />
-              <col style={{ width: '7%' }} />
-              <col style={{ width: '6%' }} />
-              <col style={{ width: '13%' }} />
-              <col style={{ width: '8%' }} />
-              <col style={{ width: '15%' }} />
-            </colgroup>
-            <thead><tr><th>客户</th><th>产品</th><th className="num">数量</th><th className="center">进货单价<br/>（元）</th><th className="center">出货单价<br/>（元）</th><th className="center">销售金额<br/>（元）</th><th className="center">利润<br/>（元）</th><th>更新时间</th><th>更新人</th><th className="ops">操作</th></tr></thead>
-            <tbody>
-              {filteredSales.map(p => {
-                const calc = psCalc(p)
-                return (
-                  <tr key={p.id}>
-                    <td>
-                      <input list="ps-customers" value={p.customer || ''} placeholder="输入或选择客户" onChange={e => onPickPsCustomer(p, e.target.value)} />
-                    </td>
-                    <td>
-                      <input list="ps-products" value={p.product || ''} placeholder="输入或选择产品" onChange={e => onPickPsProduct(p, e.target.value)} />
-                    </td>
-                    <td className="num"><input type="number" value={p.qty} onChange={e => updatePs(p.id, { qty: e.target.value })} /></td>
-                    <td className="num"><input type="number" step="0.0001" value={p.purchase_price} onChange={e => updatePs(p.id, { purchase_price: e.target.value })} /></td>
-                    <td className="num"><input type="number" step="0.0001" value={p.sales_price} onChange={e => updatePs(p.id, { sales_price: e.target.value })} /></td>
-                    <td className="num">¥{calc.sales_amount.toFixed(2)}</td>
-                    <td className="num" style={{ color: calc.profit < 0 ? 'var(--red)' : 'inherit' }}>¥{calc.profit.toFixed(2)}</td>
-                    <td className="audit-time">{p.updated_at || '—'}</td>
-                    <td className="audit-who">{p.updated_by || '—'}</td>
-                    <td className="ops">
-                      <button className="btn small danger" onClick={() => delPs(p)}>删除</button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-        {filteredSales.length === 0 && <div className="empty">该日期暂无产品销售</div>}
+        {isFuture ? (
+          <div className="empty">产品不支持预售，请在 {daysAhead} 天后创建销售订单</div>
+        ) : isPast && filteredSales.length === 0 ? (
+          <div className="empty">{psDate.replace(/-/g, '')}没有产品订单</div>
+        ) : (
+          <>
+            <datalist id="ps-customers">{customers.map(c => <option key={c.id} value={`${c.code} ${c.name}`} />)}</datalist>
+            <datalist id="ps-products">{products.map(p => <option key={p.id} value={p.name} />)}</datalist>
+            <div style={{ height: 400, overflowY: 'auto', overflowX: 'auto' }}>
+              <table className="ps-table">
+                <colgroup>
+                  <col style={{ width: '14%' }} />
+                  <col style={{ width: '16%' }} />
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '6%' }} />
+                  <col style={{ width: '13%' }} />
+                  <col style={{ width: '8%' }} />
+                  <col style={{ width: '15%' }} />
+                </colgroup>
+                <thead><tr><th>客户</th><th>产品</th><th className="num">数量</th><th className="center">进货单价<br/>（元）</th><th className="center">出货单价<br/>（元）</th><th className="center">销售金额<br/>（元）</th><th className="center">利润<br/>（元）</th><th>更新时间</th><th>更新人</th><th className="ops">操作</th></tr></thead>
+                <tbody>
+                  {filteredSales.map(p => {
+                    const calc = psCalc(p)
+                    return (
+                      <tr key={p.id}>
+                        <td>
+                          <input list="ps-customers" value={p.customer || ''} disabled={!isToday} placeholder="输入或选择客户" onChange={e => onPickPsCustomer(p, e.target.value)} />
+                        </td>
+                        <td>
+                          <input list="ps-products" value={p.product || ''} disabled={!isToday} placeholder="输入或选择产品" onChange={e => onPickPsProduct(p, e.target.value)} />
+                        </td>
+                        <td className="num"><input type="number" value={p.qty} disabled={!isToday} onChange={e => updatePs(p.id, { qty: e.target.value })} /></td>
+                        <td className="num"><input type="number" step="0.0001" value={p.purchase_price} disabled={!isToday} onChange={e => updatePs(p.id, { purchase_price: e.target.value })} /></td>
+                        <td className="num"><input type="number" step="0.0001" value={p.sales_price} disabled={!isToday} onChange={e => updatePs(p.id, { sales_price: e.target.value })} /></td>
+                        <td className="num">¥{calc.sales_amount.toFixed(2)}</td>
+                        <td className="num" style={{ color: calc.profit < 0 ? 'var(--red)' : 'inherit' }}>¥{calc.profit.toFixed(2)}</td>
+                        <td className="audit-time">{p.updated_at || '—'}</td>
+                        <td className="audit-who">{p.updated_by || '—'}</td>
+                        <td className="ops">
+                          {isToday && <button className="btn small danger" onClick={() => delPs(p)}>删除</button>}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="panel">

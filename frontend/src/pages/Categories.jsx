@@ -37,17 +37,17 @@ export default function Categories() {
   async function save() {
     if (!modal.name.trim()) { showError('请输入名称'); return }
     if (modal.id) {
-      if (modal.type === 'platform') await api.put(`/api/platforms/${modal.id}`, { name: modal.name, cat_id: modal.catId, status: 1 })
-      else await api.put(`/api/categories/${modal.id}`, { name: modal.name, status: 1 })
+      if (modal.type === 'platform') await api.put(`/api/platforms/${modal.id}`, { name: modal.name, code: modal.code || '', cat_id: modal.catId, status: 1 })
+      else await api.put(`/api/categories/${modal.id}`, { name: modal.name, code: modal.code || '', status: 1 })
       toast('已保存')
     } else if (modal.type === 'cat1') {
       await api.post('/api/categories', { name: modal.name, level: 1, status: 1 })
       toast('已新增')
     } else if (modal.type === 'cat2') {
-      await api.post('/api/categories', { name: modal.name, parent_id: modal.parentId, level: 2, status: 1 })
+      await api.post('/api/categories', { name: modal.name, code: modal.code || '', parent_id: modal.parentId, level: 2, status: 1 })
       toast('已新增')
     } else {
-      await api.post('/api/platforms', { name: modal.name, cat_id: modal.catId, status: 1 })
+      await api.post('/api/platforms', { name: modal.name, code: modal.code || '', cat_id: modal.catId, status: 1 })
       toast('已新增')
     }
     setModal(null); load()
@@ -93,31 +93,31 @@ export default function Categories() {
       <div className="panel">
         <div className="table-scroll">
         <table>
-          <thead><tr><th>名称</th><th>层级</th><th>平台</th><th className="ops">操作</th></tr></thead>
+          <thead><tr><th>名称</th><th>编号</th><th>层级</th><th>平台</th><th className="ops">操作</th></tr></thead>
           <tbody>
             {visRows.map(c => (
               <React.Fragment key={c.id}>
                 <tr>
-                  <td><b>{c.name}</b></td><td>一级品类</td><td></td>
+                  <td><b>{c.name}</b></td><td></td><td>一级品类</td><td></td>
                   <td className="ops">
-                    <button className="btn small" onClick={() => setModal({ type: 'cat1', id: c.id, name: c.name, status: 1 })}>编辑</button>{' '}
+                    <button className="btn small" onClick={() => setModal({ type: 'cat1', id: c.id, name: c.name, code: c.code || '', status: 1 })}>编辑</button>{' '}
                     {isAdmin && <button className="btn small danger" onClick={() => del(c.id)}>删除</button>}{' '}
-                    <button className="btn small primary" onClick={() => setModal({ type: 'cat2', name: '', status: 1, parentId: c.id })}>+ 二级</button>
+                    <button className="btn small primary" onClick={() => setModal({ type: 'cat2', name: '', code: '', status: 1, parentId: c.id })}>+ 二级</button>
                   </td>
                 </tr>
                 {(c.children || []).map(ch => (
                   <tr key={ch.id}>
-                    <td style={{ paddingLeft: 40 }}>└ {ch.name}</td><td>二级品类</td>
+                    <td style={{ paddingLeft: 40 }}>└ {ch.name}</td><td>{ch.code || '—'}</td><td>二级品类</td>
                     <td>
                       <div className="tag-row">
                         {platformsOf(ch.id).map(p => (
-                          <span key={p.id} className="tag">{p.name}{isAdmin && <a className="tag-x" onClick={() => delPlatform(p.id)}>×</a>}</span>
+                          <span key={p.id} className="tag">{p.name}{p.code ? ` [${p.code}]` : ''}{isAdmin && <a className="tag-x" onClick={() => delPlatform(p.id)}>×</a>}</span>
                         ))}
-                        <button className="btn tiny" onClick={() => setModal({ type: 'platform', name: '', status: 1, catId: ch.id })}>+ 平台</button>
+                        <button className="btn tiny" onClick={() => setModal({ type: 'platform', name: '', code: '', status: 1, catId: ch.id })}>+ 平台</button>
                       </div>
                     </td>
                     <td className="ops">
-                      <button className="btn small" onClick={() => setModal({ type: 'cat2', id: ch.id, name: ch.name, status: 1, parentId: c.id })}>编辑</button>{' '}
+                      <button className="btn small" onClick={() => setModal({ type: 'cat2', id: ch.id, name: ch.name, code: ch.code || '', status: 1, parentId: c.id })}>编辑</button>{' '}
                       {isAdmin && <button className="btn small danger" onClick={() => del(ch.id)}>删除</button>}
                     </td>
                   </tr>
@@ -133,6 +133,10 @@ export default function Categories() {
       {modal && (
         <Modal title={(modal.id ? '编辑' : '新增') + (modal.type === 'cat1' ? '一级品类' : modal.type === 'cat2' ? '二级品类' : '平台')} onClose={() => setModal(null)}>
           <div className="field"><label>名称</label><ClearableInput value={modal.name} onChange={e => setModal({ ...modal, name: e.target.value })} style={{ width: '100%' }} /></div>
+          {modal.type !== 'cat1' && (
+            <div className="field"><label>编号{modal.type === 'cat2' ? '（拼音首字母，留空自动生成）' : '（4位数字，留空自动分配）'}</label>
+              <ClearableInput value={modal.code || ''} onChange={e => setModal({ ...modal, code: e.target.value })} style={{ width: '100%' }} /></div>
+          )}
           <div className="foot"><button className="btn" onClick={() => setModal(null)}>取消</button><button className="btn primary" onClick={save}>保存</button></div>
         </Modal>
       )}

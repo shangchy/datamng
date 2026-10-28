@@ -583,6 +583,9 @@ def _fill_uploaded_template(db, tpl, orders, action):
     for j, h in enumerate(headers, 1):
         m = _header_field(h) if h else None
         colmap.append((j, m))
+    # 牛提单表(MB-008)/牛改单表(MB-009)：任务名列改用订单编号
+    if tpl.code in ("MB-008", "MB-009"):
+        colmap = [(j, ("field", "order_no") if m == ("field", "task_name") else m) for j, m in colmap]
     if ws.max_row > header_row:
         ws.delete_rows(header_row + 1, ws.max_row - header_row)
 
@@ -613,14 +616,14 @@ def _fill_uploaded_template(db, tpl, orders, action):
                 if not m:
                     continue
                 kind, key = m
-                if action == "改单" and kind == "field" and key not in ("task_id", "task_name") and changed is not None and key not in changed:
+                if action == "改单" and kind == "field" and key not in ("task_id", "task_name", "order_no") and changed is not None and key not in changed:
                     value = ""
                 else:
                     value = _cell_value_split(kind, key, vals, url)
                 cell = ws.cell(row=row, column=j, value=value)
                 cell.alignment = no_wrap if key in ("province", "city", "excl_province", "excl_city", "region") else center
                 cell.border = border
-                is_changed = action == "改单" and kind == "field" and key not in ("task_id", "task_name") and (changed is None or key in changed)
+                is_changed = action == "改单" and kind == "field" and key not in ("task_id", "task_name", "order_no") and (changed is None or key in changed)
                 cell.fill = changed_fill if is_changed else zebra
             row += 1
         if row - start > 1:

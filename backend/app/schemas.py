@@ -76,6 +76,7 @@ class PriceBody(BaseModel):
 
 class CategoryBody(BaseModel):
     name: str
+    code: str = ""
     parent_id: Optional[int] = None
     level: int = 1
     sort_no: int = 0
@@ -148,6 +149,7 @@ class TemplateBody(BaseModel):
 class PlatformBody(BaseModel):
     name: str
     cat_id: int
+    code: str = ""
     sort_no: int = 0
     status: int = 1
 
