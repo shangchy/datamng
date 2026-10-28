@@ -1957,16 +1957,24 @@ def _build_distribute_zip(db, jobs, date_str, progress_cb, should_cancel=None):
 def _build_daily_bills(db, date_obj, customer_ids=None):
     """构建某日期各代理账单明细（不落库）：返回 {cust_code: {customer_id, cust_label, qty, sales, cost, balance, groups, recharge_info}}"""
     rows = db.query(DailyData).filter(DailyData.biz_date == date_obj).all()
+    tids = {d.task_id for d in rows if d.task_id}
+    orders_by_tid = {o.task_id: o for o in db.query(Order).filter(
+        Order.task_id.in_(tids)).all()} if tids else {}
+    needed_cids = {o.customer_id for o in orders_by_tid.values()}
+    needed_chids = {o.channel_id for o in orders_by_tid.values() if o.channel_id}
+    needed_oids = {o.operator_id for o in orders_by_tid.values() if o.operator_id}
+    cust_map = {c.id: c for c in db.query(Customer).filter(
+        Customer.id.in_(needed_cids)).all()} if needed_cids else {}
+    ch_map = {c.id: c for c in db.query(Channel).filter(
+        Channel.id.in_(needed_chids)).all()} if needed_chids else {}
+    op_map = {o.id: o for o in db.query(Operator).filter(
+        Operator.id.in_(needed_oids)).all()} if needed_oids else {}
     orders_info = {}
-    for d in rows:
-        if not d.task_id or d.task_id in orders_info:
-            continue
-        order = db.query(Order).filter(Order.task_id == d.task_id).first()
-        if not order:
-            continue
-        cust = db.query(Customer).filter(Customer.id == order.customer_id).first()
-        ch = db.query(Channel).filter(Channel.id == order.channel_id).first()
-        op = db.query(Operator).filter(Operator.id == order.operator_id).first()
+    for order in orders_by_tid.values():
+        tid = order.task_id
+        cust = cust_map.get(order.customer_id)
+        ch = ch_map.get(order.channel_id)
+        op = op_map.get(order.operator_id)
         up_price = 0.0
         if order.upstream_id and order.channel_id:
             up_q = db.query(CustomerPrice).filter(CustomerPrice.customer_id == order.upstream_id,
@@ -1976,7 +1984,7 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
                 up_cp = up_q.filter(CustomerPrice.operator_id.is_(None)).first()
             if up_cp:
                 up_price = float(up_cp.price)
-        orders_info[d.task_id] = {
+        orders_info[tid] = {
             "group_name": order.group_name or "", "task_name": order.task_name or "",
             "order_no": order.order_no or "", "channel": ch.name if ch else "",
             "operator": op.name if op else "", "cust_code": cust.code if cust else "",
@@ -1997,7 +2005,7 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
         cc = info["cust_code"]
         if cc not in bills:
             label = (f"{cc} {info['cust_name']}".strip() if info["cust_name"] else cc)
-            cust = db.query(Customer).filter(Customer.id == info["customer_id"]).first()
+            cust = cust_map.get(info["customer_id"])
             bills[cc] = {"customer_id": info["customer_id"], "cust_label": label,
                          "qty": 0, "sales": 0.0, "cost": 0.0,
                          "balance": float(cust.balance) if cust and cust.balance is not None else 0,
@@ -2063,14 +2071,14 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
     return bills
 
 
-def _customer_daily_sales_map(db, customer_id, start, end):
-    """实时计算某客户在 [start, end] 每天的销售金额（分数 + 产品销售），口径与 _build_daily_bills 一致"""
-    result = defaultdict(float)
+def _all_customers_daily_sales_map(db, start, end):
+    """一次遍历计算 [start, end] 每天各客户的销售金额（分数 + 产品销售），返回 {customer_id: {date: sales}}"""
+    result = defaultdict(lambda: defaultdict(float))
     rows = db.query(DailyData.biz_date, DailyData.task_id).filter(
         DailyData.biz_date >= start, DailyData.biz_date <= end).all()
     tids = {r.task_id for r in rows if r.task_id}
     orders = {o.task_id: o for o in db.query(Order).filter(
-        Order.task_id.in_(tids), Order.customer_id == customer_id).all()}
+        Order.task_id.in_(tids)).all()}
     for biz_date, task_id in rows:
         if not task_id:
             continue
@@ -2080,11 +2088,10 @@ def _customer_daily_sales_map(db, customer_id, start, end):
         if o.end_date and biz_date > o.end_date + timedelta(days=1):
             continue
         price = float(o.price) if o.price is not None else 0
-        result[biz_date] += price + (0.01 if o.add_name else 0)
+        result[o.customer_id][biz_date] += price + (0.01 if o.add_name else 0)
     for ps in db.query(ProductSale).filter(
-            ProductSale.sale_date >= start, ProductSale.sale_date <= end,
-            ProductSale.customer_id == customer_id).all():
-        result[ps.sale_date] += float(ps.sales_amount or 0)
+            ProductSale.sale_date >= start, ProductSale.sale_date <= end).all():
+        result[ps.customer_id][ps.sale_date] += float(ps.sales_amount or 0)
     return result
 
 
@@ -3483,7 +3490,7 @@ def generate_bills_zip(db: Session = Depends(get_db), _=Depends(get_current_user
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('账单-' + date_obj.strftime('%Y%m%d') + '.zip')}"})
 
 
-def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
+def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes, sales_map=None):
     """用 MB-031 模版生成代理账单：sheet1 每日账单 + sheet2 当月每日统计"""
     from openpyxl import load_workbook
     from openpyxl.styles import Border, Side, Alignment
@@ -3609,7 +3616,8 @@ def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
         month_end = date(date_obj.year, date_obj.month + 1, 1) - timedelta(days=1)
     bills_month = {b.biz_date: b for b in db.query(Bill).filter(
         Bill.customer_id == cust.id, Bill.biz_date >= month_start, Bill.biz_date <= month_end).all()}
-    sales_map = _customer_daily_sales_map(db, cust.id, month_start, month_end)
+    sales_map = sales_map if sales_map is not None else _all_customers_daily_sales_map(
+        db, month_start, month_end).get(cust.id, {})
     recharge_by_date = defaultdict(list)
     for rec in db.query(CustomerRecharge).filter(
             CustomerRecharge.customer_id == cust.id,
@@ -3671,6 +3679,9 @@ def generate_bill_files(db: Session = Depends(get_db), _=Depends(get_current_use
     tpl_bytes = bytes(tpl.file_data)
     bills = _build_daily_bills(db, date_obj, None)
     down_customers = db.query(Customer).filter(Customer.ctype == "downstream").order_by(Customer.code).all()
+    month_start = date_obj.replace(day=1)
+    month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    sales_maps = _all_customers_daily_sales_map(db, month_start, month_end)
 
     buf = io.BytesIO()
     used_names = set()
@@ -3682,7 +3693,7 @@ def generate_bill_files(db: Session = Depends(get_db), _=Depends(get_current_use
                         "qty": 0, "sales": 0.0, "cost": 0.0,
                         "balance": float(cust.balance) if cust.balance is not None else 0.0,
                         "groups": {}, "recharge_info": []}
-            bio = _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes)
+            bio = _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes, sales_maps.get(cust.id, {}))
             base = f"【账单】{cust.code}-{date_obj.strftime('%Y%m%d')}"
             filename = f"{base}.xlsx"
             n = 1
