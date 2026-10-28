@@ -2063,6 +2063,31 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
     return bills
 
 
+def _customer_daily_sales_map(db, customer_id, start, end):
+    """实时计算某客户在 [start, end] 每天的销售金额（分数 + 产品销售），口径与 _build_daily_bills 一致"""
+    result = defaultdict(float)
+    rows = db.query(DailyData.biz_date, DailyData.task_id).filter(
+        DailyData.biz_date >= start, DailyData.biz_date <= end).all()
+    tids = {r.task_id for r in rows if r.task_id}
+    orders = {o.task_id: o for o in db.query(Order).filter(
+        Order.task_id.in_(tids), Order.customer_id == customer_id).all()}
+    for biz_date, task_id in rows:
+        if not task_id:
+            continue
+        o = orders.get(task_id)
+        if not o:
+            continue
+        if o.end_date and biz_date > o.end_date + timedelta(days=1):
+            continue
+        price = float(o.price) if o.price is not None else 0
+        result[biz_date] += price + (0.01 if o.add_name else 0)
+    for ps in db.query(ProductSale).filter(
+            ProductSale.sale_date >= start, ProductSale.sale_date <= end,
+            ProductSale.customer_id == customer_id).all():
+        result[ps.sale_date] += float(ps.sales_amount or 0)
+    return result
+
+
 @router.post("/daily-data/distribute")
 def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
     """分数据：按小组名分组，用出数模版生成文件，按一级代理建文件夹"""
@@ -3584,6 +3609,7 @@ def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
         month_end = date(date_obj.year, date_obj.month + 1, 1) - timedelta(days=1)
     bills_month = {b.biz_date: b for b in db.query(Bill).filter(
         Bill.customer_id == cust.id, Bill.biz_date >= month_start, Bill.biz_date <= month_end).all()}
+    sales_map = _customer_daily_sales_map(db, cust.id, month_start, month_end)
     recharge_by_date = defaultdict(list)
     for rec in db.query(CustomerRecharge).filter(
             CustomerRecharge.customer_id == cust.id,
@@ -3610,7 +3636,7 @@ def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
         b = bills_month.get(d)
         if b is not None and b.balance is not None:
             running = float(b.balance)
-        sales_day = round(float(b.sales), 2) if b is not None and b.sales is not None else ""
+        sales_day = round(float(sales_map[d]), 2) if d in sales_map else ""
         recs = recharge_by_date.get(d, [])
         bu = "；".join(_fmt_bu(x) for x in recs if (x.recharge_type or "转账") == "补数")
         chong = "；".join(_fmt_chong(x) for x in recs if (x.recharge_type or "转账") != "补数")
