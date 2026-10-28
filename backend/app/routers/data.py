@@ -2052,7 +2052,14 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
         recharge_map[rec.customer_id].append(s)
     for cc, b in bills.items():
         b["recharge_info"] = recharge_map.get(b.get("customer_id"), [])
-        b["balance"] = round(float(b.get("balance") or 0) - float(b["sales"]), 2)
+    # 余额：优先用账单表里当日已保存的余额（与当月账单一致），避免用当前余额重复扣减销售金额
+    saved_balance = {x.customer_id: x.balance for x in db.query(Bill).filter(Bill.biz_date == date_obj).all()}
+    for cc, b in bills.items():
+        cid = b.get("customer_id")
+        if cid is not None and cid in saved_balance and saved_balance[cid] is not None:
+            b["balance"] = round(float(saved_balance[cid]), 2)
+        else:
+            b["balance"] = round(float(b.get("balance") or 0) - float(b["sales"]), 2)
     return bills
 
 
