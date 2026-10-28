@@ -156,6 +156,7 @@ def _migrate_schema():
             for col, ddl in [
                 ("bill_type", "VARCHAR(20)"),
                 ("target_name", "VARCHAR(200)"),
+                ("detail_json", "TEXT"),
                 ("created_by", "VARCHAR(50)"),
                 ("updated_at", "TIMESTAMP"),
                 ("updated_by", "VARCHAR(50)"),

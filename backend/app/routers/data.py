@@ -1,6 +1,7 @@
 """数据路由：日活数据/公积金/账单/预警"""
 import csv
 import io
+import json
 import re
 import threading
 import uuid
@@ -2071,30 +2072,6 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
     return bills
 
 
-def _all_customers_daily_sales_map(db, start, end):
-    """一次遍历计算 [start, end] 每天各客户的销售金额（分数 + 产品销售），返回 {customer_id: {date: sales}}"""
-    result = defaultdict(lambda: defaultdict(float))
-    rows = db.query(DailyData.biz_date, DailyData.task_id).filter(
-        DailyData.biz_date >= start, DailyData.biz_date <= end).all()
-    tids = {r.task_id for r in rows if r.task_id}
-    orders = {o.task_id: o for o in db.query(Order).filter(
-        Order.task_id.in_(tids)).all()}
-    for biz_date, task_id in rows:
-        if not task_id:
-            continue
-        o = orders.get(task_id)
-        if not o:
-            continue
-        if o.end_date and biz_date > o.end_date + timedelta(days=1):
-            continue
-        price = float(o.price) if o.price is not None else 0
-        result[o.customer_id][biz_date] += price + (0.01 if o.add_name else 0)
-    for ps in db.query(ProductSale).filter(
-            ProductSale.sale_date >= start, ProductSale.sale_date <= end).all():
-        result[ps.customer_id][ps.sale_date] += float(ps.sales_amount or 0)
-    return result
-
-
 @router.post("/daily-data/distribute")
 def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
     """分数据：按小组名分组，用出数模版生成文件，按一级代理建文件夹"""
@@ -2345,15 +2322,20 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), user=Dep
                     bill_balance = round(balance - float(b["sales"]), 2)
                     b["balance"] = bill_balance
                     profit = round(float(b["sales"]) - float(b["cost"]), 2)
+                    detail_json = json.dumps({"groups": b.get("groups", {}),
+                                              "recharge_info": b.get("recharge_info", [])},
+                                             ensure_ascii=False)
                     if existing:
                         existing.purchase_qty = b["qty"]
                         existing.sales = b["sales"]
                         existing.balance = bill_balance
                         existing.profit = profit
+                        existing.detail_json = detail_json
                         existing.updated_by = user_label
                     else:
                         db2.add(Bill(customer_id=cid, biz_date=date_obj, purchase_qty=b["qty"],
                                      sales=b["sales"], balance=bill_balance, profit=profit,
+                                     detail_json=detail_json,
                                      created_by=user_label, updated_by=user_label))
                     if cust is not None:
                         cust.balance = bill_balance
@@ -3490,7 +3472,7 @@ def generate_bills_zip(db: Session = Depends(get_db), _=Depends(get_current_user
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('账单-' + date_obj.strftime('%Y%m%d') + '.zip')}"})
 
 
-def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes, sales_map=None):
+def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
     """用 MB-031 模版生成代理账单：sheet1 每日账单 + sheet2 当月每日统计"""
     from openpyxl import load_workbook
     from openpyxl.styles import Border, Side, Alignment
@@ -3616,8 +3598,6 @@ def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes, sales_map=None):
         month_end = date(date_obj.year, date_obj.month + 1, 1) - timedelta(days=1)
     bills_month = {b.biz_date: b for b in db.query(Bill).filter(
         Bill.customer_id == cust.id, Bill.biz_date >= month_start, Bill.biz_date <= month_end).all()}
-    sales_map = sales_map if sales_map is not None else _all_customers_daily_sales_map(
-        db, month_start, month_end).get(cust.id, {})
     recharge_by_date = defaultdict(list)
     for rec in db.query(CustomerRecharge).filter(
             CustomerRecharge.customer_id == cust.id,
@@ -3644,7 +3624,7 @@ def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes, sales_map=None):
         b = bills_month.get(d)
         if b is not None and b.balance is not None:
             running = float(b.balance)
-        sales_day = round(float(sales_map[d]), 2) if d in sales_map else ""
+        sales_day = round(float(b.sales), 2) if b is not None and b.sales is not None else ""
         recs = recharge_by_date.get(d, [])
         bu = "；".join(_fmt_bu(x) for x in recs if (x.recharge_type or "转账") == "补数")
         chong = "；".join(_fmt_chong(x) for x in recs if (x.recharge_type or "转账") != "补数")
@@ -3677,23 +3657,44 @@ def generate_bill_files(db: Session = Depends(get_db), _=Depends(get_current_use
     if not tpl or not tpl.file_data:
         raise HTTPException(status_code=404, detail="MB-031 账单模版不存在或未上传文件")
     tpl_bytes = bytes(tpl.file_data)
-    bills = _build_daily_bills(db, date_obj, None)
+    rt_bills = _build_daily_bills(db, date_obj, None)
+    snap_bills = {b.customer_id: b for b in db.query(Bill).filter(Bill.biz_date == date_obj).all()}
     down_customers = db.query(Customer).filter(Customer.ctype == "downstream").order_by(Customer.code).all()
-    month_start = date_obj.replace(day=1)
-    month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
-    sales_maps = _all_customers_daily_sales_map(db, month_start, month_end)
+
+    def _parse_detail(snap, cust):
+        groups, recharge_info = {}, []
+        if snap.detail_json:
+            try:
+                data = json.loads(snap.detail_json)
+                groups = data.get("groups") or {}
+                recharge_info = data.get("recharge_info") or []
+            except (ValueError, TypeError):
+                groups, recharge_info = {}, []
+        # 历史账单无明细快照：明细回退到实时（仅明细，销售金额/余额仍用快照）
+        if not groups:
+            rt = rt_bills.get(cust.code)
+            groups = (rt or {}).get("groups") or {}
+            recharge_info = (rt or {}).get("recharge_info") or recharge_info
+        return groups, recharge_info
 
     buf = io.BytesIO()
     used_names = set()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for cust in down_customers:
-            bill = bills.get(cust.code)
-            if bill is None:
+            snap = snap_bills.get(cust.id)
+            if snap is not None:
+                groups, recharge_info = _parse_detail(snap, cust)
+                bill = {"customer_id": cust.id, "cust_label": f"{cust.code} {cust.name}",
+                        "qty": int(snap.purchase_qty or 0),
+                        "sales": float(snap.sales or 0), "cost": 0.0,
+                        "balance": float(snap.balance) if snap.balance is not None else float(cust.balance or 0),
+                        "groups": groups, "recharge_info": recharge_info}
+            else:
                 bill = {"customer_id": cust.id, "cust_label": f"{cust.code} {cust.name}",
                         "qty": 0, "sales": 0.0, "cost": 0.0,
                         "balance": float(cust.balance) if cust.balance is not None else 0.0,
                         "groups": {}, "recharge_info": []}
-            bio = _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes, sales_maps.get(cust.id, {}))
+            bio = _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes)
             base = f"【账单】{cust.code}-{date_obj.strftime('%Y%m%d')}"
             filename = f"{base}.xlsx"
             n = 1

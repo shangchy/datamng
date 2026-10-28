@@ -371,6 +371,7 @@ class Bill(Base):
     profit = Column(Numeric(14, 2), default=0)
     bill_type = Column(String(20), default="分数据")   # 分数据 / 单独抽取
     target_name = Column(String(200))                  # 收款对象（给其他人时用）
+    detail_json = Column(Text)                         # 分发时的明细快照（groups + recharge_info）
     created_at = Column(DateTime, default=datetime.now)
     created_by = Column(String(50))                    # 创建人
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
