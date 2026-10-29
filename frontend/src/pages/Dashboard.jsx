@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
-import { useToast } from '../components/ui'
+import { useToast, Modal } from '../components/ui'
 import Chart from '../components/Chart'
 
 const MEDALS = ['🥇', '🥈', '🥉']
@@ -15,14 +15,14 @@ export default function Dashboard() {
   const [s, setS] = useState(null)
   const [rank, setRank] = useState([])
   const [trend, setTrend] = useState([])
-  const [view, setView] = useState('list')
   const [range, setRange] = useState('7')
   const [startD, setStartD] = useState('')
   const [endD, setEndD] = useState('')
   const [dailyBills, setDailyBills] = useState([])
   const [agentTrend, setAgentTrend] = useState({ dates: [], series: [] })
   const [agents, setAgents] = useState([])
-  const [agentId, setAgentId] = useState(0)
+  const [agentIds, setAgentIds] = useState([])
+  const [agentSelectModal, setAgentSelectModal] = useState(false)
   const [agentMetric, setAgentMetric] = useState('out_qty')
   const [agentRange, setAgentRange] = useState('7')
   const [agentStart, setAgentStart] = useState('')
@@ -37,8 +37,9 @@ export default function Dashboard() {
   function loadDailyBills() {
     api.get('/api/dashboard/daily-bills').then(r => setDailyBills(r.data || [])).catch(() => {})
   }
-  function loadAgentTrend(start = '', end = '', cid = agentId) {
-    api.get(`/api/dashboard/agent-trend?customer_id=${cid}&start=${start}&end=${end}`).then(r => setAgentTrend(r.data)).catch(() => {})
+  function loadAgentTrend(start = '', end = '', ids = agentIds) {
+    const qs = ids.length ? `&customer_ids=${ids.join(',')}` : ''
+    api.get(`/api/dashboard/agent-trend?start=${start}&end=${end}${qs}`).then(r => setAgentTrend(r.data)).catch(() => {})
   }
   useEffect(() => {
     loadSummary()
@@ -91,9 +92,10 @@ export default function Dashboard() {
   }
   function pickAgentCustom() { setAgentRange('custom') }
   function applyAgentCustom() { loadAgentTrend(agentStart, agentEnd) }
-  function onAgentChange(cid) { setAgentId(cid); loadAgentTrend('', '', cid) }
+  function applyAgentSelect() { setAgentSelectModal(false); loadAgentTrend() }
 
   const AGENT_METRICS = [
+    { key: 'active', label: '在执订单', unit: '单' },
     { key: 'out_qty', label: '出货量', unit: '条' },
     { key: 'sales', label: '销售金额', unit: '元' },
     { key: 'profit', label: '利润', unit: '元' },
@@ -105,11 +107,12 @@ export default function Dashboard() {
     legend: { type: 'scroll', top: 0 },
     grid: { left: 60, right: 30, top: 36, bottom: 24 },
     xAxis: { type: 'category', data: agentTrend.dates.map(d => d.slice(5)) },
-    yAxis: { type: 'value', name: curMetric.unit },
+    yAxis: { type: 'value', name: curMetric.unit, minInterval: 1 },
     series: agentTrend.series.map(s => ({
       name: `${s.code} ${s.name}`,
       type: 'line',
-      smooth: true,
+      smooth: agentMetric !== 'active',
+      step: agentMetric === 'active' ? 'end' : undefined,
       data: s[agentMetric],
     })),
   }
@@ -127,8 +130,6 @@ export default function Dashboard() {
       { name: '总余额', type: 'line', yAxisIndex: 1, data: trend.map(r => r.total_balance), itemStyle: { color: '#000000' } },
     ],
   }
-
-  const maxSales = Math.max(1, ...rank.map(r => r.sales))
 
   const kpis = [
     { icon: '📝', label: '在执订单量', value: s?.order_count ?? '-', bg: 'linear-gradient(135deg,#eff6ff,#dbeafe)', c: 'var(--blue)' },
@@ -209,11 +210,8 @@ export default function Dashboard() {
         <div className="panel">
           <h3 style={{ justifyContent: 'space-between' }}>
             <span>
-              代理日活统计
-              <select value={agentId} onChange={e => onAgentChange(Number(e.target.value))} style={{ marginLeft: 10, height: 30 }}>
-                <option value={0}>全部代理</option>
-                {agents.map(c => <option key={c.id} value={c.id}>{c.code} {c.name}</option>)}
-              </select>
+              代理统计
+              <button className="btn small" style={{ marginLeft: 10 }} onClick={() => setAgentSelectModal(true)}>选择代理（{agentIds.length || agents.length}）</button>
             </span>
             <span>
               {AGENT_METRICS.map(m => (
@@ -236,42 +234,56 @@ export default function Dashboard() {
         </div>
 
         <div className="panel">
-          <h3 style={{ justifyContent: 'space-between' }}>
-            日活分析
-            <span>
-              <button className={`btn small ${view === 'list' ? 'primary' : ''}`} onClick={() => setView('list')}>列表</button>{' '}
-              <button className={`btn small ${view === 'bar' ? 'primary' : ''}`} onClick={() => setView('bar')}>柱状图</button>
-            </span>
-          </h3>
-        {rank.length === 0 ? <div className="empty">暂无数据</div> : view === 'list' ? (
-          <table>
-            <thead><tr><th>排名</th><th>客户</th><th className="num">业务量</th><th className="num">销售额（元）</th><th className="num">利润（元）</th><th className="num">余额（元）</th></tr></thead>
-            <tbody>
-              {rank.map((r, i) => (
-                <tr key={i}>
-                  <td>{MEDALS[i] || i + 1}</td>
-                  <td>{r.code} {r.name}</td>
-                  <td className="num">{r.qty}</td>
-                  <td className="num">¥{r.sales.toLocaleString()}</td>
-                  <td className="num" style={{ color: r.profit < 0 ? 'var(--red)' : 'inherit' }}>¥{r.profit.toLocaleString()}</td>
-                  <td className="num" style={{ color: r.balance < 0 ? 'var(--red)' : 'var(--green)' }}>¥{r.balance.toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div className="bars">
-            {rank.map((r, i) => (
-              <div className="bar" key={i} title={`${r.code} ${r.name}: ¥${r.sales}`}>
-                <span>¥{r.sales}</span>
-                <div className="col" style={{ height: `${(r.sales / maxSales) * 100}%` }}></div>
-                <span className="blabel">{MEDALS[i] || i + 1} {r.name}</span>
-              </div>
-            ))}
-          </div>
-        )}
+          <h3>代理排名</h3>
+          {rank.length === 0 ? <div className="empty">暂无数据</div> : (
+            <div style={{ height: 300, overflowY: 'auto' }}>
+              <table>
+                <thead><tr><th>排名</th><th>客户</th><th className="num">业务量</th><th className="num">销售额（元）</th><th className="num">利润（元）</th><th className="num">余额（元）</th></tr></thead>
+                <tbody>
+                  {rank.map((r, i) => (
+                    <tr key={i}>
+                      <td>{MEDALS[i] || i + 1}</td>
+                      <td>{r.code} {r.name}</td>
+                      <td className="num">{r.qty}</td>
+                      <td className="num">¥{r.sales.toLocaleString()}</td>
+                      <td className="num" style={{ color: r.profit < 0 ? 'var(--red)' : 'inherit' }}>¥{r.profit.toLocaleString()}</td>
+                      <td className="num" style={{ color: r.balance < 0 ? 'var(--red)' : 'var(--green)' }}>¥{r.balance.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
+
+      {agentSelectModal && (() => {
+        const allChecked = agents.length > 0 && agents.every(c => agentIds.includes(c.id))
+        function toggleAll() { setAgentIds(allChecked ? [] : agents.map(c => c.id)) }
+        return (
+          <Modal title="代理统计 · 选择代理" onClose={() => setAgentSelectModal(false)} wide>
+            <div className="note">选择代理，图表按代理展示所选代理的趋势线；不选则展示全部下游代理。</div>
+            <div className="field" style={{ marginBottom: 14 }}><label>代理（点击名称选中 / 取消）</label>
+              <div className="agent-list">
+                <button type="button" className="agent-chip agent-chip-all" onClick={toggleAll}>{allChecked ? '全不选' : '全选'}</button>
+                {agents.map(c => {
+                  const on = agentIds.includes(c.id)
+                  return (
+                    <button type="button" key={c.id} className={`agent-chip ${on ? 'on' : ''}`} onClick={() => {
+                      setAgentIds(ids => ids.includes(c.id) ? ids.filter(x => x !== c.id) : [...ids, c.id])
+                    }}>{c.code} {c.name}</button>
+                  )
+                })}
+                {agents.length === 0 && <div className="empty">暂无下游客户</div>}
+              </div>
+            </div>
+            <div className="foot">
+              <button className="btn" onClick={() => setAgentSelectModal(false)}>取消</button>
+              <button className="btn primary" onClick={applyAgentSelect}>确定</button>
+            </div>
+          </Modal>
+        )
+      })()}
     </div>
   )
 }

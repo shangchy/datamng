@@ -68,6 +68,25 @@ def snapshot_daily_bill(db, d=None):
     return bal
 
 
+def snapshot_agent_orders(db, d=None):
+    """为指定日期（默认今天）生成每个下游代理的在执订单数快照，返回代理数"""
+    from ..models import AgentOrderSnapshot
+    d = d or date.today()
+    active = dict(db.query(Order.customer_id, func.count(Order.id)).filter(
+        Order.status == "在执").group_by(Order.customer_id).all())
+    downs = db.query(Customer).filter(Customer.ctype == "downstream", Customer.status == 1).all()
+    for c in downs:
+        cnt = int(active.get(c.id, 0))
+        rec = db.query(AgentOrderSnapshot).filter(
+            AgentOrderSnapshot.biz_date == d, AgentOrderSnapshot.customer_id == c.id).first()
+        if rec:
+            rec.active_orders = cnt
+        else:
+            db.add(AgentOrderSnapshot(biz_date=d, customer_id=c.id, active_orders=cnt))
+    db.commit()
+    return len(downs)
+
+
 def _daily_bill_balance(db, d):
     """某日账单余额：今天实时计算，历史优先取快照，无快照则重建并回填"""
     if d == date.today():
@@ -121,7 +140,7 @@ def rank(db: Session = Depends(get_db), _=Depends(get_current_user)):
             .outerjoin(bill_sub, bill_sub.c.customer_id == Customer.id)
             .filter(Customer.ctype == "downstream")
             .group_by(Customer.id, bill_sub.c.sales, bill_sub.c.profit)
-            .order_by(func.coalesce(bill_sub.c.sales, 0).desc()).limit(10).all())
+            .order_by(func.coalesce(bill_sub.c.sales, 0).desc()).all())
     data = []
     for cid, code, name, balance, qty, sales, profit in rows:
         data.append({
@@ -135,17 +154,19 @@ def rank(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 @router.get("/agent-trend")
 def agent_trend(db: Session = Depends(get_db), _=Depends(get_current_user),
-                customer_id: int = 0, start: str = "", end: str = ""):
-    """代理日活趋势：以代理为单位，每天的出货量/销售金额/利润/余额（customer_id=0 返回全部下游代理）"""
+                customer_ids: str = "", start: str = "", end: str = ""):
+    """代理统计：以代理为单位，每天的在执订单/出货量/销售金额/利润/余额（customer_ids 为空返回全部下游代理）"""
     from collections import defaultdict
+    from ..models import AgentOrderSnapshot
     end_d = datetime.strptime(end, "%Y-%m-%d").date() if end else date.today()
     start_d = datetime.strptime(start, "%Y-%m-%d").date() if start else (end_d - timedelta(days=6))
     if start_d > end_d:
         start_d, end_d = end_d, start_d
 
-    if customer_id:
+    sel_ids = [int(x) for x in customer_ids.split(",") if x.strip().isdigit()] if customer_ids else []
+    if sel_ids:
         agents = db.query(Customer).filter(
-            Customer.id == customer_id, Customer.ctype == "downstream").all()
+            Customer.id.in_(sel_ids), Customer.ctype == "downstream").all()
     else:
         agents = db.query(Customer).filter(
             Customer.ctype == "downstream", Customer.status == 1).order_by(Customer.code).all()
@@ -165,14 +186,21 @@ def agent_trend(db: Session = Depends(get_db), _=Depends(get_current_user),
             CustomerRecharge.customer_id.in_(agent_ids)).all():
         recharge_by_agent[r.customer_id][r.recharge_date] += float(r.amount_rmb or 0)
 
-    # 在执订单数（每个代理）
+    # 在执订单数（当前快照）
     active_by_agent = dict(db.query(Order.customer_id, func.count(Order.id)).filter(
         Order.status == "在执", Order.customer_id.in_(agent_ids)).group_by(Order.customer_id).all())
+    # 在执订单每日快照
+    snap_by_agent = defaultdict(dict)
+    for s in db.query(AgentOrderSnapshot).filter(
+            AgentOrderSnapshot.biz_date >= start_d, AgentOrderSnapshot.biz_date <= end_d,
+            AgentOrderSnapshot.customer_id.in_(agent_ids)).all():
+        snap_by_agent[s.customer_id][s.biz_date] = int(s.active_orders or 0)
 
     series = []
     for a in agents:
         bmap = bill_by_agent.get(a.id, {})
         rmap = recharge_by_agent.get(a.id, {})
+        cur_active = int(active_by_agent.get(a.id, 0))
         # 余额：从当前余额向前回溯（前一天 = 当天 + 当天销售 - 当天充值/补数）
         balances = {}
         bal = float(a.balance or 0)
@@ -182,11 +210,12 @@ def agent_trend(db: Session = Depends(get_db), _=Depends(get_current_user),
             bal = bal + (float(b.sales or 0) if b else 0.0) - rmap.get(d, 0.0)
         series.append({
             "id": a.id, "code": a.code, "name": a.name,
-            "active_orders": int(active_by_agent.get(a.id, 0)),
+            "active_orders": cur_active,
             "out_qty": [int(bmap[d].purchase_qty or 0) if d in bmap else 0 for d in dates],
             "sales": [round(float(bmap[d].sales or 0), 2) if d in bmap else 0.0 for d in dates],
             "profit": [round(float(bmap[d].profit or 0), 2) if d in bmap else 0.0 for d in dates],
             "balance": [balances[d] for d in dates],
+            "active": [snap_by_agent[a.id].get(d, cur_active) for d in dates],
         })
 
     return {"code": 0, "data": {"dates": [d.strftime("%Y-%m-%d") for d in dates], "series": series}, "msg": "ok"}

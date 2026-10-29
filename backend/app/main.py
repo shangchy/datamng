@@ -582,6 +582,25 @@ def _daily_bill_loop():
         time.sleep(60)  # 防止重复触发
 
 
+def _agent_order_snapshot_loop():
+    """每天 23:55 快照各代理在执订单数"""
+    from .routers.dashboard import snapshot_agent_orders
+    while True:
+        now = datetime.now()
+        next_run = now.replace(hour=23, minute=55, second=0, microsecond=0)
+        if next_run <= now:
+            next_run += timedelta(days=1)
+        time.sleep((next_run - now).total_seconds())
+        try:
+            db = SessionLocal()
+            n = snapshot_agent_orders(db)
+            db.close()
+            print(f"[snapshot] 在执订单快照完成：{n} 个代理")
+        except Exception as e:  # noqa
+            print(f"[snapshot] 快照异常: {e}")
+        time.sleep(60)  # 防止重复触发
+
+
 def _backup_loop():
     """每天按配置时间执行一次数据库备份（仅保留近 N 天）"""
     from .models import SysConfig
@@ -735,11 +754,14 @@ def on_startup():
         seed(db)
         _backfill_cat_plat_codes(db)
         _backfill_daily_group(db)
+        from .routers.dashboard import snapshot_agent_orders
+        snapshot_agent_orders(db)
     finally:
         db.close()
     threading.Thread(target=_scheduler_loop, daemon=True).start()
     threading.Thread(target=_backup_loop, daemon=True).start()
     threading.Thread(target=_daily_bill_loop, daemon=True).start()
+    threading.Thread(target=_agent_order_snapshot_loop, daemon=True).start()
 
 
 @app.get("/healthz")

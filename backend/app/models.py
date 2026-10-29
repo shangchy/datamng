@@ -505,3 +505,11 @@ class DailyBill(Base, TimestampMixin):
     biz_date = Column(Date, nullable=False, unique=True)  # 日期
     bill_balance = Column(Numeric(14, 2))                 # 账单余额（元）= -(代理余额合计-甲方余额)
     wallet_balance = Column(Numeric(18, 4))               # 钱包余额（U，USDT）手动录入
+
+
+class AgentOrderSnapshot(Base, TimestampMixin):
+    __tablename__ = "agent_order_snapshot"
+    id = Column(Integer, primary_key=True)
+    biz_date = Column(Date, nullable=False)                 # 日期
+    customer_id = Column(Integer, ForeignKey("customer.id"))  # 代理（下游客户）
+    active_orders = Column(Integer, default=0)              # 在执订单数快照
