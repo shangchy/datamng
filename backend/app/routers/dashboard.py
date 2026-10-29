@@ -136,69 +136,60 @@ def rank(db: Session = Depends(get_db), _=Depends(get_current_user)):
 @router.get("/agent-trend")
 def agent_trend(db: Session = Depends(get_db), _=Depends(get_current_user),
                 customer_id: int = 0, start: str = "", end: str = ""):
-    """代理日活趋势：每天的出货量/销售金额/利润/余额（customer_id=0 为全部下游代理合计）"""
+    """代理日活趋势：以代理为单位，每天的出货量/销售金额/利润/余额（customer_id=0 返回全部下游代理）"""
     from collections import defaultdict
     end_d = datetime.strptime(end, "%Y-%m-%d").date() if end else date.today()
     start_d = datetime.strptime(start, "%Y-%m-%d").date() if start else (end_d - timedelta(days=6))
     if start_d > end_d:
         start_d, end_d = end_d, start_d
 
-    # 在执订单数（当前快照）
-    active_q = db.query(func.count(Order.id)).filter(Order.status == "在执")
     if customer_id:
-        active_q = active_q.filter(Order.customer_id == customer_id)
-    active_orders = active_q.scalar() or 0
-
-    if customer_id:
-        cust_ids = [customer_id]
+        agents = db.query(Customer).filter(
+            Customer.id == customer_id, Customer.ctype == "downstream").all()
     else:
-        cust_ids = [c.id for c in db.query(Customer).filter(
-            Customer.ctype == "downstream", Customer.status == 1).all()]
+        agents = db.query(Customer).filter(
+            Customer.ctype == "downstream", Customer.status == 1).order_by(Customer.code).all()
+    agent_ids = [a.id for a in agents]
 
-    # 期间内账单：按天聚合 出货量/销售金额/利润
-    day_agg = {}
+    dates = [start_d + timedelta(days=i) for i in range((end_d - start_d).days + 1)]
+
+    # 预加载期间账单 / 充值补数
+    bill_by_agent = defaultdict(dict)
     for b in db.query(Bill).filter(
             Bill.biz_date >= start_d, Bill.biz_date <= end_d,
-            Bill.customer_id.in_(cust_ids)).all():
-        agg = day_agg.setdefault(b.biz_date, {"out_qty": 0, "sales": 0.0, "profit": 0.0})
-        agg["out_qty"] += int(b.purchase_qty or 0)
-        agg["sales"] += float(b.sales or 0)
-        agg["profit"] += float(b.profit or 0)
-
-    # 余额：从当前余额向前回溯（前一天 = 当天 + 当天销售 - 当天充值/补数）
-    recharge_by_day = defaultdict(float)
-    for rec in db.query(CustomerRecharge).filter(
+            Bill.customer_id.in_(agent_ids)).all():
+        bill_by_agent[b.customer_id][b.biz_date] = b
+    recharge_by_agent = defaultdict(lambda: defaultdict(float))
+    for r in db.query(CustomerRecharge).filter(
             CustomerRecharge.recharge_date >= start_d, CustomerRecharge.recharge_date <= end_d,
-            CustomerRecharge.customer_id.in_(cust_ids)).all():
-        recharge_by_day[rec.recharge_date] += float(rec.amount_rmb or 0)
-    if customer_id:
-        c = db.query(Customer).filter(Customer.id == customer_id).first()
-        cur_balance = float(c.balance or 0) if c else 0.0
-    else:
-        cur_balance = float(db.query(func.coalesce(func.sum(Customer.balance), 0)).filter(
-            Customer.ctype == "downstream", Customer.status == 1).scalar() or 0)
-    balances = {}
-    bal = cur_balance
-    d = end_d
-    while d >= start_d:
-        balances[d] = round(bal, 2)
-        agg = day_agg.get(d, {"out_qty": 0, "sales": 0.0, "profit": 0.0})
-        bal = bal + agg["sales"] - recharge_by_day.get(d, 0.0)
-        d -= timedelta(days=1)
+            CustomerRecharge.customer_id.in_(agent_ids)).all():
+        recharge_by_agent[r.customer_id][r.recharge_date] += float(r.amount_rmb or 0)
+
+    # 在执订单数（每个代理）
+    active_by_agent = dict(db.query(Order.customer_id, func.count(Order.id)).filter(
+        Order.status == "在执", Order.customer_id.in_(agent_ids)).group_by(Order.customer_id).all())
 
     series = []
-    d = start_d
-    while d <= end_d:
-        agg = day_agg.get(d, {"out_qty": 0, "sales": 0.0, "profit": 0.0})
+    for a in agents:
+        bmap = bill_by_agent.get(a.id, {})
+        rmap = recharge_by_agent.get(a.id, {})
+        # 余额：从当前余额向前回溯（前一天 = 当天 + 当天销售 - 当天充值/补数）
+        balances = {}
+        bal = float(a.balance or 0)
+        for d in reversed(dates):
+            balances[d] = round(bal, 2)
+            b = bmap.get(d)
+            bal = bal + (float(b.sales or 0) if b else 0.0) - rmap.get(d, 0.0)
         series.append({
-            "date": d.strftime("%Y-%m-%d"),
-            "out_qty": agg["out_qty"],
-            "sales": round(agg["sales"], 2),
-            "profit": round(agg["profit"], 2),
-            "balance": balances[d],
+            "id": a.id, "code": a.code, "name": a.name,
+            "active_orders": int(active_by_agent.get(a.id, 0)),
+            "out_qty": [int(bmap[d].purchase_qty or 0) if d in bmap else 0 for d in dates],
+            "sales": [round(float(bmap[d].sales or 0), 2) if d in bmap else 0.0 for d in dates],
+            "profit": [round(float(bmap[d].profit or 0), 2) if d in bmap else 0.0 for d in dates],
+            "balance": [balances[d] for d in dates],
         })
-        d += timedelta(days=1)
-    return {"code": 0, "data": {"active_orders": int(active_orders), "series": series}, "msg": "ok"}
+
+    return {"code": 0, "data": {"dates": [d.strftime("%Y-%m-%d") for d in dates], "series": series}, "msg": "ok"}
 
 
 @router.get("/alerts-count")

@@ -20,9 +20,10 @@ export default function Dashboard() {
   const [startD, setStartD] = useState('')
   const [endD, setEndD] = useState('')
   const [dailyBills, setDailyBills] = useState([])
-  const [agentTrend, setAgentTrend] = useState({ active_orders: 0, series: [] })
+  const [agentTrend, setAgentTrend] = useState({ dates: [], series: [] })
   const [agents, setAgents] = useState([])
   const [agentId, setAgentId] = useState(0)
+  const [agentMetric, setAgentMetric] = useState('out_qty')
   const [agentRange, setAgentRange] = useState('7')
   const [agentStart, setAgentStart] = useState('')
   const [agentEnd, setAgentEnd] = useState('')
@@ -92,18 +93,25 @@ export default function Dashboard() {
   function applyAgentCustom() { loadAgentTrend(agentStart, agentEnd) }
   function onAgentChange(cid) { setAgentId(cid); loadAgentTrend('', '', cid) }
 
+  const AGENT_METRICS = [
+    { key: 'out_qty', label: '出货量', unit: '条' },
+    { key: 'sales', label: '销售金额', unit: '元' },
+    { key: 'profit', label: '利润', unit: '元' },
+    { key: 'balance', label: '余额', unit: '元' },
+  ]
+  const curMetric = AGENT_METRICS.find(m => m.key === agentMetric) || AGENT_METRICS[0]
   const agentTrendOption = {
     tooltip: { trigger: 'axis' },
-    legend: { data: ['出货量', '销售金额', '利润', '余额'] },
-    grid: { left: 60, right: 70, top: 36, bottom: 24 },
-    xAxis: { type: 'category', data: agentTrend.series.map(r => r.date) },
-    yAxis: [{ type: 'value', name: '条' }, { type: 'value', name: '元', splitLine: { show: false } }],
-    series: [
-      { name: '出货量', type: 'bar', data: agentTrend.series.map(r => r.out_qty), itemStyle: { color: '#93c5fd' } },
-      { name: '销售金额', type: 'line', yAxisIndex: 1, data: agentTrend.series.map(r => r.sales), itemStyle: { color: '#2563eb' } },
-      { name: '利润', type: 'line', yAxisIndex: 1, data: agentTrend.series.map(r => r.profit), itemStyle: { color: '#dc2626' } },
-      { name: '余额', type: 'line', yAxisIndex: 1, data: agentTrend.series.map(r => r.balance), itemStyle: { color: '#16a34a' } },
-    ],
+    legend: { type: 'scroll', top: 0 },
+    grid: { left: 60, right: 30, top: 36, bottom: 24 },
+    xAxis: { type: 'category', data: agentTrend.dates.map(d => d.slice(5)) },
+    yAxis: { type: 'value', name: curMetric.unit },
+    series: agentTrend.series.map(s => ({
+      name: `${s.code} ${s.name}`,
+      type: 'line',
+      smooth: true,
+      data: s[agentMetric],
+    })),
   }
 
   const trendOption = {
@@ -206,9 +214,11 @@ export default function Dashboard() {
                 <option value={0}>全部代理</option>
                 {agents.map(c => <option key={c.id} value={c.id}>{c.code} {c.name}</option>)}
               </select>
-              {agentTrend.active_orders != null && <span style={{ marginLeft: 10, fontSize: 13, color: 'var(--ink)' }}>在执订单数 {agentTrend.active_orders}</span>}
             </span>
             <span>
+              {AGENT_METRICS.map(m => (
+                <button key={m.key} className={`btn small ${agentMetric === m.key ? 'primary' : ''}`} onClick={() => setAgentMetric(m.key)}>{m.label}</button>
+              ))}{' '}
               <button className={`btn small ${agentRange === '7' ? 'primary' : ''}`} onClick={pickAgent7}>7天</button>{' '}
               <button className={`btn small ${agentRange === '30' ? 'primary' : ''}`} onClick={pickAgent30}>30天</button>{' '}
               <button className={`btn small ${agentRange === 'custom' ? 'primary' : ''}`} onClick={pickAgentCustom}>自定义</button>
