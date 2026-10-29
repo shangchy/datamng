@@ -70,6 +70,7 @@ def _migrate_schema():
         cr_cols = {c["name"] for c in insp.get_columns("customer_recharge")} if "customer_recharge" in insp.get_table_names() else set()
         sf_cols = {c["name"] for c in insp.get_columns("source_file")} if "source_file" in insp.get_table_names() else set()
         prod_cols = {c["name"] for c in insp.get_columns("product")} if "product" in insp.get_table_names() else set()
+        ps_cols = {c["name"] for c in insp.get_columns("product_sale")} if "product_sale" in insp.get_table_names() else set()
         cat_cols = {c["name"] for c in insp.get_columns("category")} if "category" in insp.get_table_names() else set()
         plat_cols = {c["name"] for c in insp.get_columns("platform")} if "platform" in insp.get_table_names() else set()
         with engine.begin() as conn:
@@ -115,6 +116,7 @@ def _migrate_schema():
                 ("customer", "VARCHAR(100)"),
                 ("secondary_agent", "VARCHAR(100)"),
                 ("channel", "VARCHAR(100)"),
+                ("group_name", "VARCHAR(100)"),
                 ("source_file_id", "INTEGER"),
                 ("name", "VARCHAR(50)"),
                 ("cat1", "VARCHAR(100)"),
@@ -190,6 +192,8 @@ def _migrate_schema():
                 conn.execute(text("ALTER TABLE category ADD COLUMN code VARCHAR(50)"))
             if "code" not in plat_cols:
                 conn.execute(text("ALTER TABLE platform ADD COLUMN code VARCHAR(10)"))
+            if "region" not in ps_cols:
+                conn.execute(text("ALTER TABLE product_sale ADD COLUMN region VARCHAR(50)"))
             # bill.customer_id 改为可空（给「其他人」单独抽取）
             bill_customer_col = next((c for c in insp.get_columns("bill") if c["name"] == "customer_id"), None) if "bill" in insp.get_table_names() else None
             if bill_customer_col is not None and not bill_customer_col.get("nullable"):
@@ -663,12 +667,37 @@ def _backfill_cat_plat_codes(db):
     db.commit()
 
 
+def _backfill_daily_group(db):
+    """按任务id回填日活数据的小组（订单来源），仅补空值，幂等"""
+    from sqlalchemy import or_
+    from .models import DailyData, Order
+    orders = {o.task_id: o.group_name for o in db.query(Order).filter(
+        Order.task_id.isnot(None), Order.group_name.isnot(None), Order.group_name != "").all()}
+    if not orders:
+        return
+    tids = db.query(DailyData.task_id).filter(
+        DailyData.task_id.isnot(None), DailyData.task_id != "",
+        or_(DailyData.group_name.is_(None), DailyData.group_name == "")).distinct().all()
+    updated = 0
+    for (tid,) in tids:
+        g = orders.get(tid)
+        if g:
+            updated += db.query(DailyData).filter(
+                DailyData.task_id == tid,
+                or_(DailyData.group_name.is_(None), DailyData.group_name == "")).update(
+                {"group_name": g}, synchronize_session=False)
+    if updated:
+        db.commit()
+        print(f"[backfill] 日活小组回填 {updated} 条")
+
+
 @app.on_event("startup")
 def on_startup():
     db = SessionLocal()
     try:
         seed(db)
         _backfill_cat_plat_codes(db)
+        _backfill_daily_group(db)
     finally:
         db.close()
     threading.Thread(target=_scheduler_loop, daemon=True).start()

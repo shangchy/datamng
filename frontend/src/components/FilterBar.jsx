@@ -15,6 +15,7 @@ const ENUM_COLS = {
 const DATE_KEYS = ['start_date', 'end_date', 'order_date', 'biz_date', 'stop_date']
 const TEXT_COLS = ['province', 'city']
 const NON_FILTER = ['region', 'url', 'updated_at', 'created_at', 'last_login_at', 'time', 'id']
+const ALWAYS_DATALIST = ['platform', 'cat1', 'channel', 'group_name']
 
 export default function FilterBar({ cols, filters, setFilters, onSearch, fieldOptions = {}, actions = true }) {
   const list = cols.filter(c => !NON_FILTER.includes(c.k))
@@ -40,7 +41,7 @@ export default function FilterBar({ cols, filters, setFilters, onSearch, fieldOp
         }
         const opts = fieldOptions[c.k]
         if (opts) {
-          if (opts.length <= 20) {
+          if (opts.length <= 20 && !ALWAYS_DATALIST.includes(c.k)) {
             return (
               <select key={c.k} value={filters[c.k] || ''} onChange={e => setFilters({ ...filters, [c.k]: e.target.value })}>
                 <option value="">{c.l}</option>

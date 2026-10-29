@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { api, getToken } from '../api'
+import { useConfirm } from './ui'
 
 const CHIPS = ['今日经营', '最近7天趋势', '代理排行', '客户余额', '在执订单', '停单提醒', '账单预警']
 
@@ -64,6 +65,7 @@ export default function AiChat() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [showSessions, setShowSessions] = useState(false)
+  const [confirm, confirmEl] = useConfirm()
   const boxRef = useRef(null)
   const fabRef = useRef(null)
   const drawerRef = useRef(null)
@@ -95,6 +97,7 @@ export default function AiChat() {
   }
 
   async function delSession(id) {
+    if (!(await confirm('确认删除该会话？'))) return
     try {
       await api.del(`/api/ai/sessions/${id}`)
       if (id === sessionId) newChat()
@@ -205,6 +208,7 @@ export default function AiChat() {
 
   return (
     <>
+      {confirmEl}
       <button
         ref={fabRef}
         className="ai-fab"

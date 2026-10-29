@@ -14,9 +14,12 @@ from ..database import get_db
 from ..deps import get_current_user
 from ..models import Product, ProductSale, Customer, Template
 from ..pagination import paginate, ok_page
+from ..regions import PROVINCES, CITIES
 from ..utils import fmt_dt
 
 router = APIRouter(prefix="/api", tags=["products"])
+
+ALL_REGIONS = set(PROVINCES) | {c for cities in CITIES.values() for c in cities}
 
 
 def _ulabel(user):
@@ -134,6 +137,7 @@ def _sale_dict(s, prod_map, cust_map):
         "customer": f"{c.code} {c.name}" if c else "",
         "product_id": s.product_id,
         "product": p.name if p else "",
+        "region": s.region or "",
         "qty": s.qty,
         "purchase_price": float(s.purchase_price or 0),
         "sales_price": float(s.sales_price or 0),
@@ -163,11 +167,16 @@ def create_product_sale(body: dict, db: Session = Depends(get_db), user=Depends(
         raise HTTPException(status_code=422, detail="请选择客户")
     if not body.get("product_id"):
         raise HTTPException(status_code=422, detail="请选择产品")
+    region = (body.get("region") or "").strip()
+    if not region:
+        raise HTTPException(status_code=422, detail="请选择地区")
+    if region not in ALL_REGIONS:
+        raise HTTPException(status_code=422, detail=f"地区不存在：{region}")
     qty, pp, sp, sales_amount, profit = _calc(body.get("qty"),
                                               body.get("purchase_price"),
                                               body.get("sales_price"))
     s = ProductSale(sale_date=_date(sale_date), customer_id=body.get("customer_id"),
-                    product_id=body.get("product_id"), qty=qty,
+                    product_id=body.get("product_id"), region=region, qty=qty,
                     purchase_price=pp, sales_price=sp,
                     sales_amount=sales_amount, profit=profit,
                     note=(body.get("note") or "").strip())
@@ -189,6 +198,13 @@ def update_product_sale(sid: int, body: dict, db: Session = Depends(get_db), use
         s.customer_id = body.get("customer_id")
     if body.get("product_id") is not None:
         s.product_id = body.get("product_id")
+    if body.get("region") is not None:
+        region = (body.get("region") or "").strip()
+        if not region:
+            raise HTTPException(status_code=422, detail="请选择地区")
+        if region not in ALL_REGIONS:
+            raise HTTPException(status_code=422, detail=f"地区不存在：{region}")
+        s.region = region
     qty = body.get("qty", s.qty)
     pp = body.get("purchase_price", s.purchase_price)
     sp = body.get("sales_price", s.sales_price)
@@ -233,13 +249,14 @@ async def import_product_sales(file: UploadFile = File(...), db: Session = Depen
     idx = {_norm(h): i for i, h in enumerate(header)}
     date_col = idx.get(_norm("日期"))
     cust_col = idx.get(_norm("客户"))
+    region_col = idx.get(_norm("地区"))
     prod_col = idx.get(_norm("产品"))
     pp_col = idx.get(_norm("进货单价"))
     sp_col = idx.get(_norm("出货单价"))
     qty_col = idx.get(_norm("数量"))
 
-    if date_col is None or cust_col is None or prod_col is None:
-        raise HTTPException(status_code=422, detail="缺少必需表头：日期、客户、产品")
+    if date_col is None or cust_col is None or prod_col is None or region_col is None:
+        raise HTTPException(status_code=422, detail="缺少必需表头：日期、客户、地区、产品")
 
     customers = db.query(Customer).filter(Customer.ctype == "downstream").all()
     cust_by_code = {c.code: c for c in customers if c.code}
@@ -259,6 +276,7 @@ async def import_product_sales(file: UploadFile = File(...), db: Session = Depen
             continue  # 日期列为空的行直接跳过，不检查不导入
         cust_str = "" if cust_col is None else str(getv(cust_col) or "").strip()
         prod_str = "" if prod_col is None else str(getv(prod_col) or "").strip()
+        region_str = "" if region_col is None else str(getv(region_col) or "").strip()
 
         sale_date = _date(date_str)
         if not sale_date:
@@ -267,6 +285,12 @@ async def import_product_sales(file: UploadFile = File(...), db: Session = Depen
         cust = cust_by_code.get(cust_str)
         if not cust:
             errors.append(f"客户编号不存在：{cust_str}")
+            continue
+        if not region_str:
+            errors.append(f"地区为空")
+            continue
+        if region_str not in ALL_REGIONS:
+            errors.append(f"地区不存在：{region_str}")
             continue
         prod = prod_by_name.get(prod_str)
         if not prod:
@@ -304,18 +328,20 @@ async def import_product_sales(file: UploadFile = File(...), db: Session = Depen
         profit = round(qty * (sp - pp), 2)
         existing = db.query(ProductSale).filter(ProductSale.sale_date == sale_date,
                                                  ProductSale.customer_id == cust.id,
-                                                 ProductSale.product_id == prod.id).first()
+                                                 ProductSale.product_id == prod.id,
+                                                 ProductSale.region == region_str).first()
         if existing:
             existing.qty = qty
             existing.purchase_price = pp
             existing.sales_price = sp
             existing.sales_amount = sales_amount
             existing.profit = profit
+            existing.region = region_str
             existing.updated_by = _ulabel(user)
             updated += 1
         else:
             s = ProductSale(sale_date=sale_date, customer_id=cust.id, product_id=prod.id,
-                            qty=qty, purchase_price=pp, sales_price=sp,
+                            region=region_str, qty=qty, purchase_price=pp, sales_price=sp,
                             sales_amount=sales_amount, profit=profit)
             s.created_by = _ulabel(user)
             s.updated_by = _ulabel(user)
@@ -352,7 +378,8 @@ def export_product_sales(db: Session = Depends(get_db), _=Depends(get_current_us
     cust_code = {c.id: c.code for c in db.query(Customer).all()}
     for s in rows:
         ws.append([s.sale_date.strftime("%Y-%m-%d") if s.sale_date else "",
-                   cust_code.get(s.customer_id, ""), prod_map.get(s.product_id, ""),
+                   cust_code.get(s.customer_id, ""), s.region or "",
+                   prod_map.get(s.product_id, ""),
                    float(s.purchase_price or 0), float(s.sales_price or 0), s.qty])
     buf = io.BytesIO()
     wb.save(buf)
@@ -371,9 +398,9 @@ def _build_product_sale_template_xlsx():
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "产品销售导入"
-    ws.append(["日期", "客户", "产品", "进货单价", "出货单价", "数量"])
-    ws.append(["2026-01-01", "660001", "产品名称", 1.00, 2.00, 10])
-    for col in ("A", "B", "C", "D", "E", "F"):
+    ws.append(["日期", "客户", "地区", "产品", "进货单价", "出货单价", "数量"])
+    ws.append(["2026-01-01", "660001", "浙江", "产品名称", 1.00, 2.00, 10])
+    for col in ("A", "B", "C", "D", "E", "F", "G"):
         ws.column_dimensions[col].width = 18
     buf = io.BytesIO()
     wb.save(buf)
@@ -387,12 +414,32 @@ def ensure_product_sale_template(db):
         t = Template(ttype="产品销售导入模版", tpl_type="其他", code=PS_IMPORT_TEMPLATE_CODE,
                      name="产品销售导入模版.xlsx", file_data=_build_product_sale_template_xlsx(),
                      file_type="xlsx",
-                     description="产品销售订单导入模版：表头为 日期/客户/产品/进货单价/出货单价/数量。"
+                     description="产品销售订单导入模版：表头为 日期/客户/地区/产品/进货单价/出货单价/数量。"
                                  "日期支持 YYYY-MM-DD、YYYY/MM/DD、YYYYMMDD、YYMMDD、MMDD；"
-                                 "客户填客户管理中的客户编号；产品填产品管理中的产品名称。",
+                                 "客户填客户管理中的客户编号；地区填省份或地市名称（需在地区主数据中存在）；"
+                                 "产品填产品管理中的产品名称。",
                      status=1)
         db.add(t)
         db.commit()
+    else:
+        # 模版为自动生成的简单表头，若缺少地区列则同步为最新列
+        needs_update = t.file_data is None
+        if not needs_update:
+            import openpyxl
+            try:
+                wb = openpyxl.load_workbook(io.BytesIO(t.file_data), read_only=True)
+                hdr = [c.value for c in wb.active[1]]
+                needs_update = "地区" not in hdr
+                wb.close()
+            except Exception:
+                needs_update = True
+        if needs_update:
+            t.file_data = _build_product_sale_template_xlsx()
+            t.description = "产品销售订单导入模版：表头为 日期/客户/地区/产品/进货单价/出货单价/数量。" \
+                            "日期支持 YYYY-MM-DD、YYYY/MM/DD、YYYYMMDD、YYMMDD、MMDD；" \
+                            "客户填客户管理中的客户编号；地区填省份或地市名称（需在地区主数据中存在）；" \
+                            "产品填产品管理中的产品名称。"
+            db.commit()
     return t
 
 

@@ -302,6 +302,7 @@ class DailyData(Base, TimestampMixin):
     customer = Column(String(100))               # 一级代理（关联订单）
     secondary_agent = Column(String(100))        # 二级代理（关联订单）
     channel = Column(String(100))                # 渠道（关联订单）
+    group_name = Column(String(100))             # 小组（关联订单）
     source_file = Column(String(500))            # 来源文件名
     source_file_id = Column(Integer)             # 源文件记录 id（用于下载）
 
@@ -487,6 +488,7 @@ class ProductSale(Base, AuditMixin):
     sale_date = Column(Date, nullable=False)               # 日期
     customer_id = Column(Integer, ForeignKey("customer.id"))  # 客户
     product_id = Column(Integer, ForeignKey("product.id"))    # 产品
+    region = Column(String(50))                            # 地区（省份或地市）
     qty = Column(Integer, default=0)                       # 数量
     purchase_price = Column(Numeric(14, 4), default=0)     # 进货单价
     sales_price = Column(Numeric(14, 4), default=0)        # 出货单价

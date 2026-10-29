@@ -12,7 +12,7 @@ function fmt(d) {
 
 function blankPsRow(date) {
   return { id: 'new_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), isNew: true, sale_date: date,
-           customer_id: '', customer: '', product_id: '', product: '', qty: '', purchase_price: '', sales_price: '', note: '' }
+           customer_id: '', customer: '', product_id: '', product: '', region: '', qty: '', purchase_price: '', sales_price: '', note: '' }
 }
 
 function isBlankRow(p) {
@@ -41,6 +41,7 @@ export default function Dashboard() {
   const [productSales, setProductSales] = useState([])
   const [products, setProducts] = useState([])
   const [customers, setCustomers] = useState([])
+  const [regions, setRegions] = useState([])
   const [psImportResult, setPsImportResult] = useState(null)
   const [psExportModal, setPsExportModal] = useState(false)
   const [psDate, setPsDate] = useState(() => fmt(new Date()))
@@ -68,6 +69,11 @@ export default function Dashboard() {
     loadProductSales()
     api.get('/api/products?per_page=1000').then(r => setProducts(r.data?.rows || [])).catch(() => {})
     api.get('/api/customers?per_page=1000').then(r => setCustomers(r.data?.rows?.filter(c => c.ctype === 'downstream').sort((a, b) => (parseInt(a.code, 10) || 0) - (parseInt(b.code, 10) || 0)) || [])).catch(() => {})
+    api.get('/api/regions').then(r => {
+      const provs = r.data?.provinces || []
+      const cities = Object.values(r.data?.cities || {}).flat()
+      setRegions([...new Set([...provs, ...cities])].sort((a, b) => a.localeCompare(b, 'zh')))
+    }).catch(() => {})
   }, [])
 
   function loadProductSales() {
@@ -123,13 +129,15 @@ export default function Dashboard() {
     rows.forEach((p, i) => {
       if (!p.customer_id) invalid.push(`第 ${i + 1} 行：请选择客户`)
       if (!p.product_id) invalid.push(`第 ${i + 1} 行：请选择产品`)
+      if (!p.region) invalid.push(`第 ${i + 1} 行：请填写地区`)
+      else if (!regions.includes(p.region)) invalid.push(`第 ${i + 1} 行：地区不存在「${p.region}」`)
       if (p.qty === '' || p.qty == null || !(Number(p.qty) > 0)) invalid.push(`第 ${i + 1} 行：请填写有效的数量`)
     })
     if (invalid.length) { showError(invalid.join('；')); return }
     if (!(await confirm(`确认批量保存当前 ${rows.length} 条产品销售数据？`))) return
     try {
       for (const p of rows) {
-        const body = { sale_date: psDate, customer_id: Number(p.customer_id), product_id: Number(p.product_id), qty: Number(p.qty), purchase_price: p.purchase_price === '' ? null : Number(p.purchase_price), sales_price: p.sales_price === '' ? null : Number(p.sales_price), note: p.note || '' }
+        const body = { sale_date: psDate, customer_id: Number(p.customer_id), product_id: Number(p.product_id), region: p.region || '', qty: Number(p.qty), purchase_price: p.purchase_price === '' ? null : Number(p.purchase_price), sales_price: p.sales_price === '' ? null : Number(p.sales_price), note: p.note || '' }
         if (p.isNew) await api.post('/api/product-sales', body)
         else await api.put(`/api/product-sales/${p.id}`, body)
       }
@@ -138,7 +146,7 @@ export default function Dashboard() {
   }
   async function delPs(p) {
     if (p.isNew) { setProductSales(list => list.filter(r => r.id !== p.id)); return }
-    if (!window.confirm(`确认删除该产品销售记录？`)) return
+    if (!(await confirm('确认删除该产品销售记录？'))) return
     try { await api.del(`/api/product-sales/${p.id}`); toast('已删除'); loadProductSales() } catch (e) { showError(e.message) }
   }
 
@@ -306,12 +314,14 @@ export default function Dashboard() {
           <>
             <datalist id="ps-customers">{customers.map(c => <option key={c.id} value={`${c.code} ${c.name}`} />)}</datalist>
             <datalist id="ps-products">{products.map(p => <option key={p.id} value={p.name} />)}</datalist>
+            <datalist id="ps-regions">{regions.map(r => <option key={r} value={r} />)}</datalist>
             <div style={{ height: 400, overflowY: 'auto', overflowX: 'auto' }}>
               <table className="ps-table">
                 <colgroup>
-                  <col style={{ width: '14%' }} />
-                  <col style={{ width: '16%' }} />
-                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '13%' }} />
+                  <col style={{ width: '10%' }} />
+                  <col style={{ width: '13%' }} />
+                  <col style={{ width: '6%' }} />
                   <col style={{ width: '7%' }} />
                   <col style={{ width: '7%' }} />
                   <col style={{ width: '7%' }} />
@@ -320,7 +330,7 @@ export default function Dashboard() {
                   <col style={{ width: '8%' }} />
                   <col style={{ width: '15%' }} />
                 </colgroup>
-                <thead><tr><th>客户</th><th>产品</th><th className="num">数量</th><th className="center">进货单价<br/>（元）</th><th className="center">出货单价<br/>（元）</th><th className="center">销售金额<br/>（元）</th><th className="center">利润<br/>（元）</th><th>更新时间</th><th>更新人</th><th className="ops">操作</th></tr></thead>
+                <thead><tr><th>客户</th><th>地区</th><th>产品</th><th className="num">数量</th><th className="center">进货单价<br/>（元）</th><th className="center">出货单价<br/>（元）</th><th className="center">销售金额<br/>（元）</th><th className="center">利润<br/>（元）</th><th>更新时间</th><th>更新人</th><th className="ops">操作</th></tr></thead>
                 <tbody>
                   {filteredSales.map(p => {
                     const calc = psCalc(p)
@@ -328,6 +338,9 @@ export default function Dashboard() {
                       <tr key={p.id}>
                         <td>
                           <input list="ps-customers" value={p.customer || ''} disabled={!isToday} placeholder="输入或选择客户" onChange={e => onPickPsCustomer(p, e.target.value)} />
+                        </td>
+                        <td>
+                          <input list="ps-regions" value={p.region || ''} disabled={!isToday} placeholder="省份/地市" onChange={e => updatePs(p.id, { region: e.target.value })} />
                         </td>
                         <td>
                           <input list="ps-products" value={p.product || ''} disabled={!isToday} placeholder="输入或选择产品" onChange={e => onPickPsProduct(p, e.target.value)} />

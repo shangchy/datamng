@@ -29,7 +29,8 @@ const KINDS = {
       { k: 'biz_date', l: '数据日期' }, { k: 'upstream', l: '甲方' }, { k: 'task_id', l: '任务id' },
       { k: 'task_name', l: '任务名' }, { k: 'phone', l: '手机号' }, { k: 'name', l: '姓名' }, { k: 'province', l: '省' },
       { k: 'city', l: '市' }, { k: 'operator', l: '运营商' }, { k: 'cat1', l: '一级品类' }, { k: 'cat2', l: '二级品类' }, { k: 'platform', l: '平台' },
-      { k: 'customer', l: '一级代理' }, { k: 'secondary_agent', l: '二级代理' }, { k: 'channel', l: '渠道' },
+      { k: 'customer', l: '一级代理' }, { k: 'channel', l: '渠道' },
+      { k: 'group_name', l: '小组' },
       { k: 'source_file', l: '来源文件名' }, { k: 'created_at', l: '创建时间' }, { k: 'updated_at', l: '更新时间' },
     ], export: true, dailyImp: true, csvImp: true, batchDel: true, batchDelAdmin: true, dist: true, check: true, showSeq: true, defaultPerPage: 500, dailyEdit: true,
       defaultHidden: ['name', 'cat1', 'cat2', 'source_file'],
@@ -246,19 +247,17 @@ export default function SimpleList({ kind }) {
     if (cascadeOpts.platform_map) {
       base.platform = filters.cat2 ? (cascadeOpts.platform_map[filters.cat2] || []) : uniq(Object.values(cascadeOpts.platform_map).flat())
     }
-    if (cascadeOpts.agent_map) {
-      base.secondary_agent = filters.customer ? (cascadeOpts.agent_map[filters.customer] || []) : uniq(Object.values(cascadeOpts.agent_map).flat())
-    }
     if (cascadeOpts.channel_map) {
       base.channel = filters.customer ? (cascadeOpts.channel_map[filters.customer] || []) : uniq(Object.values(cascadeOpts.channel_map).flat())
     }
+    if (cascadeOpts.group_name) base.group_name = cascadeOpts.group_name
     return base
   }
   function handleSetFilters(next) {
     if (kind === 'daily') {
       if (next.cat1 !== filters.cat1) { next.cat2 = ''; next.platform = '' }
       if (next.cat2 !== filters.cat2) { next.platform = '' }
-      if (next.customer !== filters.customer) { next.secondary_agent = ''; next.channel = '' }
+      if (next.customer !== filters.customer) { next.channel = '' }
     }
     setFilters(next)
   }
