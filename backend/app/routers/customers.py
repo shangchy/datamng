@@ -82,7 +82,10 @@ def customer_detail(cid: int, db: Session = Depends(get_db), _=Depends(get_curre
     c = db.query(Customer).filter(Customer.id == cid).first()
     if not c:
         raise HTTPException(status_code=404, detail="客户不存在")
-    total_supply = db.query(func.coalesce(func.sum(Order.qty), 0)).filter(Order.customer_id == cid).scalar() or 0
+    if c.ctype == "upstream":
+        total_supply = db.query(func.coalesce(func.sum(Order.qty), 0)).filter(Order.upstream_id == cid).scalar() or 0
+    else:
+        total_supply = db.query(func.coalesce(func.sum(Order.qty), 0)).filter(Order.customer_id == cid).scalar() or 0
     total_sales = db.query(func.coalesce(func.sum(Bill.sales), 0)).filter(Bill.customer_id == cid).scalar() or 0
     total_profit = db.query(func.coalesce(func.sum(Bill.profit), 0)).filter(Bill.customer_id == cid).scalar() or 0
     d = _customer_dict(c)

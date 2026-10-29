@@ -215,10 +215,10 @@ export default function Customers() {
       {detail && !recharge && (
         <Modal title={`客户详情 · ${detail.name}`} onClose={() => setDetail(null)} wide>
           <div className="sticky-head">
-            <div className="cards" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
+            <div className="cards" style={{ gridTemplateColumns: detail.ctype === 'upstream' ? 'repeat(3,1fr)' : 'repeat(4,1fr)' }}>
               <div className="card"><div className="t">总供货量</div><div className="v">{detail.total_supply}</div></div>
               <div className="card"><div className="t">总销售额（元）</div><div className="v">¥{detail.total_sales}</div></div>
-              <div className="card"><div className="t">总利润（元）</div><div className="v" style={{ color: 'var(--green)' }}>¥{detail.total_profit}</div></div>
+              {detail.ctype !== 'upstream' && <div className="card"><div className="t">总利润（元）</div><div className="v" style={{ color: 'var(--green)' }}>¥{detail.total_profit}</div></div>}
               <div className="card"><div className="t">余额（元）</div><div className="v">¥{detail.balance}</div></div>
             </div>
             <table className="kv"><tbody>
