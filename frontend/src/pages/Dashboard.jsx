@@ -20,6 +20,12 @@ export default function Dashboard() {
   const [startD, setStartD] = useState('')
   const [endD, setEndD] = useState('')
   const [dailyBills, setDailyBills] = useState([])
+  const [agentTrend, setAgentTrend] = useState({ active_orders: 0, series: [] })
+  const [agents, setAgents] = useState([])
+  const [agentId, setAgentId] = useState(0)
+  const [agentRange, setAgentRange] = useState('7')
+  const [agentStart, setAgentStart] = useState('')
+  const [agentEnd, setAgentEnd] = useState('')
 
   function loadCharts(start = '', end = '') {
     api.get(`/api/dashboard/trend?start=${start}&end=${end}`).then(r => setTrend(r.data)).catch(() => {})
@@ -30,11 +36,16 @@ export default function Dashboard() {
   function loadDailyBills() {
     api.get('/api/dashboard/daily-bills').then(r => setDailyBills(r.data || [])).catch(() => {})
   }
+  function loadAgentTrend(start = '', end = '', cid = agentId) {
+    api.get(`/api/dashboard/agent-trend?customer_id=${cid}&start=${start}&end=${end}`).then(r => setAgentTrend(r.data)).catch(() => {})
+  }
   useEffect(() => {
     loadSummary()
     api.get('/api/dashboard/rank').then(r => setRank(r.data)).catch(() => {})
     loadCharts()
     loadDailyBills()
+    loadAgentTrend()
+    api.get('/api/customers?per_page=1000').then(r => setAgents(r.data?.rows?.filter(c => c.ctype === 'downstream').sort((a, b) => (parseInt(a.code, 10) || 0) - (parseInt(b.code, 10) || 0)) || [])).catch(() => {})
   }, [])
 
   async function saveWallet(row, val) {
@@ -68,6 +79,31 @@ export default function Dashboard() {
     } else {
       loadCharts()
     }
+  }
+
+  function pickAgent7() { setAgentRange('7'); loadAgentTrend() }
+  function pickAgent30() {
+    setAgentRange('30')
+    const e = new Date(), st = new Date()
+    st.setDate(st.getDate() - 29)
+    loadAgentTrend(fmt(st), fmt(e))
+  }
+  function pickAgentCustom() { setAgentRange('custom') }
+  function applyAgentCustom() { loadAgentTrend(agentStart, agentEnd) }
+  function onAgentChange(cid) { setAgentId(cid); loadAgentTrend('', '', cid) }
+
+  const agentTrendOption = {
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['出货量', '销售金额', '利润', '余额'] },
+    grid: { left: 60, right: 70, top: 36, bottom: 24 },
+    xAxis: { type: 'category', data: agentTrend.series.map(r => r.date) },
+    yAxis: [{ type: 'value', name: '条' }, { type: 'value', name: '元', splitLine: { show: false } }],
+    series: [
+      { name: '出货量', type: 'bar', data: agentTrend.series.map(r => r.out_qty), itemStyle: { color: '#93c5fd' } },
+      { name: '销售金额', type: 'line', yAxisIndex: 1, data: agentTrend.series.map(r => r.sales), itemStyle: { color: '#2563eb' } },
+      { name: '利润', type: 'line', yAxisIndex: 1, data: agentTrend.series.map(r => r.profit), itemStyle: { color: '#dc2626' } },
+      { name: '余额', type: 'line', yAxisIndex: 1, data: agentTrend.series.map(r => r.balance), itemStyle: { color: '#16a34a' } },
+    ],
   }
 
   const trendOption = {
@@ -161,14 +197,42 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="panel">
-        <h3 style={{ justifyContent: 'space-between' }}>
-          日活分析
-          <span>
-            <button className={`btn small ${view === 'list' ? 'primary' : ''}`} onClick={() => setView('list')}>列表</button>{' '}
-            <button className={`btn small ${view === 'bar' ? 'primary' : ''}`} onClick={() => setView('bar')}>柱状图</button>
-          </span>
-        </h3>
+      <div className="row-trend">
+        <div className="panel">
+          <h3 style={{ justifyContent: 'space-between' }}>
+            <span>
+              代理日活统计
+              <select value={agentId} onChange={e => onAgentChange(Number(e.target.value))} style={{ marginLeft: 10, height: 30 }}>
+                <option value={0}>全部代理</option>
+                {agents.map(c => <option key={c.id} value={c.id}>{c.code} {c.name}</option>)}
+              </select>
+              {agentTrend.active_orders != null && <span style={{ marginLeft: 10, fontSize: 13, color: 'var(--ink)' }}>在执订单数 {agentTrend.active_orders}</span>}
+            </span>
+            <span>
+              <button className={`btn small ${agentRange === '7' ? 'primary' : ''}`} onClick={pickAgent7}>7天</button>{' '}
+              <button className={`btn small ${agentRange === '30' ? 'primary' : ''}`} onClick={pickAgent30}>30天</button>{' '}
+              <button className={`btn small ${agentRange === 'custom' ? 'primary' : ''}`} onClick={pickAgentCustom}>自定义</button>
+              {agentRange === 'custom' && (
+                <>
+                  <input type="date" value={agentStart} onChange={e => setAgentStart(e.target.value)} />
+                  <span>~</span>
+                  <input type="date" value={agentEnd} onChange={e => setAgentEnd(e.target.value)} />
+                  <button className="btn primary small" onClick={applyAgentCustom}>统计</button>
+                </>
+              )}
+            </span>
+          </h3>
+          <Chart option={agentTrendOption} height={300} />
+        </div>
+
+        <div className="panel">
+          <h3 style={{ justifyContent: 'space-between' }}>
+            日活分析
+            <span>
+              <button className={`btn small ${view === 'list' ? 'primary' : ''}`} onClick={() => setView('list')}>列表</button>{' '}
+              <button className={`btn small ${view === 'bar' ? 'primary' : ''}`} onClick={() => setView('bar')}>柱状图</button>
+            </span>
+          </h3>
         {rank.length === 0 ? <div className="empty">暂无数据</div> : view === 'list' ? (
           <table>
             <thead><tr><th>排名</th><th>客户</th><th className="num">业务量</th><th className="num">销售额（元）</th><th className="num">利润（元）</th><th className="num">余额（元）</th></tr></thead>
@@ -196,6 +260,7 @@ export default function Dashboard() {
             ))}
           </div>
         )}
+        </div>
       </div>
     </div>
   )
