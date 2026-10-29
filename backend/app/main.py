@@ -695,7 +695,7 @@ def _migrate_upstream_codes(db):
     """上游客户编号调整：990001->110001、990002->110002
     旧客户停用、外键数据迁移到新客户（幂等：旧客户已停用则跳过）"""
     from .models import (Customer, Order, Bill, CustomerRecharge, CustomerPrice,
-                         ProductSale, Alert)
+                         ProductSale, Alert, Url)
     mapping = {"990001": "110001", "990002": "110002"}
     changed = False
     for old_code, new_code in mapping.items():
@@ -716,7 +716,7 @@ def _migrate_upstream_codes(db):
         for model, col in [(Order, "upstream_id"), (Order, "customer_id"),
                            (Bill, "customer_id"), (CustomerRecharge, "customer_id"),
                            (CustomerPrice, "customer_id"), (ProductSale, "customer_id"),
-                           (Alert, "customer_id")]:
+                           (Alert, "customer_id"), (Url, "owner_id")]:
             db.query(model).filter(getattr(model, col) == old.id).update({col: new.id}, synchronize_session=False)
         # 旧客户停用、余额归零
         old.status = 0
