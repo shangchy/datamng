@@ -180,6 +180,10 @@ def create_recharge(cid: int, body: RechargeBody, db: Session = Depends(get_db),
                             recharge_type=recharge_type, reason=(body.reason or "").strip(),
                             rate=rate, created_by=(user.nickname or user.username)))
     c.balance = (c.balance if c.balance is not None else Decimal("0")) + Decimal(str(rmb))
+    # 充值/补数也同步到当日账单余额（若已有账单），保证账单与余额口径一致
+    bill = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == body.recharge_date).first()
+    if bill:
+        bill.balance = round(float(bill.balance or 0) + rmb, 2)
     db.query(Alert).filter(Alert.type == "账单预警", Alert.customer_id == cid, Alert.status == "未处理").delete()
     db.commit()
     return {"code": 0, "data": None, "msg": "充值成功"}
@@ -204,6 +208,7 @@ def update_recharge(cid: int, rid: int, body: RechargeBody, db: Session = Depend
     else:
         raise HTTPException(status_code=422, detail="请填写充值金额（U 或 人民币）")
     old_rmb = float(r.amount_rmb) if r.amount_rmb is not None else 0
+    old_date = r.recharge_date
     delta = round(rmb - old_rmb, 2)
     recharge_type = (body.recharge_type or "转账").strip() or "转账"
     if recharge_type not in ("转账", "补数"):
@@ -219,6 +224,19 @@ def update_recharge(cid: int, rid: int, body: RechargeBody, db: Session = Depend
     r.rate = rate
     if delta:
         c.balance = (c.balance if c.balance is not None else Decimal("0")) + Decimal(str(delta))
+    # 同步到账单余额（若已有账单）：日期不变按差额调整，日期变化则原日期扣回、新日期加上
+    if old_date == r.recharge_date:
+        if delta:
+            bill = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == old_date).first()
+            if bill:
+                bill.balance = round(float(bill.balance or 0) + delta, 2)
+    else:
+        old_bill = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == old_date).first()
+        if old_bill:
+            old_bill.balance = round(float(old_bill.balance or 0) - old_rmb, 2)
+        new_bill = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == r.recharge_date).first()
+        if new_bill:
+            new_bill.balance = round(float(new_bill.balance or 0) + rmb, 2)
     db.query(Alert).filter(Alert.type == "账单预警", Alert.customer_id == cid, Alert.status == "未处理").delete()
     db.commit()
     return {"code": 0, "data": None, "msg": "充值已更新"}
