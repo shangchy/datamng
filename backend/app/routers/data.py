@@ -3662,6 +3662,17 @@ def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
             return f.fgColor.rgb
         return None
 
+    def _find_zebra_rgb(ws, header_row, col=1):
+        """扫描数据区，取第一处非表头的实心填充色作为斑马纹；无则用默认淡蓝"""
+        for r in range(header_row + 1, min(header_row + 12, ws.max_row + 1)):
+            v = ws.cell(row=r, column=1).value
+            if v is not None and ("合计" in str(v) or "小计" in str(v)):
+                break
+            rgb = _solid_rgb(ws.cell(row=r, column=col))
+            if rgb:
+                return rgb
+        return "00F4F8FD"
+
     cust_label = bill.get("cust_label") or f"{cust.code} {cust.name}"
     sales = round(float(bill.get("sales") or 0), 2)
     balance = round(float(bill.get("balance")), 2) if bill.get("balance") is not None else 0.0
@@ -3732,7 +3743,7 @@ def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
             note_text = v
             break
     # 读取模版的斑马纹填充色与合计行填充色，重写明细时沿用
-    zebra_rgb = _solid_rgb(ws1.cell(row=detail_header_row + 2, column=1)) if detail_header_row + 2 <= ws1.max_row else None
+    zebra_rgb = _find_zebra_rgb(ws1, detail_header_row)
     total_rgb = None
     for row in ws1.iter_rows(min_row=detail_header_row + 1, max_col=1):
         if row[0].value is not None and str(row[0].value).strip() == "合计":
@@ -3796,7 +3807,7 @@ def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
             CustomerRecharge.recharge_date >= month_start,
             CustomerRecharge.recharge_date <= month_end).all():
         recharge_by_date[rec.recharge_date].append(rec)
-    zebra2_rgb = _solid_rgb(ws2.cell(row=3, column=1)) if ws2.max_row >= 3 else None
+    zebra2_rgb = _find_zebra_rgb(ws2, 1)
     if ws2.max_row > 1:
         ws2.delete_rows(2, ws2.max_row - 1)
 
