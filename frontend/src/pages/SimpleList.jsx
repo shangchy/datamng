@@ -1029,17 +1029,17 @@ export default function SimpleList({ kind }) {
         {cfg.dist && <button className="btn orange" onClick={() => washFileRef.current.click()}>③ 导入洗名</button>}
         {cfg.dist && <button className="btn orange" onClick={() => { setDistCustomerIds(customers.filter(c => c.ctype === 'downstream').map(c => c.id)); setDistModal(true) }}>④ 分发数据</button>}
         {cfg.check && <button className="btn" onClick={() => { setCheckResult(null); setCheckModal(true) }}>工单检查</button>}
-        {showBatchDel && kind !== 'daily' && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
+        {showBatchDel && kind !== 'daily' && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>⚠️ 批量删除({selected.length})</button>}
         {kind === 'daily' && <button className="btn" onClick={() => backfillCategory().catch(e => showError(e.message))}>补充品类</button>}
         {kind === 'sourcefiles' && <button className="btn primary" onClick={() => { setSfCategory('手动'); setSfModal(true) }}>上传文件</button>}
         {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
         {cfg.export && <button className="btn green" onClick={() => setExportModal(true)}>导出数据</button>}
-        {kind === 'daily' && isAdmin && <button className="btn danger" onClick={() => setBatchDelModal(true)}>批量删除</button>}
+        {kind === 'daily' && isAdmin && <button className="btn danger" onClick={() => setBatchDelModal(true)}>⚠️ 批量删除</button>}
         {cfg.billExp && <button className="btn primary" onClick={() => setGenBillModal(true)}>生成账单</button>}
         {cfg.billExp && <button className="btn green" onClick={() => setBillSummaryModal(true)}>导出账单</button>}
         {cfg.simple && <button className="btn primary" onClick={() => setSimpleModal({ name: '', status: 1 })}>+ 新增</button>}
         {cfg.addUrl && <button className="btn primary" onClick={openAddUrl}>+ 新增 URL</button>}
-        {cfg.clear && isAdmin && <button className="btn danger" onClick={clearData}>清空数据</button>}
+        {cfg.clear && isAdmin && <button className="btn danger" onClick={clearData}>⚠️ 清空数据</button>}
         {kind === 'users' && <button className="btn" onClick={openRolePerms}>角色权限</button>}
         {kind === 'users' && <button className="btn" onClick={() => setRoleCreate({ name: '', code: '', note: '' })}>新增角色</button>}
         {kind === 'alerts' && (

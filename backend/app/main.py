@@ -691,10 +691,29 @@ def _backfill_daily_group(db):
         print(f"[backfill] 日活小组回填 {updated} 条")
 
 
+def _rename_upstream_codes(db):
+    """上游客户编号调整：990001->110001、990002->110002（幂等，新编号已存在则跳过）"""
+    from .models import Customer
+    mapping = {"990001": "110001", "990002": "110002"}
+    changed = False
+    for old, new in mapping.items():
+        c = db.query(Customer).filter(Customer.code == old).first()
+        if not c:
+            continue
+        if db.query(Customer).filter(Customer.code == new).first():
+            continue
+        c.code = new
+        changed = True
+    if changed:
+        db.commit()
+        print("[migrate] 上游客户编号已替换：990001->110001、990002->110002")
+
+
 @app.on_event("startup")
 def on_startup():
     db = SessionLocal()
     try:
+        _rename_upstream_codes(db)
         seed(db)
         _backfill_cat_plat_codes(db)
         _backfill_daily_group(db)

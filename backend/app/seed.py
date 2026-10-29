@@ -93,8 +93,8 @@ def seed(db):
                  ("660004", "沐禾", "downstream", "t.me/muhe004", "洗名", -365.46, 0),
                  ("660009", "虎啸", "downstream", "t.me/huxiao009", "洗名", -3768.96, 0),
                  ("880008", "龙哥", "downstream", "t.me/longge008", "洗名", -7284.20, 0),
-                 ("990002", "新甲方", "upstream", "", "", 0, 0),
-                 ("990001", "牛", "upstream", "", "", 0, 0)]
+                 ("110002", "新甲方", "upstream", "", "", 0, 0),
+                 ("110001", "牛", "upstream", "", "", 0, 0)]
     for code, name, ctype, tg, wash, bal, warn in customers:
         c = db.query(Customer).filter(Customer.code == code).first()
         if not c:

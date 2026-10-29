@@ -663,8 +663,8 @@ export default function Orders({ variant = 'orders' }) {
           {!isStop && <button className="btn orange" onClick={() => setConfirmModal(true)}>提单确认</button>}
           {!isStop && <button className="btn" onClick={checkDuplicates}>订单验重</button>}
           <button className={`btn ${filters.plat_issue ? 'primary' : ''}`} onClick={() => setCatCheckModal(true)}>品类检查</button>
-          {!isStop && selected.length > 0 && <button className="btn danger" onClick={batchStop}>批量停单({selected.length})</button>}
-          {!isStop && isAdmin && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>批量删除({selected.length})</button>}
+          {!isStop && selected.length > 0 && <button className="btn danger" onClick={batchStop}>⚠️ 批量停单({selected.length})</button>}
+          {!isStop && isAdmin && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>⚠️ 批量删除({selected.length})</button>}
           {!isStop && isAdmin && selected.length > 0 && <button className="btn" onClick={batchReopen}>批量复提({selected.length})</button>}
           {!isStop && selected.length > 0 && <button className="btn" onClick={() => { setGroupVal(''); setGroupModal(true) }}>批量修改小组({selected.length})</button>}
           {!isStop && selected.length > 0 && <button className="btn" onClick={batchExtend}>批量延期({selected.length})</button>}
