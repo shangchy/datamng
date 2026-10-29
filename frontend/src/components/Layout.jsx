@@ -4,7 +4,7 @@ import { getUser, clearAuth, api } from '../api'
 import AiChat from './AiChat'
 
 const TITLE_MAP = {
-  '/': '工作台', '/orders': '订单管理', '/daily': '日活管理', '/fund': '公积金',
+  '/': '工作台', '/orders': '订单管理', '/daily': '日活管理', '/product-sales': '产品销售', '/fund': '公积金',
   '/wash-names': '洗名库',
   '/customers': '客户管理', '/parts': '配件管理', '/categories': '品类管理',
   '/channels': '渠道管理', '/operators': '运营商管理', '/bills': '账单管理',
@@ -21,6 +21,7 @@ const MENUS = [
   { key: '/', name: '工作台', icon: '📊' },
   { key: '/orders', name: '订单管理', icon: '📝', perm: 'order:view' },
   { key: '/daily', name: '日活管理', icon: '📈', perm: 'daily:view' },
+  { key: '/product-sales', name: '产品销售', icon: '🛒', perm: 'product:view' },
   { key: '/bills', name: '账单管理', icon: '💰', perm: 'bill:view' },
   { key: '/customers', name: '客户管理', icon: '👤', perm: 'customer:view' },
   { key: '/alerts', name: '预警中心', icon: '🔔', perm: 'alert:view' },

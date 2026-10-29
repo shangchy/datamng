@@ -13,6 +13,7 @@ import TidabiaoHistory from './pages/TidabiaoHistory'
 import Logs from './pages/Logs'
 import ConfigCenter from './pages/ConfigCenter'
 import Products from './pages/Products'
+import ProductSales from './pages/ProductSales'
 import Workflow from './pages/Workflow'
 
 function RequireAuth({ children }) {
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="orders" element={<Orders />} />
         <Route path="tidabiao-history" element={<TidabiaoHistory />} />
         <Route path="daily" element={<SimpleList kind="daily" />} />
+        <Route path="product-sales" element={<ProductSales />} />
         <Route path="source-files" element={<SimpleList kind="sourcefiles" />} />
         <Route path="wash-names" element={<SimpleList kind="washnames" />} />
         <Route path="fund" element={<SimpleList kind="fund" />} />

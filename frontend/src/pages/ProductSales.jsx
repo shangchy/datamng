@@ -1,0 +1,261 @@
+import React, { useEffect, useRef, useState } from 'react'
+import { api, uploadFile, downloadFile } from '../api'
+import { useToast, useConfirm, Modal } from '../components/ui'
+
+function fmt(d) {
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${dd}`
+}
+
+function blankPsRow(date) {
+  return { id: 'new_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), isNew: true, sale_date: date,
+           customer_id: '', customer: '', product_id: '', product: '', region: '', qty: '', purchase_price: '', sales_price: '', note: '' }
+}
+
+function isBlankRow(p) {
+  return !p.customer_id && !p.product_id && (p.qty === '' || p.qty == null)
+    && (p.purchase_price === '' || p.purchase_price == null) && (p.sales_price === '' || p.sales_price == null)
+}
+
+function withBlankRows(list, date) {
+  const current = list.filter(p => p.sale_date === date)
+  if (current.length >= 10) return list
+  const blanks = Array(10 - current.length).fill(0).map(() => blankPsRow(date))
+  return [...blanks, ...list]
+}
+
+export default function ProductSales() {
+  const { toast, showError } = useToast()
+  const [confirm, confirmEl] = useConfirm()
+  const [productSales, setProductSales] = useState([])
+  const [products, setProducts] = useState([])
+  const [customers, setCustomers] = useState([])
+  const [regions, setRegions] = useState([])
+  const [psImportResult, setPsImportResult] = useState(null)
+  const [psExportModal, setPsExportModal] = useState(false)
+  const [psDate, setPsDate] = useState(() => fmt(new Date()))
+  const psFileRef = useRef(null)
+  const today = fmt(new Date())
+  const isToday = psDate === today
+  const isPast = psDate < today
+  const isFuture = psDate > today
+  const daysAhead = isFuture ? Math.round((new Date(psDate + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000) : 0
+
+  function loadProductSales() {
+    api.get('/api/product-sales?per_page=1000').then(r => {
+      const rows = (r.data?.rows || []).slice().sort((a, b) => (a.sale_date < b.sale_date ? 1 : a.sale_date > b.sale_date ? -1 : (b.id - a.id)))
+      setProductSales(isToday ? withBlankRows(rows, psDate) : rows)
+    }).catch(() => {})
+  }
+
+  useEffect(() => {
+    loadProductSales()
+    api.get('/api/products?per_page=1000').then(r => setProducts(r.data?.rows || [])).catch(() => {})
+    api.get('/api/customers?per_page=1000').then(r => setCustomers(r.data?.rows?.filter(c => c.ctype === 'downstream').sort((a, b) => (parseInt(a.code, 10) || 0) - (parseInt(b.code, 10) || 0)) || [])).catch(() => {})
+    api.get('/api/regions').then(r => {
+      const provs = r.data?.provinces || []
+      const cities = Object.values(r.data?.cities || {}).flat()
+      setRegions([...new Set([...provs, ...cities])].sort((a, b) => a.localeCompare(b, 'zh')))
+    }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    setProductSales(list => isToday ? withBlankRows(list, psDate) : list)
+  }, [psDate])
+
+  function updatePs(id, patch) {
+    setProductSales(list => list.map(r => r.id === id ? { ...r, ...patch } : r))
+  }
+  function addPsRow() {
+    setProductSales(list => [blankPsRow(psDate), ...list])
+  }
+  function onPickPsCustomer(row, text) {
+    const c = customers.find(x => `${x.code} ${x.name}` === text) || customers.find(x => x.code === text) || customers.find(x => x.name === text)
+    updatePs(row.id, { customer: text, customer_id: c ? c.id : '' })
+  }
+  function onPickPsProduct(row, text) {
+    const prod = products.find(x => x.name === text)
+    updatePs(row.id, { product: text, product_id: prod ? prod.id : '', sales_price: prod ? prod.default_sales_price : row.sales_price })
+  }
+  function psCalc(p) {
+    const qty = Number(p.qty) || 0
+    const sp = Number(p.sales_price) || 0
+    const pp = Number(p.purchase_price) || 0
+    return { sales_amount: qty * sp, profit: qty * (sp - pp) }
+  }
+  const filteredSales = productSales
+    .filter(p => !psDate || p.sale_date === psDate)
+    .sort((a, b) => (isBlankRow(a) ? 1 : 0) - (isBlankRow(b) ? 1 : 0))
+
+  async function saveAll() {
+    const rows = filteredSales.filter(p => !isBlankRow(p))
+    if (rows.length === 0) { showError('没有可保存的数据'); return }
+    const invalid = []
+    rows.forEach((p, i) => {
+      if (!p.customer_id) invalid.push(`第 ${i + 1} 行：请选择客户`)
+      if (!p.product_id) invalid.push(`第 ${i + 1} 行：请选择产品`)
+      if (!p.region) invalid.push(`第 ${i + 1} 行：请填写地区`)
+      else if (!regions.includes(p.region)) invalid.push(`第 ${i + 1} 行：地区不存在「${p.region}」`)
+      if (p.qty === '' || p.qty == null || !(Number(p.qty) > 0)) invalid.push(`第 ${i + 1} 行：请填写有效的数量`)
+    })
+    if (invalid.length) { showError(invalid.join('；')); return }
+    if (!(await confirm(`确认批量保存当前 ${rows.length} 条产品销售数据？保存后将生成账单数据。`))) return
+    try {
+      const body = {
+        date: psDate,
+        rows: rows.map(p => ({
+          id: p.isNew ? null : p.id,
+          customer_id: Number(p.customer_id),
+          product_id: Number(p.product_id),
+          region: p.region || '',
+          qty: Number(p.qty),
+          purchase_price: p.purchase_price === '' ? null : Number(p.purchase_price),
+          sales_price: p.sales_price === '' ? null : Number(p.sales_price),
+          note: p.note || '',
+        })),
+      }
+      await api.post('/api/product-sales/save-batch', body)
+      toast('已保存并生成账单'); loadProductSales()
+    } catch (e) { showError(e.message) }
+  }
+  async function delPs(p) {
+    if (p.isNew) { setProductSales(list => list.filter(r => r.id !== p.id)); return }
+    if (!(await confirm('确认删除该产品销售记录？'))) return
+    try { await api.del(`/api/product-sales/${p.id}`); toast('已删除'); loadProductSales() } catch (e) { showError(e.message) }
+  }
+
+  async function importProductSales(file) {
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const data = await uploadFile('/api/product-sales/import', fd)
+      loadProductSales()
+      const dates = data.data?.dates || []
+      if (dates.length === 1) setPsDate(dates[0])
+      const errors = data.data?.errors || []
+      if (errors.length > 0) {
+        setPsImportResult({ imported: data.data?.imported || 0, errors })
+      } else {
+        toast(data.msg || '导入完成')
+      }
+    } catch (e) { showError(e.message) }
+  }
+
+  function exportPsTemplate() {
+    downloadFile('/api/product-sales/template').catch(e => showError(e.message))
+  }
+
+  function exportPs(scope) {
+    const url = scope === 'all' ? '/api/product-sales/export' : `/api/product-sales/export?date=${psDate}`
+    downloadFile(url).catch(e => showError(e.message))
+    setPsExportModal(false)
+  }
+
+  return (
+    <div className="page-scroll">
+      {confirmEl}
+      <div className="panel">
+        <h3 style={{ justifyContent: 'space-between' }}>
+          <span>
+            产品销售
+            <input type="date" value={psDate} onChange={e => setPsDate(e.target.value)} style={{ marginLeft: 10, height: 30 }} />
+          </span>
+          <span>
+            <input type="file" accept=".xlsx,.xls" style={{ display: 'none' }} ref={psFileRef} onChange={e => { if (e.target.files[0]) importProductSales(e.target.files[0]).catch(err => showError(err.message)); e.target.value = '' }} />
+            <button className="btn small" onClick={() => setPsExportModal(true)}>导出 Excel</button>{' '}
+            <button className="btn small" onClick={exportPsTemplate}>导出模版</button>{' '}
+            <button className="btn small" onClick={() => psFileRef.current.click()}>导入 Excel</button>{' '}
+            {isToday && <button className="btn primary small" onClick={addPsRow}>+ 新增</button>}{' '}
+            {isToday && <button className="btn primary small" onClick={saveAll}>保存</button>}
+          </span>
+        </h3>
+        {isFuture ? (
+          <div className="empty">产品不支持预售，请在 {daysAhead} 天后创建销售订单</div>
+        ) : isPast && filteredSales.length === 0 ? (
+          <div className="empty">{psDate.replace(/-/g, '')}没有产品销售数据</div>
+        ) : (
+          <>
+            <datalist id="ps-customers">{customers.map(c => <option key={c.id} value={`${c.code} ${c.name}`} />)}</datalist>
+            <datalist id="ps-products">{products.map(p => <option key={p.id} value={p.name} />)}</datalist>
+            <datalist id="ps-regions">{regions.map(r => <option key={r} value={r} />)}</datalist>
+            <div style={{ height: 400, overflowY: 'auto', overflowX: 'auto' }}>
+              <table className="ps-table">
+                <colgroup>
+                  <col style={{ width: '13%' }} />
+                  <col style={{ width: '10%' }} />
+                  <col style={{ width: '13%' }} />
+                  <col style={{ width: '6%' }} />
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '6%' }} />
+                  <col style={{ width: '13%' }} />
+                  <col style={{ width: '8%' }} />
+                  <col style={{ width: '15%' }} />
+                </colgroup>
+                <thead><tr><th>客户</th><th>地区</th><th>产品</th><th className="num">数量</th><th className="center">进货单价<br/>（元）</th><th className="center">出货单价<br/>（元）</th><th className="center">销售金额<br/>（元）</th><th className="center">利润<br/>（元）</th><th>更新时间</th><th>更新人</th><th className="ops">操作</th></tr></thead>
+                <tbody>
+                  {filteredSales.map(p => {
+                    const calc = psCalc(p)
+                    return (
+                      <tr key={p.id}>
+                        <td>
+                          <input list="ps-customers" value={p.customer || ''} disabled={!isToday} placeholder="输入或选择客户" onChange={e => onPickPsCustomer(p, e.target.value)} />
+                        </td>
+                        <td>
+                          <input list="ps-regions" value={p.region || ''} disabled={!isToday} placeholder="省份/地市" onChange={e => updatePs(p.id, { region: e.target.value })} />
+                        </td>
+                        <td>
+                          <input list="ps-products" value={p.product || ''} disabled={!isToday} placeholder="输入或选择产品" onChange={e => onPickPsProduct(p, e.target.value)} />
+                        </td>
+                        <td className="num"><input type="number" value={p.qty} disabled={!isToday} onChange={e => updatePs(p.id, { qty: e.target.value })} /></td>
+                        <td className="num"><input type="number" step="0.0001" value={p.purchase_price} disabled={!isToday} onChange={e => updatePs(p.id, { purchase_price: e.target.value })} /></td>
+                        <td className="num"><input type="number" step="0.0001" value={p.sales_price} disabled={!isToday} onChange={e => updatePs(p.id, { sales_price: e.target.value })} /></td>
+                        <td className="num">¥{calc.sales_amount.toFixed(2)}</td>
+                        <td className="num" style={{ color: calc.profit < 0 ? 'var(--red)' : 'inherit' }}>¥{calc.profit.toFixed(2)}</td>
+                        <td className="audit-time">{p.updated_at || '—'}</td>
+                        <td className="audit-who">{p.updated_by || '—'}</td>
+                        <td className="ops">
+                          {isToday && <button className="btn small danger" onClick={() => delPs(p)}>删除</button>}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+
+      {psImportResult && (
+        <Modal title="导入结果" onClose={() => setPsImportResult(null)} wide>
+          <div style={{ marginBottom: 12, fontSize: 14 }}>
+            成功导入 <b style={{ color: 'var(--green)' }}>{psImportResult.imported}</b> 条，
+            失败 <b style={{ color: 'var(--red)' }}>{psImportResult.errors.length}</b> 条，请修改后重新导入：
+          </div>
+          <div style={{ maxHeight: 340, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, padding: '10px 14px', background: '#fafbfd' }}>
+            {psImportResult.errors.map((e, i) => (
+              <div key={i} style={{ padding: '3px 0', fontSize: 13, color: 'var(--red)', wordBreak: 'break-all' }}>
+                {i + 1}. {e}
+              </div>
+            ))}
+          </div>
+          <div className="foot">
+            <button className="btn primary" onClick={() => setPsImportResult(null)}>关闭</button>
+          </div>
+        </Modal>
+      )}
+
+      {psExportModal && (
+        <Modal title="导出产品销售" onClose={() => setPsExportModal(false)}>
+          <div style={{ marginBottom: 16, fontSize: 14 }}>请选择导出范围：</div>
+          <div className="foot">
+            <button className="btn" onClick={() => exportPs('current')}>导出当前日期数据</button>
+            <button className="btn primary" onClick={() => exportPs('all')}>导出全部数据</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
