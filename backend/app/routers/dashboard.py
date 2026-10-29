@@ -29,6 +29,19 @@ def _net_bill_balance(db):
     return round(float(up) - float(down), 2)
 
 
+def _unbilled_ps_profit(db, start, end=None):
+    """产品利润中未并入账单的部分（已并入账单的产品销售利润已含在 Bill.profit，避免重复计算）"""
+    q = db.query(Bill.customer_id, Bill.biz_date).filter(Bill.biz_date >= start)
+    if end:
+        q = q.filter(Bill.biz_date <= end)
+    billed = {(r[0], r[1]) for r in q.distinct().all()}
+    ps_q = db.query(ProductSale).filter(ProductSale.sale_date >= start)
+    if end:
+        ps_q = ps_q.filter(ProductSale.sale_date <= end)
+    return round(sum(float(ps.profit or 0) for ps in ps_q.all()
+                     if (ps.customer_id, ps.sale_date) not in billed), 2)
+
+
 def _bill_balance_at(db, d):
     """重建某日账单余额 = 甲方余额 - 代理余额合计(截至当日)
     代理余额合计(截至当日) = 当前下游余额 - 当日之后充值 + 当日之后销售
@@ -85,8 +98,7 @@ def summary(db: Session = Depends(get_db), _=Depends(get_current_user)):
     total_balance = round(bill_balance + wallet_balance * rate, 2)
     month_start = date.today().replace(day=1)
     bill_profit = db.query(func.coalesce(func.sum(Bill.profit), 0)).filter(Bill.biz_date >= month_start).scalar() or 0
-    ps_profit = db.query(func.coalesce(func.sum(ProductSale.profit), 0)).filter(ProductSale.sale_date >= month_start).scalar() or 0
-    month_profit = round(float(bill_profit) + float(ps_profit), 2)
+    month_profit = round(float(bill_profit) + _unbilled_ps_profit(db, month_start), 2)
     return {"code": 0, "data": {
         "order_count": order_count, "daily_total": daily_total,
         "delivery_total": int(delivery_total),
@@ -158,8 +170,7 @@ def trend(db: Session = Depends(get_db), _=Depends(get_current_user),
         in_qty = db.query(func.count(DailyData.id)).filter(DailyData.biz_date == dd).scalar() or 0
         out_qty = db.query(func.coalesce(func.sum(Bill.purchase_qty), 0)).filter(Bill.biz_date == dd).scalar() or 0
         bill_profit = db.query(func.coalesce(func.sum(Bill.profit), 0)).filter(Bill.biz_date == dd).scalar() or 0
-        ps_profit = db.query(func.coalesce(func.sum(ProductSale.profit), 0)).filter(ProductSale.sale_date == dd).scalar() or 0
-        profit = round(float(bill_profit) + float(ps_profit), 2)
+        profit = round(float(bill_profit) + _unbilled_ps_profit(db, dd, dd), 2)
         bill_balance = _daily_bill_balance(db, dd)
         rec = db.query(DailyBill).filter(DailyBill.biz_date == dd).first()
         wallet_balance = float(rec.wallet_balance) if rec and rec.wallet_balance is not None else 0
@@ -185,8 +196,7 @@ def daily_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
     while d >= start_d:
         rec = db.query(DailyBill).filter(DailyBill.biz_date == d).first()
         bill_profit = db.query(func.coalesce(func.sum(Bill.profit), 0)).filter(Bill.biz_date == d).scalar() or 0
-        ps_profit = db.query(func.coalesce(func.sum(ProductSale.profit), 0)).filter(ProductSale.sale_date == d).scalar() or 0
-        profit = round(float(bill_profit) + float(ps_profit), 2)
+        profit = round(float(bill_profit) + _unbilled_ps_profit(db, d, d), 2)
         bill_balance = _daily_bill_balance(db, d)
         wallet_balance = float(rec.wallet_balance) if rec and rec.wallet_balance is not None else None
         total_balance = round(bill_balance + (wallet_balance or 0) * rate, 2) if bill_balance is not None else None
