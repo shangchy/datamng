@@ -2083,6 +2083,43 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
     return bills
 
 
+def _regen_downstream_bills(db, date_obj, customer_ids, user_label=""):
+    """重新生成指定客户在指定日期的下游账单（分数+产品销售合并），并同步客户余额"""
+    bills = _build_daily_bills(db, date_obj, list(customer_ids) or None)
+    for cc, b in bills.items():
+        cid = b.get("customer_id")
+        if not cid:
+            continue
+        cust = db.query(Customer).filter(Customer.id == cid).first()
+        existing = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == date_obj).first()
+        balance = float(cust.balance) if cust and cust.balance is not None else 0
+        # 重复生成时：把上次已扣的销售金额加回来，恢复到扣减前的基础余额，避免重复扣减
+        if existing and existing.sales is not None:
+            balance = round(balance + float(existing.sales), 2)
+        bill_balance = round(balance - float(b["sales"]), 2)
+        b["balance"] = bill_balance
+        profit = round(float(b["sales"]) - float(b["cost"]), 2)
+        detail_json = json.dumps({"groups": b.get("groups", {}),
+                                  "recharge_info": b.get("recharge_info", [])},
+                                 ensure_ascii=False)
+        if existing:
+            existing.purchase_qty = b["qty"]
+            existing.sales = b["sales"]
+            existing.balance = bill_balance
+            existing.profit = profit
+            existing.detail_json = detail_json
+            if user_label:
+                existing.updated_by = user_label
+        else:
+            db.add(Bill(customer_id=cid, biz_date=date_obj, purchase_qty=b["qty"],
+                        sales=b["sales"], balance=bill_balance, profit=profit,
+                        detail_json=detail_json,
+                        created_by=user_label, updated_by=user_label))
+        if cust is not None:
+            cust.balance = bill_balance
+    db.commit()
+
+
 @router.post("/daily-data/distribute")
 def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), user=Depends(get_current_user)):
     """分数据：按小组名分组，用出数模版生成文件，按一级代理建文件夹"""

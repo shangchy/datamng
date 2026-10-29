@@ -134,14 +134,23 @@ export default function Dashboard() {
       if (p.qty === '' || p.qty == null || !(Number(p.qty) > 0)) invalid.push(`第 ${i + 1} 行：请填写有效的数量`)
     })
     if (invalid.length) { showError(invalid.join('；')); return }
-    if (!(await confirm(`确认批量保存当前 ${rows.length} 条产品销售数据？`))) return
+    if (!(await confirm(`确认批量保存当前 ${rows.length} 条产品销售数据？保存后将生成账单数据。`))) return
     try {
-      for (const p of rows) {
-        const body = { sale_date: psDate, customer_id: Number(p.customer_id), product_id: Number(p.product_id), region: p.region || '', qty: Number(p.qty), purchase_price: p.purchase_price === '' ? null : Number(p.purchase_price), sales_price: p.sales_price === '' ? null : Number(p.sales_price), note: p.note || '' }
-        if (p.isNew) await api.post('/api/product-sales', body)
-        else await api.put(`/api/product-sales/${p.id}`, body)
+      const body = {
+        date: psDate,
+        rows: rows.map(p => ({
+          id: p.isNew ? null : p.id,
+          customer_id: Number(p.customer_id),
+          product_id: Number(p.product_id),
+          region: p.region || '',
+          qty: Number(p.qty),
+          purchase_price: p.purchase_price === '' ? null : Number(p.purchase_price),
+          sales_price: p.sales_price === '' ? null : Number(p.sales_price),
+          note: p.note || '',
+        })),
       }
-      toast('已保存'); loadProductSales()
+      await api.post('/api/product-sales/save-batch', body)
+      toast('已保存并生成账单'); loadProductSales()
     } catch (e) { showError(e.message) }
   }
   async function delPs(p) {
@@ -155,14 +164,18 @@ export default function Dashboard() {
       const fd = new FormData()
       fd.append('file', file)
       const data = await uploadFile('/api/product-sales/import', fd)
-      loadProductSales()
+      const rows = data.data?.rows || []
       const dates = data.data?.dates || []
-      if (dates.length === 1) setPsDate(dates[0])
       const errors = data.data?.errors || []
+      if (rows.length > 0) {
+        const newRows = rows.map(r => ({ ...r, id: 'imp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), isNew: true }))
+        setProductSales(list => [...newRows, ...list])
+        if (dates.length === 1) setPsDate(dates[0])
+      }
       if (errors.length > 0) {
-        setPsImportResult({ imported: data.data?.imported || 0, errors })
+        setPsImportResult({ imported: rows.length, errors })
       } else {
-        toast(data.msg || '导入完成')
+        toast(`已读取 ${rows.length} 条，请确认后点「保存」入库`)
       }
     } catch (e) { showError(e.message) }
   }

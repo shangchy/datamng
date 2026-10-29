@@ -228,9 +228,71 @@ def delete_product_sale(sid: int, db: Session = Depends(get_db), _=Depends(get_c
     return {"code": 0, "data": None, "msg": "已删除"}
 
 
+@router.post("/product-sales/save-batch")
+def save_product_sales_batch(body: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """批量保存产品销售（按 日期+客户+产品+地区 去重 upsert），并重新生成受影响客户当日账单数据"""
+    date_str = (body.get("date") or "").strip()
+    rows = body.get("rows") or []
+    if not date_str or not rows:
+        raise HTTPException(status_code=422, detail="请选择日期并填写数据")
+    sale_date = _date(date_str)
+    if not sale_date:
+        raise HTTPException(status_code=422, detail="日期格式错误")
+
+    affected_customers = set()
+    for r in rows:
+        region = (r.get("region") or "").strip()
+        if not region:
+            raise HTTPException(status_code=422, detail="请选择地区")
+        if region not in ALL_REGIONS:
+            raise HTTPException(status_code=422, detail=f"地区不存在：{region}")
+        customer_id = r.get("customer_id")
+        product_id = r.get("product_id")
+        if not customer_id or not product_id:
+            raise HTTPException(status_code=422, detail="请选择客户和产品")
+        qty, pp, sp, sales_amount, profit = _calc(r.get("qty"),
+                                                  r.get("purchase_price"),
+                                                  r.get("sales_price"))
+        sid = r.get("id")
+        s = None
+        if sid:
+            s = db.query(ProductSale).filter(ProductSale.id == sid).first()
+        else:
+            s = db.query(ProductSale).filter(ProductSale.sale_date == sale_date,
+                                             ProductSale.customer_id == customer_id,
+                                             ProductSale.product_id == product_id,
+                                             ProductSale.region == region).first()
+        if s:
+            s.customer_id = customer_id
+            s.product_id = product_id
+            s.region = region
+            s.qty, s.purchase_price, s.sales_price = qty, pp, sp
+            s.sales_amount, s.profit = sales_amount, profit
+            if r.get("note") is not None:
+                s.note = (r.get("note") or "").strip()
+            s.updated_by = _ulabel(user)
+        else:
+            s = ProductSale(sale_date=sale_date, customer_id=customer_id,
+                            product_id=product_id, region=region, qty=qty,
+                            purchase_price=pp, sales_price=sp,
+                            sales_amount=sales_amount, profit=profit,
+                            note=(r.get("note") or "").strip())
+            s.created_by = _ulabel(user)
+            s.updated_by = _ulabel(user)
+            db.add(s)
+        affected_customers.add(customer_id)
+    db.commit()
+
+    # 生成账单数据：重新生成受影响客户当日的下游账单（分数+产品销售合并）并同步余额
+    if affected_customers:
+        from ..routers.data import _regen_downstream_bills
+        _regen_downstream_bills(db, sale_date, affected_customers, _ulabel(user))
+    return {"code": 0, "data": {"customers": sorted(affected_customers)}, "msg": f"已保存并生成账单数据"}
+
+
 @router.post("/product-sales/import")
 async def import_product_sales(file: UploadFile = File(...), db: Session = Depends(get_db), user=Depends(get_current_user)):
-    """Excel 导入产品销售订单，表头：日期 客户 产品 进货单价 出货单价 数量"""
+    """Excel 导入产品销售订单（不入库，仅解析返回）：表头 日期 客户 地区 产品 进货单价 出货单价 数量"""
     content = await file.read()
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
@@ -263,8 +325,7 @@ async def import_product_sales(file: UploadFile = File(...), db: Session = Depen
     products = db.query(Product).all()
     prod_by_name = {p.name: p for p in products if p.name}
 
-    imported = 0
-    updated = 0
+    parsed = []
     errors = []
     imported_dates = set()
     for values in rows:
@@ -324,35 +385,23 @@ async def import_product_sales(file: UploadFile = File(...), db: Session = Depen
             continue
         sp = sp_num
 
-        sales_amount = round(qty * sp, 2)
-        profit = round(qty * (sp - pp), 2)
-        existing = db.query(ProductSale).filter(ProductSale.sale_date == sale_date,
-                                                 ProductSale.customer_id == cust.id,
-                                                 ProductSale.product_id == prod.id,
-                                                 ProductSale.region == region_str).first()
-        if existing:
-            existing.qty = qty
-            existing.purchase_price = pp
-            existing.sales_price = sp
-            existing.sales_amount = sales_amount
-            existing.profit = profit
-            existing.region = region_str
-            existing.updated_by = _ulabel(user)
-            updated += 1
-        else:
-            s = ProductSale(sale_date=sale_date, customer_id=cust.id, product_id=prod.id,
-                            region=region_str, qty=qty, purchase_price=pp, sales_price=sp,
-                            sales_amount=sales_amount, profit=profit)
-            s.created_by = _ulabel(user)
-            s.updated_by = _ulabel(user)
-            db.add(s)
-            imported += 1
+        parsed.append({
+            "sale_date": sale_date.strftime("%Y-%m-%d"),
+            "customer_id": cust.id,
+            "customer": f"{cust.code} {cust.name}".strip(),
+            "product_id": prod.id,
+            "product": prod.name,
+            "region": region_str,
+            "qty": qty,
+            "purchase_price": pp,
+            "sales_price": sp,
+            "note": "",
+        })
         imported_dates.add(sale_date)
-    db.commit()
-    msg = f"导入 {imported} 条，更新 {updated} 条"
+    msg = f"已读取 {len(parsed)} 条"
     if errors:
         msg += f"，失败 {len(errors)} 条：{'；'.join(errors[:10])}"
-    return {"code": 0, "data": {"imported": imported, "updated": updated, "errors": errors,
+    return {"code": 0, "data": {"rows": parsed, "errors": errors,
                                 "dates": sorted([d.strftime("%Y-%m-%d") for d in imported_dates])}, "msg": msg}
 
 
