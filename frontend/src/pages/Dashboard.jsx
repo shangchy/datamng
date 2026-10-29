@@ -318,7 +318,7 @@ export default function Dashboard() {
         {isFuture ? (
           <div className="empty">产品不支持预售，请在 {daysAhead} 天后创建销售订单</div>
         ) : isPast && filteredSales.length === 0 ? (
-          <div className="empty">{psDate.replace(/-/g, '')}没有产品订单</div>
+          <div className="empty">{psDate.replace(/-/g, '')}没有产品销售数据</div>
         ) : (
           <>
             <datalist id="ps-customers">{customers.map(c => <option key={c.id} value={`${c.code} ${c.name}`} />)}</datalist>
