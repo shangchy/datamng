@@ -120,7 +120,8 @@ export default function ProductSales() {
   }
   async function delPs(p) {
     if (p.isNew) { setProductSales(list => list.filter(r => r.id !== p.id)); return }
-    if (!(await confirm('确认删除该产品销售记录？'))) return
+    const label = [p.customer, p.region, p.product].filter(Boolean).join(' / ')
+    if (!(await confirm(`确认删除该产品销售记录？${label ? '\n' + label : ''}\n此操作不可恢复。`, true))) return
     try { await api.del(`/api/product-sales/${p.id}`); toast('已删除'); loadProductSales() } catch (e) { showError(e.message) }
   }
 
