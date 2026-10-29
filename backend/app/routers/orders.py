@@ -1627,6 +1627,9 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
         operator_val = str(r[op_col]).strip() if op_col < len(r) and r[op_col] is not None else ""
         channel_val = str(r[ch_col]).strip() if ch_col < len(r) and r[ch_col] is not None else ""
         url_val = str(r[url_col]).strip() if url_col >= 0 and url_col < len(r) and r[url_col] is not None else ""
+        # 工单号已在订单中存在：跳过该回执数据（不匹配、不校验、不报错）
+        if new_task_id and db.query(Order).filter(Order.task_id == new_task_id).first():
+            continue
         if not task_name:
             continue
         op = db.query(Operator).filter(Operator.name == operator_val).first() if operator_val else None
@@ -1669,9 +1672,6 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
             continue
         if not new_task_id:
             errors.append({"task_id": new_task_id, "task_name": task_name, "reason": "工单号为空"})
-            continue
-        # 工单id 已在系统中存在：无需更新，静默跳过（不报错）
-        if db.query(Order).filter(Order.task_id == new_task_id).first():
             continue
         pending[0].task_id = new_task_id
         pending[0].updated_at = datetime.now()
