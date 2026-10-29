@@ -959,7 +959,7 @@ def wash_export(date: str = "", db: Session = Depends(get_db), _=Depends(get_cur
     else:
         qy = qy.filter(DailyData.id < 0)
     rows = qy.order_by(DailyData.id).all()
-    phones = [r.phone for r in rows if r.phone]
+    phones = list(dict.fromkeys(r.phone for r in rows if r.phone))
     return xlsx_response(["手机号", "姓名"], [[p, ""] for p in phones], f"洗名-{date}.xlsx", "洗名")
 
 
@@ -2085,11 +2085,14 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
 
 def _regen_downstream_bills(db, date_obj, customer_ids, user_label=""):
     """重新生成指定客户在指定日期的下游账单（分数+产品销售合并），并同步客户余额"""
-    bills = _build_daily_bills(db, date_obj, list(customer_ids) or None)
+    ids = list(customer_ids) or []
+    bills = _build_daily_bills(db, date_obj, ids)
+    handled = set()
     for cc, b in bills.items():
         cid = b.get("customer_id")
         if not cid:
             continue
+        handled.add(cid)
         cust = db.query(Customer).filter(Customer.id == cid).first()
         existing = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == date_obj).first()
         balance = float(cust.balance) if cust and cust.balance is not None else 0
@@ -2117,6 +2120,16 @@ def _regen_downstream_bills(db, date_obj, customer_ids, user_label=""):
                         created_by=user_label, updated_by=user_label))
         if cust is not None:
             cust.balance = bill_balance
+    # 当日已无任何数据（分数+产品销售）的客户：清除其账单并还原余额
+    for cid in ids:
+        if cid in handled:
+            continue
+        existing = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == date_obj).first()
+        if existing:
+            cust = db.query(Customer).filter(Customer.id == cid).first()
+            if cust is not None and existing.sales is not None:
+                cust.balance = round(float(cust.balance or 0) + float(existing.sales), 2)
+            db.delete(existing)
     db.commit()
 
 

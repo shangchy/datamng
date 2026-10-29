@@ -158,6 +158,14 @@ def _calc(qty, purchase_price, sales_price):
     return qty, float(pp), float(sp), float(sales_amount), float(profit)
 
 
+def _sync_customer_bill(db, customer_id, sale_date, user_label=""):
+    """产品数据变化后，重新生成该客户当日账单并同步余额"""
+    from ..routers.data import _regen_downstream_bills
+    if not customer_id or not sale_date:
+        return
+    _regen_downstream_bills(db, sale_date, [customer_id], user_label)
+
+
 @router.post("/product-sales")
 def create_product_sale(body: dict, db: Session = Depends(get_db), user=Depends(get_current_user)):
     sale_date = (body.get("sale_date") or "").strip()
@@ -184,6 +192,7 @@ def create_product_sale(body: dict, db: Session = Depends(get_db), user=Depends(
     s.updated_by = _ulabel(user)
     db.add(s)
     db.commit()
+    _sync_customer_bill(db, body.get("customer_id"), _date(sale_date), _ulabel(user))
     return {"code": 0, "data": {"id": s.id}, "msg": "产品销售已录入"}
 
 
@@ -192,6 +201,8 @@ def update_product_sale(sid: int, body: dict, db: Session = Depends(get_db), use
     s = db.query(ProductSale).filter(ProductSale.id == sid).first()
     if not s:
         raise HTTPException(status_code=404, detail="产品销售记录不存在")
+    old_date = s.sale_date
+    old_customer = s.customer_id
     if body.get("sale_date") is not None:
         s.sale_date = _date(body.get("sale_date"))
     if body.get("customer_id") is not None:
@@ -215,16 +226,23 @@ def update_product_sale(sid: int, body: dict, db: Session = Depends(get_db), use
         s.note = (body.get("note") or "").strip()
     s.updated_by = _ulabel(user)
     db.commit()
+    # 产品数据变化：更新新日期账单；若日期/客户变化还需更新原日期账单
+    _sync_customer_bill(db, s.customer_id, s.sale_date, _ulabel(user))
+    if (old_date != s.sale_date) or (old_customer != s.customer_id):
+        _sync_customer_bill(db, old_customer, old_date, _ulabel(user))
     return {"code": 0, "data": None, "msg": "产品销售已更新"}
 
 
 @router.delete("/product-sales/{sid}")
-def delete_product_sale(sid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def delete_product_sale(sid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
     s = db.query(ProductSale).filter(ProductSale.id == sid).first()
     if not s:
         raise HTTPException(status_code=404, detail="产品销售记录不存在")
+    customer_id = s.customer_id
+    sale_date = s.sale_date
     db.delete(s)
     db.commit()
+    _sync_customer_bill(db, customer_id, sale_date, _ulabel(user))
     return {"code": 0, "data": None, "msg": "已删除"}
 
 
@@ -292,7 +310,7 @@ def save_product_sales_batch(body: dict, db: Session = Depends(get_db), user=Dep
 
 @router.post("/product-sales/import")
 async def import_product_sales(file: UploadFile = File(...), db: Session = Depends(get_db), user=Depends(get_current_user)):
-    """Excel 导入产品销售订单（不入库，仅解析返回）：表头 日期 客户 地区 产品 进货单价 出货单价 数量"""
+    """Excel 导入产品销售订单（入库并生成账单数据）：表头 日期 客户 地区 产品 进货单价 出货单价 数量"""
     content = await file.read()
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
@@ -325,9 +343,10 @@ async def import_product_sales(file: UploadFile = File(...), db: Session = Depen
     products = db.query(Product).all()
     prod_by_name = {p.name: p for p in products if p.name}
 
-    parsed = []
     errors = []
-    imported_dates = set()
+    imported = 0
+    updated = 0
+    affected = set()  # (customer_id, sale_date)
     for values in rows:
         def getv(i):
             return values[i] if i is not None and i < len(values) else None
@@ -385,24 +404,46 @@ async def import_product_sales(file: UploadFile = File(...), db: Session = Depen
             continue
         sp = sp_num
 
-        parsed.append({
-            "sale_date": sale_date.strftime("%Y-%m-%d"),
-            "customer_id": cust.id,
-            "customer": f"{cust.code} {cust.name}".strip(),
-            "product_id": prod.id,
-            "product": prod.name,
-            "region": region_str,
-            "qty": qty,
-            "purchase_price": pp,
-            "sales_price": sp,
-            "note": "",
-        })
-        imported_dates.add(sale_date)
-    msg = f"已读取 {len(parsed)} 条"
+        sales_amount = round(qty * sp, 2)
+        profit = round(qty * (sp - pp), 2)
+        existing = db.query(ProductSale).filter(ProductSale.sale_date == sale_date,
+                                                 ProductSale.customer_id == cust.id,
+                                                 ProductSale.product_id == prod.id,
+                                                 ProductSale.region == region_str).first()
+        if existing:
+            existing.qty = qty
+            existing.purchase_price = pp
+            existing.sales_price = sp
+            existing.sales_amount = sales_amount
+            existing.profit = profit
+            existing.region = region_str
+            existing.updated_by = _ulabel(user)
+            updated += 1
+        else:
+            s = ProductSale(sale_date=sale_date, customer_id=cust.id, product_id=prod.id,
+                            region=region_str, qty=qty, purchase_price=pp, sales_price=sp,
+                            sales_amount=sales_amount, profit=profit)
+            s.created_by = _ulabel(user)
+            s.updated_by = _ulabel(user)
+            db.add(s)
+            imported += 1
+        affected.add((cust.id, sale_date))
+    db.commit()
+
+    # 生成账单数据：按日期分组重新生成受影响客户账单
+    from collections import defaultdict
+    by_date = defaultdict(set)
+    for cid, d in affected:
+        by_date[d].add(cid)
+    for d, cids in by_date.items():
+        from ..routers.data import _regen_downstream_bills
+        _regen_downstream_bills(db, d, cids, _ulabel(user))
+
+    msg = f"导入 {imported} 条，更新 {updated} 条"
     if errors:
         msg += f"，失败 {len(errors)} 条：{'；'.join(errors[:10])}"
-    return {"code": 0, "data": {"rows": parsed, "errors": errors,
-                                "dates": sorted([d.strftime("%Y-%m-%d") for d in imported_dates])}, "msg": msg}
+    return {"code": 0, "data": {"imported": imported, "updated": updated, "errors": errors,
+                                "dates": sorted([d.strftime("%Y-%m-%d") for d in by_date.keys()])}, "msg": msg}
 
 
 @router.get("/product-sales/export")

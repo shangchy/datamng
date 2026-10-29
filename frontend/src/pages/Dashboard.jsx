@@ -164,18 +164,14 @@ export default function Dashboard() {
       const fd = new FormData()
       fd.append('file', file)
       const data = await uploadFile('/api/product-sales/import', fd)
-      const rows = data.data?.rows || []
+      loadProductSales()
       const dates = data.data?.dates || []
+      if (dates.length === 1) setPsDate(dates[0])
       const errors = data.data?.errors || []
-      if (rows.length > 0) {
-        const newRows = rows.map(r => ({ ...r, id: 'imp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), isNew: true }))
-        setProductSales(list => [...newRows, ...list])
-        if (dates.length === 1) setPsDate(dates[0])
-      }
       if (errors.length > 0) {
-        setPsImportResult({ imported: rows.length, errors })
+        setPsImportResult({ imported: data.data?.imported || 0, errors })
       } else {
-        toast(`已读取 ${rows.length} 条，请确认后点「保存」入库`)
+        toast(data.msg || '导入完成')
       }
     } catch (e) { showError(e.message) }
   }
