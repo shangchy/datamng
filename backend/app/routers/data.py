@@ -1019,7 +1019,7 @@ def _check_daily_result(db, date_obj, upstream=None):
     """工单检查：统计所选甲方+日期的在执工单数据量（按数据量降序），未到出数日(T+2)的工单不检查"""
     up_id = None
     if upstream:
-        up = db.query(Customer).filter(Customer.ctype == "upstream",
+        up = db.query(Customer).filter(Customer.ctype == "upstream", Customer.status == 1,
                                         or_(Customer.name == upstream, Customer.code == upstream)).first()
         up_id = up.id if up else None
     orders_q = db.query(Order).filter(Order.status == "在执")
@@ -1028,7 +1028,7 @@ def _check_daily_result(db, date_obj, upstream=None):
     orders = orders_q.all()
     chans = {c.id: c.name for c in db.query(Channel).all()}
     ops = {o.id: o.name for o in db.query(Operator).all()}
-    ups = {c.id: c.name for c in db.query(Customer).filter(Customer.ctype == "upstream").all()}
+    ups = {c.id: c.name for c in db.query(Customer).filter(Customer.ctype == "upstream", Customer.status == 1).all()}
 
     def _day_counts(day):
         c = {}
@@ -3025,7 +3025,7 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
     else:
         raise HTTPException(status_code=422, detail="请选择日期或日期区间")
 
-    up_customers = {c.id: c for c in db.query(Customer).filter(Customer.ctype == "upstream").all()}
+    up_customers = {c.id: c for c in db.query(Customer).filter(Customer.ctype == "upstream", Customer.status == 1).all()}
     up_name_by_id = {c.id: c.name for c in up_customers.values()}
     ch_by_id = {ch.id: ch.name for ch in db.query(Channel).all()}
     op_by_id = {op.id: op.name for op in db.query(Operator).all()}
@@ -3033,7 +3033,8 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
     selected_ids = [int(x) for x in customer_ids.split(",") if x.strip().isdigit()] if customer_ids else []
     if selected_ids:
         up_customers = {c.id: c for c in db.query(Customer).filter(
-            Customer.ctype == "upstream", Customer.id.in_(selected_ids)).all()}
+            Customer.ctype == "upstream", Customer.status == 1,
+            Customer.id.in_(selected_ids)).all()}
         up_name_by_id = {c.id: c.name for c in up_customers.values()}
         down_customers = db.query(Customer).filter(
             Customer.ctype == "downstream", Customer.status == 1,
@@ -3287,10 +3288,11 @@ def _build_summary_wb_day(db, date_obj, customer_ids=None):
     from collections import defaultdict
 
     selected_ids = list(customer_ids) if customer_ids else []
-    up_customers = {c.id: c for c in db.query(Customer).filter(Customer.ctype == "upstream").all()}
+    up_customers = {c.id: c for c in db.query(Customer).filter(Customer.ctype == "upstream", Customer.status == 1).all()}
     if selected_ids:
         up_customers = {c.id: c for c in db.query(Customer).filter(
-            Customer.ctype == "upstream", Customer.id.in_(selected_ids)).all()}
+            Customer.ctype == "upstream", Customer.status == 1,
+            Customer.id.in_(selected_ids)).all()}
     up_name_by_id = {c.id: c.name for c in up_customers.values()}
     ch_by_id = {ch.id: ch.name for ch in db.query(Channel).all()}
     op_by_id = {op.id: op.name for op in db.query(Operator).all()}
@@ -3450,10 +3452,12 @@ def _build_upstream_bills(db, date_obj, customer_ids=None):
     from collections import defaultdict
 
     selected_ids = list(customer_ids) if customer_ids else []
-    up_customers = {c.id: c for c in db.query(Customer).filter(Customer.ctype == "upstream").all()}
+    up_customers = {c.id: c for c in db.query(Customer).filter(
+        Customer.ctype == "upstream", Customer.status == 1).all()}
     if selected_ids:
         up_customers = {c.id: c for c in db.query(Customer).filter(
-            Customer.ctype == "upstream", Customer.id.in_(selected_ids)).all()}
+            Customer.ctype == "upstream", Customer.status == 1,
+            Customer.id.in_(selected_ids)).all()}
     up_by_name = {c.name: c for c in up_customers.values() if c.name}
     ch_by_name = {c.name: c for c in db.query(Channel).all()}
     op_by_name = {o.name: o for o in db.query(Operator).all()}

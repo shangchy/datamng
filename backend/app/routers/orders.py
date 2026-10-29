@@ -1262,8 +1262,8 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
         raise HTTPException(status_code=422, detail="仅支持 csv / xlsx 文件")
 
     # ===== 导入前整体预检：非法值（上游/状态/一级代理/模版/渠道/运营商/省/市）全部提示并停止导入 =====
-    up_valid = {x for c in db.query(Customer).filter(Customer.ctype == "upstream").all() for x in (c.name, c.code) if x}
-    down_valid = {x for c in db.query(Customer).filter(Customer.ctype == "downstream").all() for x in (c.name, c.code) if x}
+    up_valid = {x for c in db.query(Customer).filter(Customer.ctype == "upstream", Customer.status == 1).all() for x in (c.name, c.code) if x}
+    down_valid = {x for c in db.query(Customer).filter(Customer.ctype == "downstream", Customer.status == 1).all() for x in (c.name, c.code) if x}
     down_code_map = {}
     for c in db.query(Customer).filter(Customer.ctype == "downstream").all():
         if c.code:
@@ -1370,7 +1370,7 @@ async def import_orders(file: UploadFile = File(...), db: Session = Depends(get_
             cust = db.query(Customer).filter(Customer.ctype == "downstream",
                                              or_(Customer.code == cval, Customer.name == cval)).first() if cval else None
             uval = str(r.get("upstream") or "").strip()
-            up = db.query(Customer).filter(Customer.ctype == "upstream",
+            up = db.query(Customer).filter(Customer.ctype == "upstream", Customer.status == 1,
                                            or_(Customer.code == uval, Customer.name == uval)).first() if uval else None
             ch = db.query(Channel).filter(Channel.name == r.get("channel")).first() if r.get("channel") else None
             op = db.query(Operator).filter(Operator.name == r.get("operator")).first() if r.get("operator") else None
@@ -1612,7 +1612,7 @@ async def import_receipt(file: UploadFile = File(...), party: str = Form("牛"),
 
     # 甲方（来自前端选择，兜底默认「牛」）
     party = (party or "牛").strip()
-    up = db.query(Customer).filter(Customer.ctype == "upstream",
+    up = db.query(Customer).filter(Customer.ctype == "upstream", Customer.status == 1,
                                    or_(Customer.name == party, Customer.code == party)).first()
     up_id = up.id if up else None
 

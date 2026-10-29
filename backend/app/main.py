@@ -691,29 +691,47 @@ def _backfill_daily_group(db):
         print(f"[backfill] 日活小组回填 {updated} 条")
 
 
-def _rename_upstream_codes(db):
-    """上游客户编号调整：990001->110001、990002->110002（幂等，新编号已存在则跳过）"""
-    from .models import Customer
+def _migrate_upstream_codes(db):
+    """上游客户编号调整：990001->110001、990002->110002
+    旧客户停用、外键数据迁移到新客户（幂等：旧客户已停用则跳过）"""
+    from .models import (Customer, Order, Bill, CustomerRecharge, CustomerPrice,
+                         ProductSale, Alert)
     mapping = {"990001": "110001", "990002": "110002"}
     changed = False
-    for old, new in mapping.items():
-        c = db.query(Customer).filter(Customer.code == old).first()
-        if not c:
+    for old_code, new_code in mapping.items():
+        old = db.query(Customer).filter(Customer.code == old_code).first()
+        if not old or old.status == 0:
             continue
-        if db.query(Customer).filter(Customer.code == new).first():
-            continue
-        c.code = new
+        new = db.query(Customer).filter(Customer.code == new_code).first()
+        if not new:
+            new = Customer(code=new_code, name=old.name, ctype=old.ctype, tg_id=old.tg_id,
+                           is_accounted=old.is_accounted, warn_amount=old.warn_amount,
+                           balance=old.balance, note=old.note, status=1,
+                           start_date=old.start_date, end_date=old.end_date, bill_tpl_id=old.bill_tpl_id)
+            db.add(new)
+            db.flush()
+        else:
+            new.balance = old.balance
+        # 迁移外键
+        for model, col in [(Order, "upstream_id"), (Order, "customer_id"),
+                           (Bill, "customer_id"), (CustomerRecharge, "customer_id"),
+                           (CustomerPrice, "customer_id"), (ProductSale, "customer_id"),
+                           (Alert, "customer_id")]:
+            db.query(model).filter(getattr(model, col) == old.id).update({col: new.id}, synchronize_session=False)
+        # 旧客户停用、余额归零
+        old.status = 0
+        old.balance = 0
         changed = True
     if changed:
         db.commit()
-        print("[migrate] 上游客户编号已替换：990001->110001、990002->110002")
+        print("[migrate] 上游客户编号已迁移：990001->110001、990002->110002（旧客户已停用）")
 
 
 @app.on_event("startup")
 def on_startup():
     db = SessionLocal()
     try:
-        _rename_upstream_codes(db)
+        _migrate_upstream_codes(db)
         seed(db)
         _backfill_cat_plat_codes(db)
         _backfill_daily_group(db)
