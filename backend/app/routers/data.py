@@ -31,6 +31,12 @@ _DISTRIBUTE_TASKS = {}
 UPSTREAM_BILL_TPL_CODE = "MB-032"
 
 
+def _balance_suffix(balance):
+    """账单文件名余额后缀：正/负"""
+    b = round(float(balance or 0), 2)
+    return f"（正{b:g}）" if b >= 0 else f"（负{abs(b):g}）"
+
+
 class DistributeCancelled(Exception):
     pass
 
@@ -3524,7 +3530,7 @@ def _build_upstream_bill_files(db, date_obj, customer_ids=None):
             bill = {"qty": item["qty"], "sales": item["sales"], "balance": item["balance"],
                     "recharge_info": item["recharge_info"], "groups": item["groups"]}
             bio = _fill_bill_file(item["up_name"], date_obj.strftime("%m%d"), bill, None)
-        files.append((f"【账单】{item['up_code']}-{date_obj.strftime('%Y%m%d')}.xlsx", bio.read()))
+        files.append((f"【账单】{item['up_code']}-{date_obj.strftime('%Y%m%d')}{_balance_suffix(item['balance'])}.xlsx", bio.read()))
     return files
 
 
@@ -3677,7 +3683,7 @@ def generate_bills_zip(db: Session = Depends(get_db), _=Depends(get_current_user
                 bio = _fill_mb031_bill(db, cust, date_obj, b, mb031_bytes)
             else:
                 bio = _fill_bill_file(b.get("cust_label") or cc, date_str, b, None)
-            base = f"【账单】{cc}-{date_obj.strftime('%Y%m%d')}"
+            base = f"【账单】{cc}-{date_obj.strftime('%Y%m%d')}{_balance_suffix(b.get('balance'))}"
             filename = f"{base}.xlsx"
             n = 1
             while filename in used_names:
@@ -3954,7 +3960,7 @@ def generate_bill_files(db: Session = Depends(get_db), _=Depends(get_current_use
                         "balance": float(cust.balance) if cust.balance is not None else 0.0,
                         "groups": {}, "recharge_info": []}
             bio = _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes)
-            base = f"【账单】{cust.code}-{date_obj.strftime('%Y%m%d')}"
+            base = f"【账单】{cust.code}-{date_obj.strftime('%Y%m%d')}{_balance_suffix(bill.get('balance'))}"
             filename = f"{base}.xlsx"
             n = 1
             while filename in used_names:
