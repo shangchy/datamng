@@ -267,16 +267,11 @@ def trend(db: Session = Depends(get_db), _=Depends(get_current_user),
     data = []
     for dd in dates:
         in_qty = db.query(func.count(DailyData.id)).filter(DailyData.biz_date == dd).scalar() or 0
+        # 出货量 = 下游账单进货量（= 下游手机号量 + 产品销售数量），仅下游、不含上游
         out_qty = db.query(func.coalesce(func.sum(Bill.purchase_qty), 0)).join(
             Customer, Bill.customer_id == Customer.id).filter(
             Bill.biz_date == dd, Customer.ctype == "downstream",
             Bill.deleted_at.is_(None), Customer.deleted_at.is_(None)).scalar() or 0
-        # 出货量 = 下游账单进货量 - 产品销售数量（产品不占用手机号条数）
-        ps_qty = db.query(func.coalesce(func.sum(ProductSale.qty), 0)).join(
-            Customer, ProductSale.customer_id == Customer.id).filter(
-            ProductSale.sale_date == dd, ProductSale.deleted_at.is_(None),
-            Customer.ctype == "downstream").scalar() or 0
-        out_qty = max(0, int(out_qty) - int(ps_qty))
         bill_profit = db.query(func.coalesce(func.sum(Bill.profit), 0)).join(
             Customer, Bill.customer_id == Customer.id).filter(
             Bill.biz_date == dd, Customer.ctype == "downstream",
