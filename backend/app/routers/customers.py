@@ -50,7 +50,7 @@ def list_customers(db: Session = Depends(get_db), _=Depends(get_current_user),
                    q: str = "", code: str = "", name: str = "", ctype: str = "",
                    tg_id: str = "", status: str = "", note: str = "",
                    page: int = 1, per_page: int = 10):
-    qy = db.query(Customer)
+    qy = db.query(Customer).filter(Customer.deleted_at.is_(None))
     if q:
         like = f"%{q}%"
         qy = qy.filter(or_(Customer.code.like(like), Customer.name.like(like),
@@ -133,13 +133,7 @@ def delete_customer(cid: int, db: Session = Depends(get_db), _=Depends(require_a
     c = db.query(Customer).filter(Customer.id == cid).first()
     if not c:
         raise HTTPException(status_code=404, detail="客户不存在")
-    if (db.query(Order).filter(or_(Order.customer_id == cid, Order.upstream_id == cid)).first()
-            or db.query(Bill).filter(Bill.customer_id == cid).first()
-            or db.query(CustomerRecharge).filter(CustomerRecharge.customer_id == cid).first()
-            or db.query(CustomerPrice).filter(CustomerPrice.customer_id == cid).first()
-            or db.query(ProductSale).filter(ProductSale.customer_id == cid).first()):
-        raise HTTPException(status_code=409, detail="存在关联数据，不可删除")
-    db.delete(c)
+    c.deleted_at = datetime.now()
     db.commit()
     return {"code": 0, "data": None, "msg": "已删除"}
 

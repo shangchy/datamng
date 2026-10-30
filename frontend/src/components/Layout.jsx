@@ -15,6 +15,7 @@ const TITLE_MAP = {
   '/config-center': '配置中心',
   '/products': '产品管理',
   '/workflow': '快速出货',
+  '/trash': '垃圾箱',
 }
 
 const MENUS = [
@@ -43,6 +44,7 @@ const MENUS = [
     { key: '/accounts', name: '账户管理', perm: 'account:view' },
     { key: '/config-center', name: '配置中心', perm: 'config:view' },
     { key: '/logs', name: '日志管理', perm: 'log:view' },
+    { key: '/trash', name: '垃圾箱', adminOnly: true },
   ] },
 ]
 
@@ -71,14 +73,15 @@ export default function Layout() {
   function renderMenus() {
     const perms = user.permissions || []
     const isAdmin = user.role_code === 'admin' || perms.includes('*')
-    const canSee = (perm) => isAdmin || !perm || perms.includes(perm)
+    const canSee = (item) => item.adminOnly ? isAdmin : (isAdmin || !item.perm || perms.includes(item.perm))
     return MENUS.filter(m => {
-      if (m.children) return m.children.some(c => canSee(c.perm))
-      return canSee(m.perm)
+      if (m.adminOnly) return isAdmin
+      if (m.children) return m.children.some(c => canSee(c))
+      return canSee(m)
     }).map(m => {
       if (m.children) {
         const open = openSub[m.key]
-        const visibleChildren = m.children.filter(c => canSee(c.perm))
+        const visibleChildren = m.children.filter(c => canSee(c))
         return (
           <React.Fragment key={m.key}>
             <a onClick={() => setOpenSub({ ...openSub, [m.key]: !open })}>

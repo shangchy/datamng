@@ -1977,7 +1977,7 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
     rows = db.query(DailyData).filter(DailyData.biz_date == date_obj).all()
     tids = {d.task_id for d in rows if d.task_id}
     orders_by_tid = {o.task_id: o for o in db.query(Order).filter(
-        Order.task_id.in_(tids)).all()} if tids else {}
+        Order.task_id.in_(tids), Order.deleted_at.is_(None)).all()} if tids else {}
     needed_cids = {o.customer_id for o in orders_by_tid.values()}
     needed_chids = {o.channel_id for o in orders_by_tid.values() if o.channel_id}
     needed_oids = {o.operator_id for o in orders_by_tid.values() if o.operator_id}
@@ -2042,7 +2042,9 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
     # 产品销售合并
     for ps, prod in db.query(ProductSale, Product).join(
             Product, ProductSale.product_id == Product.id).filter(
-            ProductSale.sale_date == date_obj).all():
+            ProductSale.sale_date == date_obj,
+            ProductSale.deleted_at.is_(None),
+            Product.deleted_at.is_(None)).all():
         cid = ps.customer_id
         if not cid:
             continue
@@ -2079,7 +2081,7 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
     for cc, b in bills.items():
         b["recharge_info"] = recharge_map.get(b.get("customer_id"), [])
     # 余额：优先用账单表里当日已保存的余额（与当月账单一致），避免用当前余额重复扣减销售金额
-    saved_balance = {x.customer_id: x.balance for x in db.query(Bill).filter(Bill.biz_date == date_obj).all()}
+    saved_balance = {x.customer_id: x.balance for x in db.query(Bill).filter(Bill.biz_date == date_obj, Bill.deleted_at.is_(None)).all()}
     for cc, b in bills.items():
         cid = b.get("customer_id")
         if cid is not None and cid in saved_balance and saved_balance[cid] is not None:
@@ -2100,7 +2102,7 @@ def _regen_downstream_bills(db, date_obj, customer_ids, user_label=""):
             continue
         handled.add(cid)
         cust = db.query(Customer).filter(Customer.id == cid).first()
-        existing = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == date_obj).first()
+        existing = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == date_obj, Bill.deleted_at.is_(None)).first()
         balance = float(cust.balance) if cust and cust.balance is not None else 0
         # 重复生成时：把上次已扣的销售金额加回来，恢复到扣减前的基础余额，避免重复扣减
         if existing and existing.sales is not None:
@@ -2130,12 +2132,12 @@ def _regen_downstream_bills(db, date_obj, customer_ids, user_label=""):
     for cid in ids:
         if cid in handled:
             continue
-        existing = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == date_obj).first()
+        existing = db.query(Bill).filter(Bill.customer_id == cid, Bill.biz_date == date_obj, Bill.deleted_at.is_(None)).first()
         if existing:
             cust = db.query(Customer).filter(Customer.id == cid).first()
             if cust is not None and existing.sales is not None:
                 cust.balance = round(float(cust.balance or 0) + float(existing.sales), 2)
-            db.delete(existing)
+            existing.deleted_at = datetime.now()
     db.commit()
 
 
@@ -2327,7 +2329,9 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), user=Dep
         # 6.4 产品销售合并（同客户同日并入账单：进货量/销售金额/利润合并，明细行任务名=产品名）
         for ps, prod in db.query(ProductSale, Product).join(
                 Product, ProductSale.product_id == Product.id).filter(
-                ProductSale.sale_date == date_obj).all():
+                ProductSale.sale_date == date_obj,
+                ProductSale.deleted_at.is_(None),
+                Product.deleted_at.is_(None)).all():
             cid = ps.customer_id
             if not cid:
                 continue
@@ -2718,7 +2722,7 @@ def list_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
                q: str = "", customer: str = "", customer_id: int = 0,
                start_date: str = "", end_date: str = "",
                page: int = 1, per_page: int = 10):
-    qy = db.query(Bill).outerjoin(Customer, Bill.customer_id == Customer.id)
+    qy = db.query(Bill).outerjoin(Customer, Bill.customer_id == Customer.id).filter(Bill.deleted_at.is_(None))
     if q:
         qy = qy.filter(or_(Customer.name.like(f"%{q}%"), Customer.code.like(f"%{q}%")))
     if customer:
@@ -2759,19 +2763,21 @@ def _restore_bill_balance(db, bill):
 @router.post("/bills/batch-delete")
 def batch_delete_bills(body: BatchStopBody, db: Session = Depends(get_db), _=Depends(require_admin)):
     rows = db.query(Bill).filter(Bill.id.in_(body.ids)).all()
+    now = datetime.now()
     for r in rows:
         _restore_bill_balance(db, r)
-        db.delete(r)
+        r.deleted_at = now
     db.commit()
     return {"code": 0, "data": {"deleted": len(rows)}, "msg": f"已删除 {len(rows)} 条账单"}
 
 
 @router.delete("/bills")
 def clear_bills(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    rows = db.query(Bill).all()
+    rows = db.query(Bill).filter(Bill.deleted_at.is_(None)).all()
+    now = datetime.now()
     for r in rows:
         _restore_bill_balance(db, r)
-    db.query(Bill).delete()
+        r.deleted_at = now
     db.commit()
     return {"code": 0, "data": {"cleared": len(rows)}, "msg": f"已清空 {len(rows)} 条账单"}
 
@@ -2844,7 +2850,7 @@ async def import_bills(file: UploadFile = File(...), db: Session = Depends(get_d
             continue
         if balance is not None:
             cust.balance = balance
-        bill = db.query(Bill).filter(Bill.customer_id == cust.id, Bill.biz_date == biz_date).first()
+        bill = db.query(Bill).filter(Bill.customer_id == cust.id, Bill.biz_date == biz_date, Bill.deleted_at.is_(None)).first()
         if bill:
             if sales is not None:
                 bill.sales = sales
@@ -3079,7 +3085,7 @@ def export_bills_summary(db: Session = Depends(get_db), _=Depends(get_current_us
         return agg
 
     def down_bills_for(d):
-        return {b.customer_id: b for b in db.query(Bill).filter(Bill.biz_date == d).all()}
+        return {b.customer_id: b for b in db.query(Bill).filter(Bill.biz_date == d, Bill.deleted_at.is_(None)).all()}
 
     wb = openpyxl.Workbook()
     title_font = Font(bold=True, size=14)
@@ -3334,7 +3340,7 @@ def _build_summary_wb_day(db, date_obj, customer_ids=None):
         if selected_ids and up_id not in selected_ids:
             continue
         agg[up_id][(ch_id, op_id)] += 1
-    down_bills = {b.customer_id: b for b in db.query(Bill).filter(Bill.biz_date == date_obj).all()}
+    down_bills = {b.customer_id: b for b in db.query(Bill).filter(Bill.biz_date == date_obj, Bill.deleted_at.is_(None)).all()}
 
     wb = openpyxl.Workbook()
     title_font = Font(bold=True, size=14)
@@ -3453,10 +3459,11 @@ def _build_upstream_bills(db, date_obj, customer_ids=None):
 
     selected_ids = list(customer_ids) if customer_ids else []
     up_customers = {c.id: c for c in db.query(Customer).filter(
-        Customer.ctype == "upstream", Customer.status == 1).all()}
+        Customer.ctype == "upstream", Customer.status == 1, Customer.deleted_at.is_(None)).all()}
     if selected_ids:
         up_customers = {c.id: c for c in db.query(Customer).filter(
             Customer.ctype == "upstream", Customer.status == 1,
+            Customer.deleted_at.is_(None),
             Customer.id.in_(selected_ids)).all()}
     up_by_name = {c.name: c for c in up_customers.values() if c.name}
     ch_by_name = {c.name: c for c in db.query(Channel).all()}
@@ -3591,7 +3598,7 @@ def _fill_mb032_bill(db, up, date_obj, tpl_bytes):
     ws["B2"] = up.name or ""
 
     # 上月剩余余额：上月最后一张账单余额，否则取当前余额
-    prev = db.query(Bill).filter(Bill.customer_id == up.id, Bill.biz_date < month_start).order_by(Bill.biz_date.desc()).first()
+    prev = db.query(Bill).filter(Bill.customer_id == up.id, Bill.biz_date < month_start, Bill.deleted_at.is_(None)).order_by(Bill.biz_date.desc()).first()
     prev_balance = float(prev.balance) if prev and prev.balance is not None else (float(up.balance) if up.balance is not None else 0)
     ws["D2"] = round(prev_balance, 2)
 
@@ -3737,7 +3744,7 @@ def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
     sales = round(float(bill.get("sales") or 0), 2)
     balance = round(float(bill.get("balance")), 2) if bill.get("balance") is not None else 0.0
     recharge_info = bill.get("recharge_info") or []
-    prev = db.query(Bill).filter(Bill.customer_id == cust.id, Bill.biz_date < date_obj).order_by(Bill.biz_date.desc()).first()
+    prev = db.query(Bill).filter(Bill.customer_id == cust.id, Bill.biz_date < date_obj, Bill.deleted_at.is_(None)).order_by(Bill.biz_date.desc()).first()
     yesterday_balance = round(float(prev.balance), 2) if prev and prev.balance is not None else 0.0
 
     summary = {
@@ -3860,7 +3867,7 @@ def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
     else:
         month_end = date(date_obj.year, date_obj.month + 1, 1) - timedelta(days=1)
     bills_month = {b.biz_date: b for b in db.query(Bill).filter(
-        Bill.customer_id == cust.id, Bill.biz_date >= month_start, Bill.biz_date <= month_end).all()}
+        Bill.customer_id == cust.id, Bill.biz_date >= month_start, Bill.biz_date <= month_end, Bill.deleted_at.is_(None)).all()}
     recharge_by_date = defaultdict(list)
     for rec in db.query(CustomerRecharge).filter(
             CustomerRecharge.customer_id == cust.id,
@@ -3927,8 +3934,8 @@ def generate_bill_files(db: Session = Depends(get_db), _=Depends(get_current_use
         raise HTTPException(status_code=404, detail="MB-031 账单模版不存在或未上传文件")
     tpl_bytes = bytes(tpl.file_data)
     rt_bills = _build_daily_bills(db, date_obj, None)
-    snap_bills = {b.customer_id: b for b in db.query(Bill).filter(Bill.biz_date == date_obj).all()}
-    down_customers = db.query(Customer).filter(Customer.ctype == "downstream").order_by(Customer.code).all()
+    snap_bills = {b.customer_id: b for b in db.query(Bill).filter(Bill.biz_date == date_obj, Bill.deleted_at.is_(None)).all()}
+    down_customers = db.query(Customer).filter(Customer.ctype == "downstream", Customer.deleted_at.is_(None)).order_by(Customer.code).all()
 
     def _parse_detail(snap, cust):
         groups, recharge_info = {}, []
@@ -3983,7 +3990,7 @@ def generate_bill_files(db: Session = Depends(get_db), _=Depends(get_current_use
             zf.writestr(fn, data)
     buf.seek(0)
     return Response(content=buf.getvalue(), media_type="application/zip",
-                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('代理账单-' + date_obj.strftime('%Y%m%d') + '.zip')}"})
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('账单-' + date_obj.strftime('%Y%m%d') + '.zip')}"})
 
 
 @router.get("/bills/{bid}")
@@ -4025,7 +4032,8 @@ def bill_detail(bid: int, db: Session = Depends(get_db), _=Depends(get_current_u
     # 产品销售明细
     for ps, prod in db.query(ProductSale, Product).join(
             Product, ProductSale.product_id == Product.id).filter(
-            ProductSale.sale_date == b.biz_date, ProductSale.customer_id == b.customer_id).all():
+            ProductSale.sale_date == b.biz_date, ProductSale.customer_id == b.customer_id,
+            ProductSale.deleted_at.is_(None)).all():
         groups[f"product_{ps.id}"] = {
             "task_name": prod.name, "order_no": "/", "channel": "", "operator": "",
             "qty": int(ps.qty or 0), "amount": float(ps.sales_amount or 0),

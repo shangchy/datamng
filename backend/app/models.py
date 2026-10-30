@@ -18,6 +18,10 @@ class AuditMixin(TimestampMixin):
     updated_by = Column(String(50))               # 更新人
 
 
+class SoftDeleteMixin:
+    deleted_at = Column(DateTime)                  # 软删除时间（进入垃圾箱）
+
+
 # ============ 系统：账户与权限 ============
 
 class SysRole(Base):
@@ -62,7 +66,7 @@ class SysUser(Base):
 
 # ============ 主数据：客户 ============
 
-class Customer(Base, TimestampMixin):
+class Customer(Base, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "customer"
     id = Column(Integer, primary_key=True)
     code = Column(String(50), nullable=False, unique=True)
@@ -107,7 +111,7 @@ class CustomerPrice(Base, TimestampMixin):
 
 # ============ 主数据：品类/渠道/运营商 ============
 
-class Category(Base, TimestampMixin):
+class Category(Base, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "category"
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
@@ -118,14 +122,14 @@ class Category(Base, TimestampMixin):
     status = Column(SmallInteger, default=1)
 
 
-class Channel(Base, TimestampMixin):
+class Channel(Base, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "channel"
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False, unique=True)
     status = Column(SmallInteger, default=1)
 
 
-class Operator(Base, TimestampMixin):
+class Operator(Base, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "operator"
     id = Column(Integer, primary_key=True)
     name = Column(String(50), nullable=False, unique=True)
@@ -150,7 +154,7 @@ class Url(Base, TimestampMixin):
 
 # ============ 主数据：平台（挂在二级品类下） ============
 
-class Platform(Base, TimestampMixin):
+class Platform(Base, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "platform"
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
@@ -162,7 +166,7 @@ class Platform(Base, TimestampMixin):
 
 # ============ 业务：订单 ============
 
-class Order(Base, TimestampMixin):
+class Order(Base, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "orders"
     id = Column(Integer, primary_key=True)
     order_no = Column(String(50), nullable=False, unique=True)
@@ -361,7 +365,7 @@ class Fund(Base):
 
 # ============ 业务：账单 ============
 
-class Bill(Base):
+class Bill(Base, SoftDeleteMixin):
     __tablename__ = "bill"
     id = Column(Integer, primary_key=True)
     customer_id = Column(Integer, ForeignKey("customer.id"), nullable=True)
@@ -470,7 +474,7 @@ class AiToolCall(Base):
 
 # ============ 业务：产品信息 + 产品销售 ============
 
-class Product(Base, AuditMixin):
+class Product(Base, AuditMixin, SoftDeleteMixin):
     __tablename__ = "product"
     id = Column(Integer, primary_key=True)
     name = Column(String(200), nullable=False)            # 产品名
@@ -482,7 +486,7 @@ class Product(Base, AuditMixin):
     status = Column(SmallInteger, default=1)
 
 
-class ProductSale(Base, AuditMixin):
+class ProductSale(Base, AuditMixin, SoftDeleteMixin):
     __tablename__ = "product_sale"
     id = Column(Integer, primary_key=True)
     sale_date = Column(Date, nullable=False)               # 日期
@@ -511,5 +515,5 @@ class AgentOrderSnapshot(Base, TimestampMixin):
     __tablename__ = "agent_order_snapshot"
     id = Column(Integer, primary_key=True)
     biz_date = Column(Date, nullable=False)                 # 日期
-    customer_id = Column(Integer, ForeignKey("customer.id"))  # 代理（下游客户）
+    customer_id = Column(Integer, ForeignKey("customer.id"))  # 客户（上游/下游）
     active_orders = Column(Integer, default=0)              # 在执订单数快照

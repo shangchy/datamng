@@ -15,7 +15,7 @@ from sqlalchemy import text
 
 from .config import CORS_ORIGINS
 from .database import Base, engine, SessionLocal
-from .routers import auth, users, customers, orders, master, data, dashboard, ai, order_templates, templates, logs, products
+from .routers import auth, users, customers, orders, master, data, dashboard, ai, order_templates, templates, logs, products, trash
 from .seed import seed
 
 
@@ -73,6 +73,8 @@ def _migrate_schema():
         ps_cols = {c["name"] for c in insp.get_columns("product_sale")} if "product_sale" in insp.get_table_names() else set()
         cat_cols = {c["name"] for c in insp.get_columns("category")} if "category" in insp.get_table_names() else set()
         plat_cols = {c["name"] for c in insp.get_columns("platform")} if "platform" in insp.get_table_names() else set()
+        ch_cols = {c["name"] for c in insp.get_columns("channel")} if "channel" in insp.get_table_names() else set()
+        op_cols = {c["name"] for c in insp.get_columns("operator")} if "operator" in insp.get_table_names() else set()
         with engine.begin() as conn:
             for col, ddl in [
                 ("task_id", "VARCHAR(100)"),
@@ -194,6 +196,12 @@ def _migrate_schema():
                 conn.execute(text("ALTER TABLE platform ADD COLUMN code VARCHAR(10)"))
             if "region" not in ps_cols:
                 conn.execute(text("ALTER TABLE product_sale ADD COLUMN region VARCHAR(50)"))
+            # 软删除（垃圾箱）时间戳
+            for tbl, cols in [("orders", order_cols), ("bill", bill_cols), ("customer", cust_cols),
+                              ("product", prod_cols), ("product_sale", ps_cols), ("category", cat_cols),
+                              ("platform", plat_cols), ("channel", ch_cols), ("operator", op_cols)]:
+                if "deleted_at" not in cols:
+                    conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN deleted_at TIMESTAMP"))
             # bill.customer_id 改为可空（给「其他人」单独抽取）
             bill_customer_col = next((c for c in insp.get_columns("bill") if c["name"] == "customer_id"), None) if "bill" in insp.get_table_names() else None
             if bill_customer_col is not None and not bill_customer_col.get("nullable"):
@@ -529,6 +537,7 @@ app.include_router(order_templates.router)
 app.include_router(templates.router)
 app.include_router(logs.router)
 app.include_router(products.router)
+app.include_router(trash.router)
 
 
 def _scheduler_loop():
@@ -630,6 +639,40 @@ def _backup_loop():
             print(f"[backup] 数据库备份完成：{dest}")
         except Exception as e:  # noqa
             print(f"[backup] 备份异常: {e}")
+        time.sleep(60)  # 防止重复触发
+
+
+def _trash_cleanup_loop():
+    """每天按配置时间清理垃圾箱中超过保留天数的数据"""
+    from .models import SysConfig
+    from .routers.trash import cleanup_expired_trash
+    while True:
+        try:
+            db = SessionLocal()
+            cfg = db.query(SysConfig).filter(SysConfig.key == "trash_cleanup_time").first()
+            trigger = cfg.value if cfg and cfg.value else "03:00"
+            keep_cfg = db.query(SysConfig).filter(SysConfig.key == "trash_retention_days").first()
+            keep_days = int(keep_cfg.value) if keep_cfg and (keep_cfg.value or "").strip().isdigit() else 30
+            db.close()
+        except Exception:  # noqa
+            trigger = "03:00"
+            keep_days = 30
+        try:
+            hh, mm = [int(x) for x in trigger.split(":")]
+        except Exception:  # noqa
+            hh, mm = 3, 0
+        now = datetime.now()
+        next_run = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if next_run <= now:
+            next_run += timedelta(days=1)
+        time.sleep((next_run - now).total_seconds())
+        try:
+            db = SessionLocal()
+            purged, skipped = cleanup_expired_trash(db, keep_days)
+            db.close()
+            print(f"[trash] 垃圾箱清理完成：清除 {purged} 条，跳过 {skipped} 条")
+        except Exception as e:  # noqa
+            print(f"[trash] 清理异常: {e}")
         time.sleep(60)  # 防止重复触发
 
 
@@ -762,6 +805,7 @@ def on_startup():
     threading.Thread(target=_backup_loop, daemon=True).start()
     threading.Thread(target=_daily_bill_loop, daemon=True).start()
     threading.Thread(target=_agent_order_snapshot_loop, daemon=True).start()
+    threading.Thread(target=_trash_cleanup_loop, daemon=True).start()
 
 
 @app.get("/healthz")

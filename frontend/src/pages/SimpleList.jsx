@@ -80,8 +80,8 @@ const KINDS = {
     cols: [
       { k: 'customer', l: '客户' }, { k: 'biz_date', l: '业务日期' }, { k: 'purchase_qty', l: '进货量', num: true },
       { k: 'sales', l: '销售金额（元）', num: true }, { k: 'balance', l: '余额（元）', num: true }, { k: 'profit', l: '利润（元）', num: true },
-      { k: 'created_by', l: '创建人' }, { k: 'updated_at', l: '更新时间' }, { k: 'updated_by', l: '更新人' },
-    ], batchDel: true, batchDelAdmin: true, detail: true, imp: true, impEndpoint: '/api/bills/import', billExp: true,
+      { k: 'created_by', l: '创建人' }, { k: 'created_at', l: '创建时间' }, { k: 'updated_at', l: '更新时间' }, { k: 'updated_by', l: '更新人' },
+    ], defaultHidden: ['updated_at', 'updated_by'], batchDel: true, batchDelAdmin: true, detail: true, imp: true, impEndpoint: '/api/bills/import', billExp: true,
   },
   alerts: {
     title: '预警中心', endpoint: '/api/alerts',

@@ -47,7 +47,12 @@ export default function Dashboard() {
     loadCharts()
     loadDailyBills()
     loadAgentTrend()
-    api.get('/api/customers?per_page=1000').then(r => setAgents(r.data?.rows?.filter(c => c.ctype === 'downstream').sort((a, b) => (parseInt(a.code, 10) || 0) - (parseInt(b.code, 10) || 0)) || [])).catch(() => {})
+    api.get('/api/customers?per_page=1000').then(r => {
+      const rows = r.data?.rows || []
+      const downs = rows.filter(c => c.ctype === 'downstream').sort((a, b) => (parseInt(a.code, 10) || 0) - (parseInt(b.code, 10) || 0))
+      const ups = rows.filter(c => c.ctype === 'upstream').sort((a, b) => (parseInt(a.code, 10) || 0) - (parseInt(b.code, 10) || 0))
+      setAgents([...downs, ...ups])
+    }).catch(() => {})
   }, [])
 
   async function saveWallet(row, val) {
@@ -96,12 +101,14 @@ export default function Dashboard() {
 
   const AGENT_METRICS = [
     { key: 'active', label: '在执订单', unit: '单' },
-    { key: 'out_qty', label: '出货量', unit: '条' },
-    { key: 'sales', label: '销售金额', unit: '元' },
+    { key: 'out_qty', label: '供货量', unit: '条' },
+    { key: 'sales', label: '销售额', unit: '元' },
     { key: 'profit', label: '利润', unit: '元' },
     { key: 'balance', label: '余额', unit: '元' },
   ]
-  const curMetric = AGENT_METRICS.find(m => m.key === agentMetric) || AGENT_METRICS[0]
+  const hasDownstream = agentTrend.series.some(s => s.ctype === 'downstream')
+  const visibleMetrics = AGENT_METRICS.filter(m => m.key !== 'profit' || hasDownstream)
+  const curMetric = visibleMetrics.find(m => m.key === agentMetric) || visibleMetrics[0]
   const agentTrendOption = {
     tooltip: { trigger: 'axis' },
     legend: { type: 'scroll', top: 0 },
@@ -111,9 +118,9 @@ export default function Dashboard() {
     series: agentTrend.series.map(s => ({
       name: `${s.code} ${s.name}`,
       type: 'line',
-      smooth: agentMetric !== 'active',
-      step: agentMetric === 'active' ? 'end' : undefined,
-      data: s[agentMetric],
+      smooth: curMetric.key !== 'active',
+      step: curMetric.key === 'active' ? 'end' : undefined,
+      data: s[curMetric.key] || [],
     })),
   }
 
@@ -206,15 +213,15 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="row-trend">
+      <div className="row-full">
         <div className="panel">
           <h3 style={{ justifyContent: 'space-between' }}>
             <span>
-              代理统计
-              <button className="btn small" style={{ marginLeft: 10 }} onClick={() => setAgentSelectModal(true)}>选择代理（{agentIds.length || agents.length}）</button>
+              客户统计
+              <button className="btn small" style={{ marginLeft: 10 }} onClick={() => setAgentSelectModal(true)}>选择客户（{agentIds.length || agents.length}）</button>
             </span>
             <span>
-              {AGENT_METRICS.map(m => (
+              {visibleMetrics.map(m => (
                 <button key={m.key} className={`btn small ${agentMetric === m.key ? 'primary' : ''}`} onClick={() => setAgentMetric(m.key)}>{m.label}</button>
               ))}{' '}
               <button className={`btn small ${agentRange === '7' ? 'primary' : ''}`} onClick={pickAgent7}>7天</button>{' '}
@@ -261,9 +268,9 @@ export default function Dashboard() {
         const allChecked = agents.length > 0 && agents.every(c => agentIds.includes(c.id))
         function toggleAll() { setAgentIds(allChecked ? [] : agents.map(c => c.id)) }
         return (
-          <Modal title="代理统计 · 选择代理" onClose={() => setAgentSelectModal(false)} wide>
-            <div className="note">选择代理，图表按代理展示所选代理的趋势线；不选则展示全部下游代理。</div>
-            <div className="field" style={{ marginBottom: 14 }}><label>代理（点击名称选中 / 取消）</label>
+          <Modal title="客户统计 · 选择客户" onClose={() => setAgentSelectModal(false)} wide>
+            <div className="note">选择客户（含上游/下游），图表按客户展示所选客户的趋势线；不选则展示全部客户。</div>
+            <div className="field" style={{ marginBottom: 14 }}><label>客户（点击名称选中 / 取消）</label>
               <div className="agent-list">
                 <button type="button" className="agent-chip agent-chip-all" onClick={toggleAll}>{allChecked ? '全不选' : '全选'}</button>
                 {agents.map(c => {
@@ -274,7 +281,7 @@ export default function Dashboard() {
                     }}>{c.code} {c.name}</button>
                   )
                 })}
-                {agents.length === 0 && <div className="empty">暂无下游客户</div>}
+                {agents.length === 0 && <div className="empty">暂无客户</div>}
               </div>
             </div>
             <div className="foot">

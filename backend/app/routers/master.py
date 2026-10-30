@@ -1,6 +1,7 @@
 """主数据路由：品类/渠道/运营商/配件URL/平台"""
 import io
 import re
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import or_
@@ -73,7 +74,7 @@ def list_regions(_=Depends(get_current_user)):
 # ============ 品类 ============
 @router.get("/categories")
 def list_categories(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    rows = db.query(Category).order_by(Category.level, Category.sort_no).all()
+    rows = db.query(Category).filter(Category.deleted_at.is_(None)).order_by(Category.level, Category.sort_no).all()
     parents = [r for r in rows if r.level == 1]
     data = []
     for p in parents:
@@ -117,11 +118,14 @@ def update_category(cid: int, body: CategoryBody, db: Session = Depends(get_db),
 
 @router.delete("/categories/{cid}")
 def delete_category(cid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    if db.query(Category).filter(Category.parent_id == cid).first():
+    if db.query(Category).filter(Category.parent_id == cid, Category.deleted_at.is_(None)).first():
         raise HTTPException(status_code=409, detail="存在子品类，不可删除")
     if db.query(Url).filter((Url.cat1_id == cid) | (Url.cat2_id == cid)).first():
         raise HTTPException(status_code=409, detail="被 URL 引用，不可删除")
-    db.query(Category).filter(Category.id == cid).delete()
+    c = db.query(Category).filter(Category.id == cid).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="品类不存在")
+    c.deleted_at = datetime.now()
     db.commit()
     return {"code": 0, "data": None, "msg": "ok"}
 
@@ -130,7 +134,7 @@ def delete_category(cid: int, db: Session = Depends(get_db), _=Depends(get_curre
 @router.get("/channels")
 def list_channels(db: Session = Depends(get_db), _=Depends(get_current_user), name: str = "",
                   page: int = 1, per_page: int = 10):
-    q = db.query(Channel)
+    q = db.query(Channel).filter(Channel.deleted_at.is_(None))
     if name:
         q = q.filter(Channel.name.like(f"%{name}%"))
     total, rows = paginate(q.order_by(Channel.id), page, per_page)
@@ -161,7 +165,10 @@ def update_channel(cid: int, body: SimpleBody, db: Session = Depends(get_db), _=
 def delete_channel(cid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     if db.query(Url).filter(Url.channel_id == cid).first():
         raise HTTPException(status_code=409, detail="被 URL 引用，不可删除")
-    db.query(Channel).filter(Channel.id == cid).delete()
+    c = db.query(Channel).filter(Channel.id == cid).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="渠道不存在")
+    c.deleted_at = datetime.now()
     db.commit()
     return {"code": 0, "data": None, "msg": "ok"}
 
@@ -186,7 +193,7 @@ def channel_detail(cid: int, db: Session = Depends(get_db), _=Depends(get_curren
 @router.get("/operators")
 def list_operators(db: Session = Depends(get_db), _=Depends(get_current_user), name: str = "",
                    page: int = 1, per_page: int = 10):
-    q = db.query(Operator)
+    q = db.query(Operator).filter(Operator.deleted_at.is_(None))
     if name:
         q = q.filter(Operator.name.like(f"%{name}%"))
     total, rows = paginate(q.order_by(Operator.id), page, per_page)
@@ -215,7 +222,10 @@ def update_operator(oid: int, body: SimpleBody, db: Session = Depends(get_db), _
 
 @router.delete("/operators/{oid}")
 def delete_operator(oid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    db.query(Operator).filter(Operator.id == oid).delete()
+    o = db.query(Operator).filter(Operator.id == oid).first()
+    if not o:
+        raise HTTPException(status_code=404, detail="运营商不存在")
+    o.deleted_at = datetime.now()
     db.commit()
     return {"code": 0, "data": None, "msg": "ok"}
 
@@ -335,7 +345,7 @@ def delete_url(uid: int, db: Session = Depends(get_db), _=Depends(get_current_us
 # ============ 平台（挂在二级品类下） ============
 @router.get("/platforms")
 def list_platforms(db: Session = Depends(get_db), _=Depends(get_current_user), cat_id: int = 0):
-    q = db.query(Platform)
+    q = db.query(Platform).filter(Platform.deleted_at.is_(None))
     if cat_id:
         q = q.filter(Platform.cat_id == cat_id)
     rows = q.order_by(Platform.cat_id, Platform.sort_no, Platform.id).all()
@@ -376,7 +386,10 @@ def update_platform(pid: int, body: PlatformBody, db: Session = Depends(get_db),
 
 @router.delete("/platforms/{pid}")
 def delete_platform(pid: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    db.query(Platform).filter(Platform.id == pid).delete()
+    p = db.query(Platform).filter(Platform.id == pid).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="平台不存在")
+    p.deleted_at = datetime.now()
     db.commit()
     return {"code": 0, "data": None, "msg": "ok"}
 
@@ -476,6 +489,8 @@ CONFIG_ITEMS = [
     {"key": "backup_keep_days", "label": "数据库备份保存天数", "type": "number", "default": "7"},
     {"key": "usdt_rate", "label": "USDT 汇率（元/U）", "type": "number", "default": "7"},
     {"key": "business_cutoff_time", "label": "营业截止时间", "type": "time", "default": "06:00"},
+    {"key": "trash_retention_days", "label": "垃圾箱数据保留天数", "type": "number", "default": "30"},
+    {"key": "trash_cleanup_time", "label": "垃圾箱自动清理时间", "type": "time", "default": "03:00"},
 ]
 
 

@@ -32,7 +32,7 @@ def _ulabel(user):
 def list_products(db: Session = Depends(get_db), _=Depends(get_current_user),
                   q: str = "", category: str = "", source: str = "",
                   page: int = 1, per_page: int = 100):
-    qy = db.query(Product)
+    qy = db.query(Product).filter(Product.deleted_at.is_(None))
     if q:
         like = f"%{q}%"
         qy = qy.filter(or_(Product.name.like(like), Product.category.like(like)))
@@ -101,9 +101,9 @@ def delete_product(pid: int, db: Session = Depends(get_db), _=Depends(get_curren
     p = db.query(Product).filter(Product.id == pid).first()
     if not p:
         raise HTTPException(status_code=404, detail="产品不存在")
-    if db.query(ProductSale).filter(ProductSale.product_id == pid).count() > 0:
+    if db.query(ProductSale).filter(ProductSale.product_id == pid, ProductSale.deleted_at.is_(None)).count() > 0:
         raise HTTPException(status_code=400, detail="该产品已有销售记录，不能删除")
-    db.delete(p)
+    p.deleted_at = datetime.now()
     db.commit()
     return {"code": 0, "data": None, "msg": "已删除"}
 
@@ -114,7 +114,7 @@ def delete_product(pid: int, db: Session = Depends(get_db), _=Depends(get_curren
 def list_product_sales(db: Session = Depends(get_db), _=Depends(get_current_user),
                        start_date: str = "", end_date: str = "", customer_id: int = 0,
                        page: int = 1, per_page: int = 100):
-    qy = db.query(ProductSale)
+    qy = db.query(ProductSale).filter(ProductSale.deleted_at.is_(None))
     if customer_id:
         qy = qy.filter(ProductSale.customer_id == customer_id)
     if start_date:
@@ -122,8 +122,8 @@ def list_product_sales(db: Session = Depends(get_db), _=Depends(get_current_user
     if end_date:
         qy = qy.filter(ProductSale.sale_date <= end_date)
     total, rows = paginate(qy.order_by(ProductSale.id.desc()), page, per_page)
-    prod_map = {p.id: p for p in db.query(Product).all()}
-    cust_map = {c.id: c for c in db.query(Customer).all()}
+    prod_map = {p.id: p for p in db.query(Product).filter(Product.deleted_at.is_(None)).all()}
+    cust_map = {c.id: c for c in db.query(Customer).filter(Customer.deleted_at.is_(None)).all()}
     data = [_sale_dict(s, prod_map, cust_map) for s in rows]
     return ok_page(data, total)
 
@@ -240,7 +240,7 @@ def delete_product_sale(sid: int, db: Session = Depends(get_db), user=Depends(ge
         raise HTTPException(status_code=404, detail="产品销售记录不存在")
     customer_id = s.customer_id
     sale_date = s.sale_date
-    db.delete(s)
+    s.deleted_at = datetime.now()
     db.commit()
     _sync_customer_bill(db, customer_id, sale_date, _ulabel(user))
     return {"code": 0, "data": None, "msg": "已删除"}

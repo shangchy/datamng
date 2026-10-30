@@ -337,6 +337,7 @@ def list_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
           .outerjoin(Channel, Order.channel_id == Channel.id)
           .outerjoin(Operator, Order.operator_id == Operator.id)
           .outerjoin(Template, Order.tpl_id == Template.id))
+    qy = qy.filter(Order.deleted_at.is_(None))
     if status:
         qy = qy.filter(Order.status == status)
     if q:
@@ -759,9 +760,7 @@ def delete_order(oid: int, db: Session = Depends(get_db), _=Depends(require_admi
     o = db.query(Order).filter(Order.id == oid).first()
     if not o:
         raise HTTPException(status_code=404, detail="订单不存在")
-    db.query(OrderUrl).filter(OrderUrl.order_id == oid).delete()
-    db.query(Alert).filter(Alert.order_id == oid).delete()
-    db.delete(o)
+    o.deleted_at = datetime.now()
     db.commit()
     return {"code": 0, "data": None, "msg": "已删除"}
 
@@ -886,11 +885,9 @@ def batch_delete(body: BatchStopBody, db: Session = Depends(get_db), user=Depend
     rows = db.query(Order).filter(Order.id.in_(body.ids)).all()
     ids = [o.id for o in rows]
     order_nos = [o.order_no for o in rows]
-    if ids:
-        db.query(OrderUrl).filter(OrderUrl.order_id.in_(ids)).delete(synchronize_session=False)
-        db.query(Alert).filter(Alert.order_id.in_(ids)).delete(synchronize_session=False)
-        for o in rows:
-            db.delete(o)
+    now = datetime.now()
+    for o in rows:
+        o.deleted_at = now
     _op_log(db, user, "batch_delete_orders", f"批量删除 {len(rows)} 单", None, {"order_nos": order_nos})
     db.commit()
     return {"code": 0, "data": {"deleted": len(rows)}, "msg": f"已删除 {len(rows)} 单"}
@@ -1107,6 +1104,7 @@ def export_orders(db: Session = Depends(get_db), _=Depends(get_current_user),
           .outerjoin(Channel, Order.channel_id == Channel.id)
           .outerjoin(Operator, Order.operator_id == Operator.id)
           .outerjoin(Template, Order.tpl_id == Template.id))
+    qy = qy.filter(Order.deleted_at.is_(None))
     if status:
         qy = qy.filter(Order.status == status)
     if q:

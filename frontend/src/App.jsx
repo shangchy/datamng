@@ -15,6 +15,7 @@ import ConfigCenter from './pages/ConfigCenter'
 import Products from './pages/Products'
 import ProductSales from './pages/ProductSales'
 import Workflow from './pages/Workflow'
+import Trash from './pages/Trash'
 
 function RequireAuth({ children }) {
   if (!getToken()) return <Navigate to="/login" replace />
@@ -47,6 +48,7 @@ export default function App() {
         <Route path="config-center" element={<ConfigCenter />} />
         <Route path="products" element={<Products />} />
         <Route path="workflow" element={<Workflow />} />
+        <Route path="trash" element={<Trash />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
