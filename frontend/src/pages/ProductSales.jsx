@@ -1,6 +1,28 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { api, uploadFile, downloadFile } from '../api'
-import { useToast, useConfirm, Modal } from '../components/ui'
+import { useToast, useConfirm, Modal, ClearableInput } from '../components/ui'
+import { useColumnConfig } from '../components/columns'
+
+const IconColumns = (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="12" y1="3" x2="12" y2="21" /><line x1="8" y1="3" x2="8" y2="21" /><line x1="16" y1="3" x2="16" y2="21" /></svg>
+)
+
+const PS_COLS = [
+  { k: 'customer', l: '客户', width: '12%' },
+  { k: 'region', l: '地区', width: '9.6%' },
+  { k: 'product', l: '产品', width: '14.4%' },
+  { k: 'qty', l: '数量', width: '8%', num: true },
+  { k: 'purchase_price', l: '进货单价（元）', width: '10%', num: true },
+  { k: 'sales_price', l: '出货单价（元）', width: '10%', num: true },
+  { k: 'sales_amount', l: '销售金额（元）', width: '10%', num: true },
+  { k: 'profit', l: '利润（元）', width: '8%', num: true },
+  { k: 'created_by', l: '创建人', width: '7%' },
+  { k: 'created_at', l: '创建时间', width: '11%' },
+  { k: 'updated_by', l: '更新人', width: '7%' },
+  { k: 'updated_at', l: '更新时间', width: '11%' },
+  { k: 'ops', l: '操作', width: '8%', center: true },
+]
+const PS_DEFAULT_HIDDEN = ['created_by', 'created_at', 'updated_by', 'updated_at']
 
 function fmt(d) {
   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0')
@@ -27,6 +49,7 @@ function withBlankRows(list, date) {
 export default function ProductSales() {
   const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
+  const { visible: psCols, picker: psPicker, openPicker } = useColumnConfig(PS_COLS, 'cols_product_sales_v1', PS_DEFAULT_HIDDEN)
   const [productSales, setProductSales] = useState([])
   const [products, setProducts] = useState([])
   const [customers, setCustomers] = useState([])
@@ -36,15 +59,16 @@ export default function ProductSales() {
   const [psDate, setPsDate] = useState(() => fmt(new Date()))
   const psFileRef = useRef(null)
   const today = fmt(new Date())
+  const yesterday = fmt(new Date(Date.now() - 86400000))
   const isToday = psDate === today
-  const isPast = psDate < today
+  const isEditable = isToday || psDate === yesterday
   const isFuture = psDate > today
   const daysAhead = isFuture ? Math.round((new Date(psDate + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000) : 0
 
   function loadProductSales() {
     api.get('/api/product-sales?per_page=1000').then(r => {
       const rows = (r.data?.rows || []).slice().sort((a, b) => (a.sale_date < b.sale_date ? 1 : a.sale_date > b.sale_date ? -1 : (b.id - a.id)))
-      setProductSales(isToday ? withBlankRows(rows, psDate) : rows)
+      setProductSales(isEditable ? withBlankRows(rows, psDate) : rows)
     }).catch(() => {})
   }
 
@@ -60,7 +84,7 @@ export default function ProductSales() {
   }, [])
 
   useEffect(() => {
-    setProductSales(list => isToday ? withBlankRows(list, psDate) : list)
+    setProductSales(list => isEditable ? withBlankRows(list, psDate) : list)
   }, [psDate])
 
   function updatePs(id, patch) {
@@ -152,27 +176,63 @@ export default function ProductSales() {
     setPsExportModal(false)
   }
 
+  function renderPsCell(p, col) {
+    const calc = psCalc(p)
+    switch (col.k) {
+      case 'customer':
+        return <ClearableInput list="ps-customers" value={p.customer || ''} disabled={!isEditable} placeholder="输入或选择客户" onChange={e => onPickPsCustomer(p, e.target.value)} />
+      case 'region':
+        return <ClearableInput list="ps-regions" value={p.region || ''} disabled={!isEditable} placeholder="省份/地市" onChange={e => updatePs(p.id, { region: e.target.value })} />
+      case 'product':
+        return <ClearableInput list="ps-products" value={p.product || ''} disabled={!isEditable} placeholder="输入或选择产品" onChange={e => onPickPsProduct(p, e.target.value)} />
+      case 'qty':
+        return <input type="number" value={p.qty} disabled={!isEditable} onChange={e => updatePs(p.id, { qty: e.target.value })} />
+      case 'purchase_price':
+        return <input type="number" step="0.0001" value={p.purchase_price} disabled={!isEditable} onChange={e => updatePs(p.id, { purchase_price: e.target.value })} />
+      case 'sales_price':
+        return <input type="number" step="0.0001" value={p.sales_price} disabled={!isEditable} onChange={e => updatePs(p.id, { sales_price: e.target.value })} />
+      case 'sales_amount':
+        return <span>¥{calc.sales_amount.toFixed(2)}</span>
+      case 'profit':
+        return <span style={{ color: calc.profit < 0 ? 'var(--red)' : 'inherit' }}>¥{calc.profit.toFixed(2)}</span>
+      case 'created_by':
+        return <span className="audit-who">{p.created_by || '—'}</span>
+      case 'created_at':
+        return <span className="audit-time">{p.created_at || '—'}</span>
+      case 'updated_by':
+        return <span className="audit-who">{p.updated_by || '—'}</span>
+      case 'updated_at':
+        return <span className="audit-time">{p.updated_at || '—'}</span>
+      case 'ops':
+        return isEditable ? <button className="btn small danger" onClick={() => delPs(p)}>删除</button> : null
+      default:
+        return null
+    }
+  }
+
   return (
     <div className="page-scroll">
       {confirmEl}
+      {psPicker}
       <div className="panel">
-        <h3 style={{ justifyContent: 'space-between' }}>
+        <h3 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <span>
-            产品销售
+            销售日期
             <input type="date" value={psDate} onChange={e => setPsDate(e.target.value)} style={{ marginLeft: 10, height: 30 }} />
           </span>
-          <span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input type="file" accept=".xlsx,.xls" style={{ display: 'none' }} ref={psFileRef} onChange={e => { if (e.target.files[0]) importProductSales(e.target.files[0]).catch(err => showError(err.message)); e.target.value = '' }} />
-            <button className="btn small" onClick={() => setPsExportModal(true)}>导出 Excel</button>{' '}
-            <button className="btn small" onClick={exportPsTemplate}>导出模版</button>{' '}
-            <button className="btn small" onClick={() => psFileRef.current.click()}>导入 Excel</button>{' '}
-            {isToday && <button className="btn primary small" onClick={addPsRow}>+ 新增</button>}{' '}
-            {isToday && <button className="btn primary small" onClick={saveAll}>保存</button>}
+            <button className="btn green" onClick={() => setPsExportModal(true)}>导出 Excel</button>
+            <button className="btn" onClick={exportPsTemplate}>导出模版</button>
+            <button className="btn orange" onClick={() => psFileRef.current.click()}>导入 Excel</button>
+            {isEditable && <button className="btn primary" onClick={addPsRow}>+ 新增</button>}
+            {isEditable && <button className="btn primary" onClick={saveAll}>批量保存</button>}
+            <button className="btn icon" title="自定义表头" onClick={openPicker}>{IconColumns}</button>
           </span>
         </h3>
         {isFuture ? (
           <div className="empty">产品不支持预售，请在 {daysAhead} 天后创建销售订单</div>
-        ) : isPast && filteredSales.length === 0 ? (
+        ) : (!isEditable && filteredSales.length === 0) ? (
           <div className="empty">{psDate.replace(/-/g, '')}没有产品销售数据</div>
         ) : (
           <>
@@ -182,46 +242,19 @@ export default function ProductSales() {
             <div style={{ height: 400, overflowY: 'auto', overflowX: 'auto' }}>
               <table className="ps-table">
                 <colgroup>
-                  <col style={{ width: '13%' }} />
-                  <col style={{ width: '10%' }} />
-                  <col style={{ width: '13%' }} />
-                  <col style={{ width: '6%' }} />
-                  <col style={{ width: '7%' }} />
-                  <col style={{ width: '7%' }} />
-                  <col style={{ width: '7%' }} />
-                  <col style={{ width: '6%' }} />
-                  <col style={{ width: '13%' }} />
-                  <col style={{ width: '8%' }} />
-                  <col style={{ width: '15%' }} />
+                  {psCols.map(col => <col key={col.k} style={{ width: col.width }} />)}
                 </colgroup>
-                <thead><tr><th>客户</th><th>地区</th><th>产品</th><th className="num">数量</th><th className="center">进货单价<br/>（元）</th><th className="center">出货单价<br/>（元）</th><th className="center">销售金额<br/>（元）</th><th className="center">利润<br/>（元）</th><th>更新时间</th><th>更新人</th><th className="ops">操作</th></tr></thead>
+                <thead><tr>{psCols.map(col => <th key={col.k} className="center">{col.l}</th>)}</tr></thead>
                 <tbody>
-                  {filteredSales.map(p => {
-                    const calc = psCalc(p)
-                    return (
-                      <tr key={p.id}>
-                        <td>
-                          <input list="ps-customers" value={p.customer || ''} disabled={!isToday} placeholder="输入或选择客户" onChange={e => onPickPsCustomer(p, e.target.value)} />
+                  {filteredSales.map(p => (
+                    <tr key={p.id}>
+                      {psCols.map(col => (
+                        <td key={col.k} className={col.k === 'ops' ? 'ops' : (col.num ? 'num' : '')}>
+                          {renderPsCell(p, col)}
                         </td>
-                        <td>
-                          <input list="ps-regions" value={p.region || ''} disabled={!isToday} placeholder="省份/地市" onChange={e => updatePs(p.id, { region: e.target.value })} />
-                        </td>
-                        <td>
-                          <input list="ps-products" value={p.product || ''} disabled={!isToday} placeholder="输入或选择产品" onChange={e => onPickPsProduct(p, e.target.value)} />
-                        </td>
-                        <td className="num"><input type="number" value={p.qty} disabled={!isToday} onChange={e => updatePs(p.id, { qty: e.target.value })} /></td>
-                        <td className="num"><input type="number" step="0.0001" value={p.purchase_price} disabled={!isToday} onChange={e => updatePs(p.id, { purchase_price: e.target.value })} /></td>
-                        <td className="num"><input type="number" step="0.0001" value={p.sales_price} disabled={!isToday} onChange={e => updatePs(p.id, { sales_price: e.target.value })} /></td>
-                        <td className="num">¥{calc.sales_amount.toFixed(2)}</td>
-                        <td className="num" style={{ color: calc.profit < 0 ? 'var(--red)' : 'inherit' }}>¥{calc.profit.toFixed(2)}</td>
-                        <td className="audit-time">{p.updated_at || '—'}</td>
-                        <td className="audit-who">{p.updated_by || '—'}</td>
-                        <td className="ops">
-                          {isToday && <button className="btn small danger" onClick={() => delPs(p)}>删除</button>}
-                        </td>
-                      </tr>
-                    )
-                  })}
+                      ))}
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

@@ -145,7 +145,8 @@ def _sale_dict(s, prod_map, cust_map):
         "profit": float(s.profit or 0),
         "note": s.note or "",
         "created_at": fmt_dt(s.created_at), "created_by": s.created_by or "",
-        "updated_at": fmt_dt(s.updated_at), "updated_by": s.updated_by or "",
+        "updated_at": fmt_dt(s.updated_at) if s.updated_at else fmt_dt(s.created_at),
+        "updated_by": (s.updated_by or s.created_by or ""),
     }
 
 

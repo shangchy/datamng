@@ -241,9 +241,11 @@ tr.row-alert:hover td { background: #fecaca !important; }
 .daily-bill-panel .wallet-input { width: 76px; }
 .ps-table { table-layout: fixed; width: 100%; }
 .ps-table th, .ps-table td { padding: 4px 4px; }
-.ps-table th { white-space: normal; word-break: break-all; line-height: 1.25; }
+.ps-table th { white-space: nowrap; line-height: 1.25; }
 .ps-table th.center { text-align: center; }
 .ps-table input, .ps-table select { width: 100%; min-width: 0; padding: 4px 4px; font-size: 12px; box-sizing: border-box; }
+.ps-table .clearable { width: 100%; }
+.ps-table .clearable > .clearable-input { width: 100%; }
 .ps-table td.num input { text-align: right; }
 .ps-table .audit-time, .ps-table .audit-who { font-size: 11px; white-space: nowrap; color: var(--sub); }
 

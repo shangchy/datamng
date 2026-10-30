@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 
 const ToastCtx = createContext({ toast: () => {}, showError: () => {} })
 export const useToast = () => useContext(ToastCtx)
@@ -77,7 +78,7 @@ export function MultiDateInput({ value, onChange, placeholder }) {
 }
 
 export function Modal({ title, children, onClose, wide, z, style }) {
-  return (
+  return createPortal(
     <div className="mask" style={z ? { zIndex: z } : undefined} onClick={onClose}>
       <div className={`modal ${wide ? 'wide' : ''}`} style={style} onClick={e => e.stopPropagation()}>
         <h3>
@@ -88,16 +89,17 @@ export function Modal({ title, children, onClose, wide, z, style }) {
         </h3>
         <div className="modal-body">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
 export function ConfirmModal({ message, danger, onConfirm, onCancel }) {
-  return (
+  return createPortal(
     <div className="mask" style={{ zIndex: 200 }}>
       <div className="modal" style={{ width: 440 }}>
         <h3>
-          <span className="modal-title">操作确认</span>
+          <span className="modal-title" style={{ color: danger ? 'var(--red)' : undefined }}>{danger ? '⚠️ 危险操作确认' : '操作确认'}</span>
           <button className="modal-close" title="关闭" onClick={onCancel}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
@@ -106,11 +108,12 @@ export function ConfirmModal({ message, danger, onConfirm, onCancel }) {
           <div style={{ marginBottom: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: danger ? 'var(--red)' : undefined }}>{message}</div>
           <div className="foot">
             <button className="btn" onClick={onCancel}>取消</button>
-            <button className="btn primary" onClick={onConfirm}>确认</button>
+            <button className={`btn ${danger ? 'danger' : 'primary'}`} onClick={onConfirm}>确认</button>
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 

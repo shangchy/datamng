@@ -3752,7 +3752,7 @@ def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
         "业务日期": date_obj.strftime("%m%d"),
         "昨日余额": yesterday_balance,
         "销售金额": sales,
-        "今日充值": "；".join(recharge_info),
+        "今日充值": "\n".join(recharge_info),
         "剩余余额": balance,
     }
 
@@ -3778,7 +3778,9 @@ def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
                 continue
             f = _field(str(cell.value))
             if f:
-                ws1.cell(row=cell.row, column=cell.column + 1, value=summary[f])
+                target = ws1.cell(row=cell.row, column=cell.column + 1, value=summary[f])
+                if f == "今日充值":
+                    target.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
     detail_header_row = None
     detail_cols = {}
@@ -3898,14 +3900,15 @@ def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
             running = float(b.balance)
         sales_day = round(float(b.sales), 2) if b is not None and b.sales is not None else ""
         recs = recharge_by_date.get(d, [])
-        bu = "；".join(_fmt_bu(x) for x in recs if (x.recharge_type or "转账") == "补数")
-        chong = "；".join(_fmt_chong(x) for x in recs if (x.recharge_type or "转账") != "补数")
+        bu = "\n".join(_fmt_bu(x) for x in recs if (x.recharge_type or "转账") == "补数")
+        chong = "\n".join(_fmt_chong(x) for x in recs if (x.recharge_type or "转账") != "补数")
         rowvals = [d.strftime("%Y-%m-%d"), sales_day, bu, chong, (round(running, 2) if running is not None else "")]
         row_fill = PatternFill(fill_type="solid", fgColor=zebra2_rgb) if (zebra2_rgb and idx % 2 == 1) else None
+        left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
         for j, v in enumerate(rowvals, 1):
             cell = ws2.cell(row=r2, column=j, value=v)
             cell.border = border
-            cell.alignment = center
+            cell.alignment = left_wrap if j in (3, 4) else center
             if row_fill is not None:
                 cell.fill = row_fill
         r2 += 1

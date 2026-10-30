@@ -22,7 +22,7 @@ const MENUS = [
   { key: '/', name: '工作台', icon: '📊' },
   { key: '/orders', name: '订单管理', icon: '📝', perm: 'order:view' },
   { key: '/daily', name: '日活管理', icon: '📈', perm: 'daily:view' },
-  { key: '/product-sales', name: '产品销售', icon: '🛒', perm: 'product:view' },
+  { key: '/product-sales', name: '产品销售', icon: '🛍️', perm: 'product:view' },
   { key: '/bills', name: '账单管理', icon: '💰', perm: 'bill:view' },
   { key: '/customers', name: '客户管理', icon: '👤', perm: 'customer:view' },
   { key: '/alerts', name: '预警中心', icon: '🔔', perm: 'alert:view' },
