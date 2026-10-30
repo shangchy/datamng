@@ -58,6 +58,7 @@ def seed(db):
 
     _backfill_role_permissions(db)
     _backfill_granular_permissions(db)
+    _backfill_product_view(db)
 
     # 产品销售导入模版（配置到模版中心）
     from .routers.products import ensure_product_sale_template
@@ -134,6 +135,20 @@ def _backfill_role_permissions(db):
             for code in default_view:
                 if code in perm_id:
                     db.execute(sys_role_permission.insert().values(role_id=r.id, permission_id=perm_id[code]))
+    db.commit()
+
+
+def _backfill_product_view(db):
+    """产品销售/产品管理查看权限授予所有非 admin 角色（产品为通用业务项，不止管理员可见）"""
+    p = db.query(SysPermission).filter(SysPermission.code == "product:view").first()
+    if not p:
+        return
+    for r in db.query(SysRole).filter(SysRole.code != "admin").all():
+        exists = db.query(sys_role_permission).filter(
+            sys_role_permission.c.role_id == r.id,
+            sys_role_permission.c.permission_id == p.id).first()
+        if not exists:
+            db.execute(sys_role_permission.insert().values(role_id=r.id, permission_id=p.id))
     db.commit()
 
 
