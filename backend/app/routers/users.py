@@ -22,22 +22,26 @@ def list_users(db: Session = Depends(get_db), _=Depends(require_permission("acco
         "id": u.id, "username": u.username, "nickname": u.nickname,
         "role_id": u.role_id, "role": u.role.name if u.role else "",
         "status": u.status, "last_login_at": fmt_dt(u.last_login_at),
+        "created_at": fmt_dt(u.created_at), "created_by": u.created_by or "",
+        "updated_at": fmt_dt(u.updated_at), "updated_by": u.updated_by or "",
     } for u in rows], total)
 
 
 @router.post("/users")
-def create_user(body: UserCreate, db: Session = Depends(get_db), _=Depends(require_permission("account:edit"))):
+def create_user(body: UserCreate, db: Session = Depends(get_db), user=Depends(require_permission("account:edit"))):
     if db.query(SysUser).filter(SysUser.username == body.username).first():
         raise HTTPException(status_code=409, detail="用户名已存在")
+    label = (user.nickname or user.username) if user else ""
     u = SysUser(username=body.username, nickname=body.nickname, role_id=body.role_id,
-                password_hash=hash_password(body.password), must_change_pwd=True)
+                password_hash=hash_password(body.password), must_change_pwd=True,
+                created_by=label, updated_by=label)
     db.add(u)
     db.commit()
     return {"code": 0, "data": {"id": u.id}, "msg": "ok"}
 
 
 @router.put("/users/{uid}")
-def update_user(uid: int, body: UserUpdate, db: Session = Depends(get_db), _=Depends(require_permission("account:edit"))):
+def update_user(uid: int, body: UserUpdate, db: Session = Depends(get_db), user=Depends(require_permission("account:edit"))):
     u = db.query(SysUser).filter(SysUser.id == uid).first()
     if not u:
         raise HTTPException(status_code=404, detail="用户不存在")
@@ -47,23 +51,25 @@ def update_user(uid: int, body: UserUpdate, db: Session = Depends(get_db), _=Dep
         u.role_id = body.role_id
     if body.status is not None:
         u.status = body.status
+    u.updated_by = (user.nickname or user.username) if user else ""
     db.commit()
     return {"code": 0, "data": None, "msg": "ok"}
 
 
 @router.post("/users/{uid}/reset-password")
-def reset_password(uid: int, db: Session = Depends(get_db), _=Depends(require_permission("account:edit"))):
+def reset_password(uid: int, db: Session = Depends(get_db), user=Depends(require_permission("account:edit"))):
     u = db.query(SysUser).filter(SysUser.id == uid).first()
     if not u:
         raise HTTPException(status_code=404, detail="用户不存在")
     u.password_hash = hash_password("123456")
     u.must_change_pwd = True
+    u.updated_by = (user.nickname or user.username) if user else ""
     db.commit()
     return {"code": 0, "data": None, "msg": "密码已重置"}
 
 
 @router.post("/users/{uid}/set-password")
-def set_password(uid: int, body: UserSetPasswordBody, db: Session = Depends(get_db), _=Depends(require_permission("account:edit"))):
+def set_password(uid: int, body: UserSetPasswordBody, db: Session = Depends(get_db), user=Depends(require_permission("account:edit"))):
     u = db.query(SysUser).filter(SysUser.id == uid).first()
     if not u:
         raise HTTPException(status_code=404, detail="用户不存在")
@@ -71,8 +77,21 @@ def set_password(uid: int, body: UserSetPasswordBody, db: Session = Depends(get_
         raise HTTPException(status_code=422, detail="密码长度至少 6 位")
     u.password_hash = hash_password(body.password)
     u.must_change_pwd = False
+    u.updated_by = (user.nickname or user.username) if user else ""
     db.commit()
     return {"code": 0, "data": None, "msg": "密码已修改"}
+
+
+@router.delete("/users/{uid}")
+def delete_user(uid: int, db: Session = Depends(get_db), _=Depends(require_permission("account:edit"))):
+    u = db.query(SysUser).filter(SysUser.id == uid).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if u.username == "admin":
+        raise HTTPException(status_code=400, detail="超级管理员不可删除")
+    db.delete(u)
+    db.commit()
+    return {"code": 0, "data": None, "msg": "已删除"}
 
 
 @router.get("/roles")

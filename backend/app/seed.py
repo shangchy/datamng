@@ -34,6 +34,7 @@ def seed(db):
         ("data:view", "查看数据", "data"), ("bill:view", "查看账单", "bill"),
         ("alert:view", "查看预警", "alert"), ("alert:handle", "处理预警", "alert"),
         # 菜单级细粒度权限（每个菜单一项）
+        ("dashboard:view", "工作台", "dashboard"),
         ("daily:view", "日活管理", "data"),
         ("tidabiao:view", "提单历史", "order"),
         ("wash:view", "洗名库", "data"),
@@ -96,6 +97,7 @@ def seed(db):
     _backfill_role_permissions(db)
     _backfill_granular_permissions(db)
     _backfill_product_view(db)
+    _backfill_dashboard_view(db)
     _backfill_button_perms(db)
 
     # 产品销售导入模版（配置到模版中心）
@@ -162,7 +164,7 @@ def seed(db):
 
 def _backfill_role_permissions(db):
     """非 admin 角色默认开放除系统管理外的所有菜单查看权限（保持既有行为，管理员可再收紧）"""
-    default_view = ["order:view", "customer:view", "bill:view", "alert:view",
+    default_view = ["dashboard:view", "order:view", "customer:view", "bill:view", "alert:view",
                     "daily:view", "tidabiao:view", "wash:view", "fund:view", "file:view",
                     "parts:view", "category:view", "channel:view", "operator:view", "template:view",
                     "product:view"]
@@ -179,6 +181,20 @@ def _backfill_role_permissions(db):
 def _backfill_product_view(db):
     """产品销售/产品管理查看权限授予所有非 admin 角色（产品为通用业务项，不止管理员可见）"""
     p = db.query(SysPermission).filter(SysPermission.code == "product:view").first()
+    if not p:
+        return
+    for r in db.query(SysRole).filter(SysRole.code != "admin").all():
+        exists = db.query(sys_role_permission).filter(
+            sys_role_permission.c.role_id == r.id,
+            sys_role_permission.c.permission_id == p.id).first()
+        if not exists:
+            db.execute(sys_role_permission.insert().values(role_id=r.id, permission_id=p.id))
+    db.commit()
+
+
+def _backfill_dashboard_view(db):
+    """工作台查看权限授予所有非 admin 角色（工作台为默认首页，非 admin 默认可见）"""
+    p = db.query(SysPermission).filter(SysPermission.code == "dashboard:view").first()
     if not p:
         return
     for r in db.query(SysRole).filter(SysRole.code != "admin").all():

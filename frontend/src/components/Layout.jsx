@@ -19,7 +19,7 @@ const TITLE_MAP = {
 }
 
 const MENUS = [
-  { key: '/', name: '工作台', icon: '📊' },
+  { key: '/', name: '工作台', icon: '📊', perm: 'dashboard:view' },
   { key: '/orders', name: '订单管理', icon: '📝', perm: 'order:view' },
   { key: '/daily', name: '日活管理', icon: '📈', perm: 'daily:view' },
   { key: '/product-sales', name: '产品销售', icon: '🛍️', perm: 'product:view' },
@@ -61,6 +61,25 @@ export default function Layout() {
     window.addEventListener('alert-count-refresh', refresh)
     return () => window.removeEventListener('alert-count-refresh', refresh)
   }, [])
+
+  // 无工作台权限时，默认跳转到第一个可见菜单
+  useEffect(() => {
+    const perms = user.permissions || []
+    const isAdmin = user.role_code === 'admin' || perms.includes('*')
+    if (isAdmin || perms.includes('dashboard:view')) return
+    if (location.pathname !== '/') return
+    const canSee = (item) => item.adminOnly ? isAdmin : (isAdmin || !item.perm || perms.includes(item.perm))
+    for (const m of MENUS) {
+      if (m.key === '/') continue
+      if (m.children) {
+        for (const c of m.children) {
+          if (canSee(c)) { nav(c.key, { replace: true }); return }
+        }
+      } else if (canSee(m)) {
+        nav(m.key, { replace: true }); return
+      }
+    }
+  }, [location.pathname, user])
 
   function logout() { clearAuth(); nav('/login') }
 

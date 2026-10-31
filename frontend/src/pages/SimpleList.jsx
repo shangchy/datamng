@@ -21,6 +21,24 @@ const IconChevronUp = (
 const IconColumns = (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="12" y1="3" x2="12" y2="21" /><line x1="8" y1="3" x2="8" y2="21" /><line x1="16" y1="3" x2="16" y2="21" /></svg>
 )
+const IconEdit = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg>
+)
+const IconDelete = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+)
+const IconKey = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" /></svg>
+)
+const IconLock = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+)
+
+function IconBtn({ title, color, onClick, children }) {
+  return (
+    <button className="icon-btn" title={title} onClick={onClick} style={{ color }}>{children}</button>
+  )
+}
 
 const KINDS = {
   daily: {
@@ -98,7 +116,9 @@ const KINDS = {
     cols: [
       { k: 'username', l: '用户名' }, { k: 'nickname', l: '昵称' }, { k: 'role', l: '角色' },
       { k: 'status', l: '状态' }, { k: 'last_login_at', l: '最后登录' },
-    ], reset: true, pwd: true,
+      { k: 'created_by', l: '创建人' }, { k: 'created_at', l: '创建时间' },
+      { k: 'updated_at', l: '更新时间' }, { k: 'updated_by', l: '更新人' },
+    ], defaultHidden: ['updated_at', 'updated_by'], reset: true, pwd: true,
   },
 }
 
@@ -523,6 +543,15 @@ export default function SimpleList({ kind }) {
         await api.post(`/api/users/${id}/reset-password`); toast('密码已重置')
       }, '正在重置密码…')
     }
+  }
+  async function delUser(r) {
+    if (!(await confirm(`确认删除账户「${r.username}」？此操作不可恢复。`, true))) return
+    try {
+      await withBusy(async () => {
+        await api.del(`/api/users/${r.id}`)
+        toast('已删除'); load()
+      }, '正在删除…')
+    } catch (e) { showError(e.message) }
   }
   async function savePwd() {
     if (!pwdModal.password || pwdModal.password.length < 6) { showError('密码长度至少 6 位'); return }
@@ -1074,9 +1103,10 @@ export default function SimpleList({ kind }) {
                     {cfg.dl && <button className="btn small" onClick={() => downloadSourceFile(r)}>下载</button>}
                     {cfg.handle && r.type === '账单预警' && <button className="btn small primary" onClick={() => openRecharge(r)}>充值</button>}
                     {cfg.handle && r.type === '停单提醒' && <button className="btn small primary" onClick={() => openStop(r)}>停单</button>}
-                    {cfg.reset && <button className="btn small" onClick={() => resetPwd(r.id)}>重置密码</button>}
-                    {cfg.pwd && <button className="btn small primary" onClick={() => setPwdModal({ id: r.id, username: r.username, password: '', confirm: '' })}>修改密码</button>}
-                    {kind === 'users' && <button className="btn small" onClick={() => openUserEdit(r)}>编辑</button>}
+                    {cfg.reset && <IconBtn title="重置密码" color="#2563eb" onClick={() => resetPwd(r.id)}>{IconKey}</IconBtn>}
+                    {cfg.pwd && <IconBtn title="修改密码" color="#7c3aed" onClick={() => setPwdModal({ id: r.id, username: r.username, password: '', confirm: '' })}>{IconLock}</IconBtn>}
+                    {kind === 'users' && <IconBtn title="编辑" color="#2563eb" onClick={() => openUserEdit(r)}>{IconEdit}</IconBtn>}
+                    {kind === 'users' && <IconBtn title="删除" color="#dc2626" onClick={() => delUser(r)}>{IconDelete}</IconBtn>}
                   </td>}
                   {cols.map(c => <td key={c.k} className={c.num ? 'num' : ''}>{cell(c, r)}</td>)}
                 </tr>

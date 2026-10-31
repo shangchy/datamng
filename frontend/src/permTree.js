@@ -1,6 +1,7 @@
 // 菜单 → 按钮 权限树（账户管理·角色权限页面使用）
 // 每个菜单一项 view 权限（menu），下面挂多个按钮（button）
 export const PERM_TREE = [
+  { module: 'dashboard', label: '工作台', perm: 'dashboard:view', buttons: [] },
   { module: 'order', label: '订单管理', perm: 'order:view', buttons: [
     { code: 'order:create', label: '新增提单' },
     { code: 'order:edit', label: '编辑' },

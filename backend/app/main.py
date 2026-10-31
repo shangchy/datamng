@@ -75,7 +75,11 @@ def _migrate_schema():
         plat_cols = {c["name"] for c in insp.get_columns("platform")} if "platform" in insp.get_table_names() else set()
         ch_cols = {c["name"] for c in insp.get_columns("channel")} if "channel" in insp.get_table_names() else set()
         op_cols = {c["name"] for c in insp.get_columns("operator")} if "operator" in insp.get_table_names() else set()
+        user_cols = {c["name"] for c in insp.get_columns("sys_user")} if "sys_user" in insp.get_table_names() else set()
         with engine.begin() as conn:
+            for col, ddl in [("created_by", "VARCHAR(50)"), ("updated_by", "VARCHAR(50)")]:
+                if col not in user_cols:
+                    conn.execute(text(f"ALTER TABLE sys_user ADD COLUMN {col} {ddl}"))
             for col, ddl in [
                 ("task_id", "VARCHAR(100)"),
                 ("duration", "VARCHAR(50)"),

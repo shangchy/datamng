@@ -2728,7 +2728,7 @@ def export_fund(db: Session = Depends(get_db), _=Depends(get_current_user),
 @router.get("/bills")
 def list_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
                q: str = "", customer: str = "", customer_id: int = 0,
-               start_date: str = "", end_date: str = "",
+               start_date: str = "", end_date: str = "", biz_date: str = "",
                page: int = 1, per_page: int = 10):
     qy = db.query(Bill).outerjoin(Customer, Bill.customer_id == Customer.id).filter(Bill.deleted_at.is_(None))
     if q:
@@ -2737,6 +2737,8 @@ def list_bills(db: Session = Depends(get_db), _=Depends(get_current_user),
         qy = qy.filter(Customer.code.like(f"%{customer}%"))
     if customer_id:
         qy = qy.filter(Bill.customer_id == customer_id)
+    if biz_date:
+        qy = qy.filter(Bill.biz_date == biz_date)
     if start_date:
         qy = qy.filter(Bill.biz_date >= start_date)
     if end_date:

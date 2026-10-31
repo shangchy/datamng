@@ -60,6 +60,8 @@ class SysUser(Base):
     last_login_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_by = Column(String(50))
+    updated_by = Column(String(50))
 
     role = relationship("SysRole", lazy="joined")
 
