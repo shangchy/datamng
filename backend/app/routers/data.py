@@ -1978,7 +1978,7 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
         DailyData.biz_date == date_obj).group_by(DailyData.task_id).all()
     tids = {tid for tid, _ in rows if tid}
     orders_by_tid = {o.task_id: o for o in db.query(Order).filter(
-        Order.task_id.in_(tids), Order.deleted_at.is_(None)).all()} if tids else {}
+        Order.task_id.in_(tids)).all()} if tids else {}
     needed_cids = {o.customer_id for o in orders_by_tid.values()}
     needed_chids = {o.channel_id for o in orders_by_tid.values() if o.channel_id}
     needed_oids = {o.operator_id for o in orders_by_tid.values() if o.operator_id}
@@ -3754,7 +3754,7 @@ def _upstream_groups(db, up, day, rt_bills=None):
     rows = db.query(DailyData).filter(DailyData.biz_date == day, DailyData.upstream == up.name).all()
     tids = {d.task_id for d in rows if d.task_id}
     orders_by_tid = {o.task_id: o for o in db.query(Order).filter(
-        Order.task_id.in_(tids), Order.deleted_at.is_(None)).all()} if tids else {}
+        Order.task_id.in_(tids)).all()} if tids else {}
     price_map = {}
     for p in db.query(CustomerPrice).filter(CustomerPrice.customer_id == up.id).all():
         price_map[(p.channel_id, p.operator_id)] = float(p.price)
@@ -3833,7 +3833,12 @@ def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_byte
         sales = round(float(b.sales), 2) if b and b.sales is not None else 0.0
         bu = round(bu_by_day.get(d, 0.0), 2)
         u = round(u_by_day.get(d, 0.0), 4)
-        bal = round(bal - sales + bu + chong_rmb_by_day.get(d, 0.0), 2)
+        if b is not None and b.balance is not None:
+            # 以 Bill.balance 为锚点（已含当日销售/充值/手动调整），避免逐日递推漂移
+            bal = round(float(b.balance), 2)
+        else:
+            # 无账单的日期：仅按当日充值/补数递推余额（销售为 0）
+            bal = round(bal + bu + chong_rmb_by_day.get(d, 0.0), 2)
         rowvals = [d.strftime("%Y-%m-%d"), sales, bu, u, bal]
         for j, v in enumerate(rowvals, 1):
             cell = ws1.cell(row=r, column=j, value=v)
