@@ -58,30 +58,41 @@ def seed(db):
     # 按钮级权限（菜单 → 按钮，账户管理·角色权限勾选）
     button_perms = [
         ("order", "订单管理", [
-            "create:新增提单", "edit:编辑", "modify:改单", "stop:停单", "cancel_stop:取消停单",
+            "create:新增提单", "edit:编辑", "copy:复制新增", "modify:改单", "stop:停单", "cancel_stop:取消停单",
             "reopen:复提", "batch_stop:批量停单", "batch_reopen:批量复提", "batch_extend:批量延期",
             "batch_group:批量修改小组", "delete:删除", "batch_delete:批量删除", "import:导入",
+            "export:导出订单", "export_template:导出模版", "check_dup:订单验重", "cat_check:品类检查",
             "tidabiao:生成提单表", "confirm:提单确认",
         ]),
         ("daily", "日活管理", [
             "import:导入日活", "wash_export:导出洗名", "wash_import:导入洗名", "distribute:分发数据",
-            "batch_delete:批量删除", "backfill_category:补充品类", "extract:单独抽取",
+            "check:工单检查", "batch_delete:批量删除", "backfill_category:补充品类", "extract:单独抽取",
+            "edit:编辑", "export:导出数据",
         ]),
-        ("product", "产品销售", ["create:新增", "save:批量保存", "delete:删除", "import:导入"]),
-        ("bill", "账单管理", ["generate:生成账单", "import:导入", "batch_delete:批量删除"]),
-        ("customer", "客户管理", ["create:新增", "edit:编辑", "recharge:充值", "delete:删除"]),
-        ("alert", "预警中心", ["handle:处理/充值"]),
+        ("product", "产品销售", [
+            "create:新增", "save:批量保存", "delete:删除", "import:导入",
+            "export:导出Excel", "export_template:导出模版",
+        ]),
+        ("bill", "账单管理", [
+            "generate:生成账单", "import:导入", "batch_delete:批量删除",
+            "detail:详情", "edit_balance:修改余额",
+        ]),
+        ("customer", "客户管理", [
+            "create:新增", "edit:编辑", "detail:详情", "recharge:充值",
+            "edit_balance:修改余额", "save_rate:保存汇率", "save_price:保存单价", "delete:删除",
+        ]),
+        ("alert", "预警中心", ["handle:处理/充值", "config:触发时间配置"]),
         ("wash", "洗名库", ["import:导入", "batch_delete:批量删除"]),
-        ("fund", "公积金", ["create:新增", "edit:编辑", "import:导入", "delete:删除"]),
-        ("file", "文件管理", ["upload:上传", "delete:删除"]),
+        ("fund", "公积金", ["create:新增", "edit:编辑", "import:导入", "export:导出Excel", "delete:删除"]),
+        ("file", "文件管理", ["upload:上传", "download:下载", "delete:删除"]),
         ("parts", "配件管理", ["create:新增URL", "edit:编辑", "delete:删除", "import:导入", "clear:清空"]),
         ("category", "品类管理", ["create:新增", "edit:编辑", "delete:删除", "import:导入"]),
         ("channel", "渠道管理", ["create:新增", "edit:编辑", "delete:删除"]),
         ("operator", "运营商管理", ["create:新增", "edit:编辑", "delete:删除"]),
-        ("template", "模版管理", ["create:新增", "edit:编辑", "delete:删除", "upload:上传文件"]),
-        ("products", "产品管理", ["create:新增", "edit:编辑", "delete:删除"]),
-        ("account", "账户管理", ["create:新增账户", "edit:编辑", "reset:重置密码", "delete:删除", "role_perms:角色权限"]),
-        ("config", "配置中心", ["save:保存"]),
+        ("template", "模版管理", ["create:新增", "edit:编辑", "delete:删除", "upload:上传文件", "download:下载"]),
+        ("products", "产品管理", ["create:新增", "edit:编辑", "copy:复制", "delete:删除"]),
+        ("account", "账户管理", ["create:新增账户", "edit:编辑", "reset:重置密码", "delete:删除", "role_perms:角色权限", "create_role:新增角色"]),
+        ("config", "配置中心", ["save:保存", "reset_alert:重置预警"]),
     ]
     for module, _mlabel, actions in button_perms:
         for a in actions:

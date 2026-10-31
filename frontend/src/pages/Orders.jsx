@@ -657,14 +657,14 @@ export default function Orders({ variant = 'orders' }) {
           <button className="btn primary" onClick={() => search()}>查询</button>
           <button className="btn" onClick={() => { setFilters({}); search({}) }}>重置</button>
           <button className="btn icon" title={filterCollapsed ? '展开查询条件' : '隐藏查询条件'} onClick={() => setFilterCollapsed(!filterCollapsed)}>{filterCollapsed ? IconChevronDown : IconChevronUp}</button>
-          <button className="btn green" onClick={exportExcel}>导出订单</button>
-          {!isStop && <button className="btn" onClick={exportTemplate}>导出模版</button>}
+          {can('order:export') && <button className="btn green" onClick={exportExcel}>导出订单</button>}
+          {!isStop && can('order:export_template') && <button className="btn" onClick={exportTemplate}>导出模版</button>}
           {!isStop && can('order:import') && <button className="btn" onClick={() => { setImportResult(null); setImportModal(true) }}>导入订单</button>}
           {!isStop && can('order:import') && <button className="btn" onClick={() => { setReceiptResult(null); setReceiptModal(true) }}>导入回执</button>}
           {!isStop && can('order:tidabiao') && <button className="btn green" onClick={() => { setGenDate(defaultOrderDate()); setGenModal(true) }}>生成提单表</button>}
           {!isStop && can('order:confirm') && <button className="btn orange" onClick={() => setConfirmModal(true)}>提单确认</button>}
-          {!isStop && <button className="btn" onClick={checkDuplicates}>订单验重</button>}
-          <button className={`btn ${filters.plat_issue ? 'primary' : ''}`} onClick={() => setCatCheckModal(true)}>品类检查</button>
+          {!isStop && can('order:check_dup') && <button className="btn" onClick={checkDuplicates}>订单验重</button>}
+          {can('order:cat_check') && <button className={`btn ${filters.plat_issue ? 'primary' : ''}`} onClick={() => setCatCheckModal(true)}>品类检查</button>}
           {!isStop && can('order:batch_stop') && selected.length > 0 && <button className="btn danger-outline" onClick={batchStop}>批量停单({selected.length})</button>}
           {!isStop && can('order:batch_delete') && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>⚠️ 批量删除({selected.length})</button>}
           {!isStop && can('order:batch_reopen') && selected.length > 0 && <button className="btn" onClick={batchReopen}>批量复提({selected.length})</button>}
@@ -698,7 +698,7 @@ export default function Orders({ variant = 'orders' }) {
                   {can('order:reopen') && o.status === '已停' && <IconBtn title="复提" color="#059669" onClick={e => { e.stopPropagation(); openReopen(o) }}>{IconReopen}</IconBtn>}
                   {can('order:cancel_stop') && o.status === '待停' && <IconBtn title="取消停单" color="#059669" onClick={e => { e.stopPropagation(); cancelStop(o) }}>{IconUndo}</IconBtn>}
                   {can('order:stop') && ['在执', '改单'].includes(o.status) && <IconBtn title="停单" color="#d97706" onClick={e => { e.stopPropagation(); setStopDate(defaultOrderDate()); setStopReason('业务调整'); setStopTarget(o) }}>{IconStop}</IconBtn>}
-                  <IconBtn title="复制新增" color="#0891b2" onClick={e => { e.stopPropagation(); copyCreate(o) }}>{IconCopy}</IconBtn>
+                  {can('order:copy') && <IconBtn title="复制新增" color="#0891b2" onClick={e => { e.stopPropagation(); copyCreate(o) }}>{IconCopy}</IconBtn>}
                   {can('order:delete') && <IconBtn title="删除" color="#dc2626" onClick={e => { e.stopPropagation(); delOrder(o) }}>{IconDelete}</IconBtn>}
                 </td>
                 )}

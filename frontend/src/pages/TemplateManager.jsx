@@ -132,7 +132,7 @@ export default function TemplateManager() {
         <ClearableInput placeholder="名称 / 编号 / 文件名" style={{ width: 220 }} value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') search() }} />
         <button className="btn" onClick={search}>查询</button>
         <span className="spacer" />
-        <button className="btn primary" onClick={openCreate}>+ 新增模版</button>
+        {can('template:create') && <button className="btn primary" onClick={openCreate}>+ 新增模版</button>}
       </div>
       <div className="panel">
         <div className="table-scroll">
@@ -149,8 +149,8 @@ export default function TemplateManager() {
                   <td>{t.created_at || '—'}</td>
                   <td>{t.updated_at || '—'}</td>
                   <td className="ops">
-                    <button className="btn small" onClick={() => openEdit(t)}>编辑</button>{' '}
-                    {t.has_file && <button className="btn small green" onClick={() => downloadFile(`/api/templates/${t.id}/download`).catch(e => showError(e.message))}>下载</button>}{' '}
+                    {can('template:edit') && <button className="btn small" onClick={() => openEdit(t)}>编辑</button>}{' '}
+                    {t.has_file && can('template:download') && <button className="btn small green" onClick={() => downloadFile(`/api/templates/${t.id}/download`).catch(e => showError(e.message))}>下载</button>}{' '}
                     {can('template:delete') && <button className="btn small danger" onClick={() => del(t)}>删除</button>}
                   </td>
                 </tr>
@@ -180,8 +180,8 @@ export default function TemplateManager() {
                 {modal.form.has_file
                   ? <span style={{ fontSize: 13 }}><a className="link" onClick={() => showPreview(modal.form)}>{modal.form.file_name}</a></span>
                   : <span style={{ fontSize: 13, color: 'var(--sub)' }}>未上传</span>}
-                <button className="btn small" onClick={() => fileRef.current.click()}>上传</button>
-                {modal.form.has_file && <button className="btn small green" onClick={() => downloadFile(`/api/templates/${modal.form.id}/download`).catch(e => showError(e.message))}>下载</button>}
+                {can('template:upload') && <button className="btn small" onClick={() => fileRef.current.click()}>上传</button>}
+                {modal.form.has_file && can('template:download') && <button className="btn small green" onClick={() => downloadFile(`/api/templates/${modal.form.id}/download`).catch(e => showError(e.message))}>下载</button>}
                 {modal.form.has_file && can('template:delete') && <button className="btn small danger" onClick={deleteFile}>删除文件</button>}
               </div>
             </div>

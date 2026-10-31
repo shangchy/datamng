@@ -118,7 +118,7 @@ export default function Products() {
           <FilterBar cols={FILTER_COLS} filters={filters} setFilters={setFilters} onSearch={search} fieldOptions={fieldOptions} actions={true} />
         </div>
         <div className="toolbar-actions">
-          <button className="btn primary" onClick={openCreate}>+ 新增产品</button>
+          {can('products:create') && <button className="btn primary" onClick={openCreate}>+ 新增产品</button>}
           <button className="btn icon" title="自定义表头" onClick={openPicker}>{IconColumns}</button>
         </div>
       </div>
@@ -137,8 +137,8 @@ export default function Products() {
               {paged.map(p => (
                 <tr key={p.id} onDoubleClick={() => openEdit(p)}>
                   <td className="ops">
-                    <button className="btn small" onClick={() => openEdit(p)}>编辑</button>
-                    <button className="btn small" onClick={() => copyProduct(p)}>复制</button>
+                    {can('products:edit') && <button className="btn small" onClick={() => openEdit(p)}>编辑</button>}
+                    {can('products:copy') && <button className="btn small" onClick={() => copyProduct(p)}>复制</button>}
                     {can('products:delete') && <button className="btn small danger" onClick={() => del(p)}>删除</button>}
                   </td>
                   {cols.map(c => (

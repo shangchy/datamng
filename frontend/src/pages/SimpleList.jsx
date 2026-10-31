@@ -79,11 +79,11 @@ const KINDS = {
     ], del: true, imp: true, exp: true,
   },
   channels: {
-    title: '渠道', endpoint: '/api/channels',
+    title: '渠道', endpoint: '/api/channels', perm: 'channel',
     cols: [{ k: 'name', l: '渠道名' }, { k: 'status', l: '状态' }], simple: true,
   },
   operators: {
-    title: '运营商', endpoint: '/api/operators',
+    title: '运营商', endpoint: '/api/operators', perm: 'operator',
     cols: [{ k: 'name', l: '运营商组合' }, { k: 'status', l: '状态' }], simple: true,
   },
   urls: {
@@ -1056,26 +1056,26 @@ export default function SimpleList({ kind }) {
           </label>
         )}
         <button className="btn icon" title={filterCollapsed ? '展开查询条件' : '隐藏查询条件'} onClick={() => setFilterCollapsed(!filterCollapsed)}>{filterCollapsed ? IconChevronDown : IconChevronUp}</button>
-        {cfg.exp && <button className="btn green" onClick={exportExcel}>导出 Excel</button>}
-        {cfg.dailyImp && <button className="btn orange" onClick={() => setDailyModal(true)}>① 导入日活</button>}
-        {cfg.dist && <button className="btn orange" onClick={() => setWashModal(true)}>② 导出洗名</button>}
-        {cfg.dist && <button className="btn orange" onClick={() => washFileRef.current.click()}>③ 导入洗名</button>}
-        {cfg.dist && <button className="btn orange" onClick={() => { setDistCustomerIds(customers.filter(c => c.ctype === 'downstream').map(c => c.id)); setDistModal(true) }}>④ 分发数据</button>}
-        {cfg.check && <button className="btn" onClick={() => { setCheckResult(null); setCheckModal(true) }}>工单检查</button>}
+        {cfg.exp && can('fund:export') && <button className="btn green" onClick={exportExcel}>导出 Excel</button>}
+        {cfg.dailyImp && can('daily:import') && <button className="btn orange" onClick={() => setDailyModal(true)}>① 导入日活</button>}
+        {cfg.dist && can('daily:wash_export') && <button className="btn orange" onClick={() => setWashModal(true)}>② 导出洗名</button>}
+        {cfg.dist && can('daily:wash_import') && <button className="btn orange" onClick={() => washFileRef.current.click()}>③ 导入洗名</button>}
+        {cfg.dist && can('daily:distribute') && <button className="btn orange" onClick={() => { setDistCustomerIds(customers.filter(c => c.ctype === 'downstream').map(c => c.id)); setDistModal(true) }}>④ 分发数据</button>}
+        {cfg.check && can('daily:check') && <button className="btn" onClick={() => { setCheckResult(null); setCheckModal(true) }}>工单检查</button>}
         {showBatchDel && kind !== 'daily' && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>⚠️ 批量删除({selected.length})</button>}
-        {kind === 'daily' && <button className="btn" onClick={() => backfillCategory().catch(e => showError(e.message))}>补充品类</button>}
-        {kind === 'sourcefiles' && <button className="btn primary" onClick={() => { setSfCategory('手动'); setSfModal(true) }}>上传文件</button>}
-        {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
-        {cfg.export && <button className="btn green" onClick={() => setExportModal(true)}>导出数据</button>}
+        {kind === 'daily' && can('daily:backfill_category') && <button className="btn" onClick={() => backfillCategory().catch(e => showError(e.message))}>补充品类</button>}
+        {kind === 'sourcefiles' && can('file:upload') && <button className="btn primary" onClick={() => { setSfCategory('手动'); setSfModal(true) }}>上传文件</button>}
+        {cfg.imp && can(`${cfg.perm}:import`) && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
+        {cfg.export && can('daily:export') && <button className="btn green" onClick={() => setExportModal(true)}>导出数据</button>}
         {kind === 'daily' && can('daily:batch_delete') && <button className="btn danger" onClick={() => setBatchDelModal(true)}>⚠️ 批量删除</button>}
-        {cfg.billExp && <button className="btn orange" onClick={() => setGenBillModal(true)}>生成账单</button>}
-        {cfg.simple && <button className="btn primary" onClick={() => setSimpleModal({ name: '', status: 1 })}>+ 新增</button>}
-        {cfg.addUrl && <button className="btn primary" onClick={openAddUrl}>+ 新增 URL</button>}
+        {cfg.billExp && can('bill:generate') && <button className="btn orange" onClick={() => setGenBillModal(true)}>生成账单</button>}
+        {cfg.simple && can(`${cfg.perm}:create`) && <button className="btn primary" onClick={() => setSimpleModal({ name: '', status: 1 })}>+ 新增</button>}
+        {cfg.addUrl && can('parts:create') && <button className="btn primary" onClick={openAddUrl}>+ 新增 URL</button>}
         {cfg.clear && can(`${cfg.perm}:clear`) && <button className="btn danger" onClick={clearData}>⚠️ 清空数据</button>}
-        {kind === 'users' && <button className="btn primary" onClick={openUserCreate}>+ 新增账户</button>}
-        {kind === 'users' && <button className="btn" onClick={() => nav('/role-perms')}>角色权限</button>}
-        {kind === 'users' && <button className="btn" onClick={() => setRoleCreate({ name: '', code: '', note: '' })}>新增角色</button>}
-        {kind === 'alerts' && (
+        {kind === 'users' && can('account:create') && <button className="btn primary" onClick={openUserCreate}>+ 新增账户</button>}
+        {kind === 'users' && can('account:role_perms') && <button className="btn" onClick={() => nav('/role-perms')}>角色权限</button>}
+        {kind === 'users' && can('account:create_role') && <button className="btn" onClick={() => setRoleCreate({ name: '', code: '', note: '' })}>新增角色</button>}
+        {kind === 'alerts' && can('alert:config') && (
           <>
             <label style={{ fontSize: 12, color: 'var(--sub)' }}>触发时间</label>
             <input type="time" value={alertTrigger} onChange={e => setAlertTrigger(e.target.value)} />
@@ -1095,18 +1095,18 @@ export default function SimpleList({ kind }) {
                   {cfg.showSeq && <td className="num">{(page - 1) * perPage + i + 1}</td>}
                   {showBatchDel && <td><input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} /></td>}
                   {hasRowOps && <td className="ops">
-                    {cfg.detail && <button className="btn small" onClick={() => viewBillDetail(r.id)}>详情</button>}
-                    {cfg.simple && <button className="btn small" onClick={() => toast('编辑')}>编辑</button>}
-                    {cfg.editUrl && <button className="btn small" onClick={() => openEditUrl(r)}>编辑</button>}
-                    {cfg.dailyEdit && <button className="btn small" onClick={() => openDailyEdit(r)}>编辑</button>}
+                    {cfg.detail && can('bill:detail') && <button className="btn small" onClick={() => viewBillDetail(r.id)}>详情</button>}
+                    {cfg.simple && can(`${cfg.perm}:edit`) && <button className="btn small" onClick={() => toast('编辑')}>编辑</button>}
+                    {cfg.editUrl && can('parts:edit') && <button className="btn small" onClick={() => openEditUrl(r)}>编辑</button>}
+                    {cfg.dailyEdit && can('daily:edit') && <button className="btn small" onClick={() => openDailyEdit(r)}>编辑</button>}
                     {cfg.del && can(`${cfg.perm}:delete`) && <button className="btn small danger" onClick={() => del(r.id)}>删除</button>}
-                    {cfg.dl && <button className="btn small" onClick={() => downloadSourceFile(r)}>下载</button>}
-                    {cfg.handle && r.type === '账单预警' && <button className="btn small primary" onClick={() => openRecharge(r)}>充值</button>}
-                    {cfg.handle && r.type === '停单提醒' && <button className="btn small primary" onClick={() => openStop(r)}>停单</button>}
-                    {cfg.reset && <IconBtn title="重置密码" color="#2563eb" onClick={() => resetPwd(r.id)}>{IconKey}</IconBtn>}
-                    {cfg.pwd && <IconBtn title="修改密码" color="#7c3aed" onClick={() => setPwdModal({ id: r.id, username: r.username, password: '', confirm: '' })}>{IconLock}</IconBtn>}
-                    {kind === 'users' && <IconBtn title="编辑" color="#2563eb" onClick={() => openUserEdit(r)}>{IconEdit}</IconBtn>}
-                    {kind === 'users' && <IconBtn title="删除" color="#dc2626" onClick={() => delUser(r)}>{IconDelete}</IconBtn>}
+                    {cfg.dl && can('file:download') && <button className="btn small" onClick={() => downloadSourceFile(r)}>下载</button>}
+                    {cfg.handle && r.type === '账单预警' && can('alert:handle') && <button className="btn small primary" onClick={() => openRecharge(r)}>充值</button>}
+                    {cfg.handle && r.type === '停单提醒' && can('alert:handle') && <button className="btn small primary" onClick={() => openStop(r)}>停单</button>}
+                    {cfg.reset && can('account:reset') && <IconBtn title="重置密码" color="#2563eb" onClick={() => resetPwd(r.id)}>{IconKey}</IconBtn>}
+                    {cfg.pwd && can('account:reset') && <IconBtn title="修改密码" color="#7c3aed" onClick={() => setPwdModal({ id: r.id, username: r.username, password: '', confirm: '' })}>{IconLock}</IconBtn>}
+                    {kind === 'users' && can('account:edit') && <IconBtn title="编辑" color="#2563eb" onClick={() => openUserEdit(r)}>{IconEdit}</IconBtn>}
+                    {kind === 'users' && can('account:delete') && <IconBtn title="删除" color="#dc2626" onClick={() => delUser(r)}>{IconDelete}</IconBtn>}
                   </td>}
                   {cols.map(c => <td key={c.k} className={c.num ? 'num' : ''}>{cell(c, r)}</td>)}
                 </tr>
@@ -1575,7 +1575,7 @@ export default function SimpleList({ kind }) {
             </div>
           </div>
           <div className="foot">
-            <button className="btn" onClick={openBalanceEdit}>修改余额</button>
+            {can('bill:edit_balance') && <button className="btn" onClick={openBalanceEdit}>修改余额</button>}
             <button className="btn primary" onClick={() => setBillDetail(null)}>关闭</button>
           </div>
         </Modal>

@@ -87,8 +87,8 @@ export default function Categories() {
         <ClearableInput placeholder="平台" style={{ width: 120 }} value={q.platform} onChange={e => setQ({ ...q, platform: e.target.value })} />
         <button className="btn" onClick={() => setQ({ cat1: '', cat2: '', platform: '' })}>重置</button>
         <span className="spacer" />
-        <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>
-        <button className="btn primary" onClick={() => setModal({ type: 'cat1', name: '', status: 1 })}>+ 新增一级品类</button>
+        {can('category:import') && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
+        {can('category:create') && <button className="btn primary" onClick={() => setModal({ type: 'cat1', name: '', status: 1 })}>+ 新增一级品类</button>}
       </div>
       <div className="panel">
         <div className="table-scroll">
@@ -100,9 +100,9 @@ export default function Categories() {
                 <tr>
                   <td><b>{c.name}</b></td><td></td><td>一级品类</td><td></td>
                   <td className="ops">
-                    <button className="btn small" onClick={() => setModal({ type: 'cat1', id: c.id, name: c.name, code: c.code || '', status: 1 })}>编辑</button>{' '}
+                    {can('category:edit') && <button className="btn small" onClick={() => setModal({ type: 'cat1', id: c.id, name: c.name, code: c.code || '', status: 1 })}>编辑</button>}{' '}
                     {can('category:delete') && <button className="btn small danger" onClick={() => del(c.id)}>删除</button>}{' '}
-                    <button className="btn small primary" onClick={() => setModal({ type: 'cat2', name: '', code: '', status: 1, parentId: c.id })}>+ 二级</button>
+                    {can('category:create') && <button className="btn small primary" onClick={() => setModal({ type: 'cat2', name: '', code: '', status: 1, parentId: c.id })}>+ 二级</button>}
                   </td>
                 </tr>
                 {(c.children || []).map(ch => (
@@ -113,11 +113,11 @@ export default function Categories() {
                         {platformsOf(ch.id).map(p => (
                           <span key={p.id} className="tag">{p.name}{p.code ? ` [${p.code}]` : ''}{can('category:delete') && <a className="tag-x" onClick={() => delPlatform(p.id)}>×</a>}</span>
                         ))}
-                        <button className="btn tiny" onClick={() => setModal({ type: 'platform', name: '', code: '', status: 1, catId: ch.id })}>+ 平台</button>
+                        {can('category:create') && <button className="btn tiny" onClick={() => setModal({ type: 'platform', name: '', code: '', status: 1, catId: ch.id })}>+ 平台</button>}
                       </div>
                     </td>
                     <td className="ops">
-                      <button className="btn small" onClick={() => setModal({ type: 'cat2', id: ch.id, name: ch.name, code: ch.code || '', status: 1, parentId: c.id })}>编辑</button>{' '}
+                      {can('category:edit') && <button className="btn small" onClick={() => setModal({ type: 'cat2', id: ch.id, name: ch.name, code: ch.code || '', status: 1, parentId: c.id })}>编辑</button>}{' '}
                       {can('category:delete') && <button className="btn small danger" onClick={() => del(ch.id)}>删除</button>}
                     </td>
                   </tr>

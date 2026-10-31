@@ -175,7 +175,7 @@ export default function Customers() {
       <div className="toolbar">
         <FilterBar cols={CUST_COLS} filters={filters} setFilters={setFilters} onSearch={search} fieldOptions={{ status: ['启用', '停用'] }} />
         <span className="spacer" />
-        <button className="btn primary" onClick={() => { setForm(emptyForm); setFormTab('prices'); setModal('create') }}>+ 新增客户</button>
+        {can('customer:create') && <button className="btn primary" onClick={() => { setForm(emptyForm); setFormTab('prices'); setModal('create') }}>+ 新增客户</button>}
       </div>
       <div className="panel">
         <div className="table-scroll">
@@ -198,9 +198,9 @@ export default function Customers() {
                 <td>{c.tg_id || '—'}</td><td className="num">¥{c.balance}</td><td className="num">¥{c.warn_amount}</td>
                 <td style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{c.note || '—'}</td><td><Badge value={c.status === 1 ? '启用' : '停用'} /></td>
                 <td className="ops">
-                  <button className="btn small" onClick={() => openDetail(c)}>详情</button>{' '}
-                  <button className="btn small primary" onClick={() => { setRecharge({ customer_id: c.id, customer_label: `${c.code} ${c.name}`, balance: c.balance ?? 0, old_rmb: 0, amount_u: '', amount_rmb: '', recharge_date: '', note: '', recharge_type: '转账', reason: '', from_detail: false }) }}>充值</button>{' '}
-                  <button className="btn small" onClick={() => openEdit(c)}>编辑</button>
+                  {can('customer:detail') && <button className="btn small" onClick={() => openDetail(c)}>详情</button>}{' '}
+                  {can('customer:recharge') && <button className="btn small primary" onClick={() => { setRecharge({ customer_id: c.id, customer_label: `${c.code} ${c.name}`, balance: c.balance ?? 0, old_rmb: 0, amount_u: '', amount_rmb: '', recharge_date: '', note: '', recharge_type: '转账', reason: '', from_detail: false }) }}>充值</button>}{' '}
+                  {can('customer:edit') && <button className="btn small" onClick={() => openEdit(c)}>编辑</button>}
                   {can('customer:delete') && <button className="btn small danger" onClick={() => delCustomer(c)}>删除</button>}
                 </td>
               </tr>
@@ -238,8 +238,8 @@ export default function Customers() {
           </div>
           <TabContent tab={tab} customerId={detail.id} refreshKey={rechargeRefresh} onEditRecharge={(r) => editRecharge(detail.id, r, true)} />
           <div className="foot">
-            <button className="btn primary" onClick={() => { setRecharge({ customer_id: detail.id, customer_label: `${detail.code} ${detail.name}`, balance: detail.balance ?? 0, old_rmb: 0, amount_u: '', amount_rmb: '', recharge_date: '', note: '', recharge_type: '转账', reason: '', from_detail: true }) }}>+ 充值</button>
-            <button className="btn" onClick={openBalanceEdit}>修改余额</button>
+            {can('customer:recharge') && <button className="btn primary" onClick={() => { setRecharge({ customer_id: detail.id, customer_label: `${detail.code} ${detail.name}`, balance: detail.balance ?? 0, old_rmb: 0, amount_u: '', amount_rmb: '', recharge_date: '', note: '', recharge_type: '转账', reason: '', from_detail: true }) }}>+ 充值</button>}
+            {can('customer:edit_balance') && <button className="btn" onClick={openBalanceEdit}>修改余额</button>}
             <button className="btn" onClick={() => setDetail(null)}>关闭</button>
           </div>
         </Modal>
@@ -305,7 +305,7 @@ export default function Customers() {
           </div>
           <div className="row">
             <div className="field"><label>备注</label><ClearableInput value={recharge.note} onChange={e => setRecharge({ ...recharge, note: e.target.value })} /></div>
-            <div className="field" style={{ display: 'flex', alignItems: 'flex-end' }}><button className="btn" onClick={saveRate}>保存汇率</button></div>
+            <div className="field" style={{ display: 'flex', alignItems: 'flex-end' }}>{can('customer:save_rate') && <button className="btn" onClick={saveRate}>保存汇率</button>}</div>
           </div>
           <div className="foot">
             <button className="btn" onClick={() => setRecharge(null)}>取消</button>
@@ -376,6 +376,7 @@ function TabContent({ tab, customerId, onEditRecharge, refreshKey }) {
   const [data, setData] = useState([])
   const [prices, setPrices] = useState([])
   const { toast, showError } = useToast()
+  const { can } = useButtonPerm()
   const [confirm, confirmEl] = useConfirm()
   useEffect(() => {
     setData([])
@@ -409,7 +410,7 @@ function TabContent({ tab, customerId, onEditRecharge, refreshKey }) {
   )
   if (tab === 'recharges') return (
     <table><thead><tr><th>日期</th><th className="num">充值(U)</th><th className="num">折算RMB（元）</th><th className="num">汇率</th><th>类型</th><th>备注/理由</th><th>充值时间</th><th>充值人</th><th className="ops">操作</th></tr></thead>
-      <tbody>{data.map((r, i) => <tr key={i}><td>{r.recharge_date}</td><td className="num">{r.amount_u}</td><td className="num">¥{r.amount_rmb}</td><td className="num">{r.rate != null ? r.rate : '—'}</td><td>{r.recharge_type || '转账'}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{(r.recharge_type || '转账') === '补数' ? (r.reason || '—') : (r.note || '—')}</td><td>{r.created_at || '—'}</td><td>{r.created_by || '—'}</td><td className="ops"><button className="btn small" onClick={() => onEditRecharge(r)}>编辑</button></td></tr>)}</tbody></table>
+      <tbody>{data.map((r, i) => <tr key={i}><td>{r.recharge_date}</td><td className="num">{r.amount_u}</td><td className="num">¥{r.amount_rmb}</td><td className="num">{r.rate != null ? r.rate : '—'}</td><td>{r.recharge_type || '转账'}</td><td style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>{(r.recharge_type || '转账') === '补数' ? (r.reason || '—') : (r.note || '—')}</td><td>{r.created_at || '—'}</td><td>{r.created_by || '—'}</td><td className="ops">{can('customer:recharge') && <button className="btn small" onClick={() => onEditRecharge(r)}>编辑</button>}</td></tr>)}</tbody></table>
   )
   return (
     <div>
@@ -422,7 +423,7 @@ function TabContent({ tab, customerId, onEditRecharge, refreshKey }) {
             <td><input type="number" step="0.01" value={prices[i]?.price ?? ''} onChange={e => { const arr = [...prices]; arr[i] = { ...arr[i], price: e.target.value }; setPrices(arr) }} /></td>
           </tr>
         ))}</tbody></table>
-      <div className="foot"><button className="btn primary" onClick={savePrices}>保存单价</button></div>
+      <div className="foot">{can('customer:save_price') && <button className="btn primary" onClick={savePrices}>保存单价</button>}</div>
     </div>
   )
 }

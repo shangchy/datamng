@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { api, uploadFile, downloadFile } from '../api'
 import { useToast, useConfirm, Modal, ClearableInput } from '../components/ui'
 import { useColumnConfig } from '../components/columns'
+import { useButtonPerm } from '../buttonPerms'
 
 const IconColumns = (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="12" y1="3" x2="12" y2="21" /><line x1="8" y1="3" x2="8" y2="21" /><line x1="16" y1="3" x2="16" y2="21" /></svg>
@@ -48,6 +49,7 @@ function withBlankRows(list, date) {
 
 export default function ProductSales() {
   const { toast, showError } = useToast()
+  const { can } = useButtonPerm()
   const [confirm, confirmEl] = useConfirm()
   const { visible: psCols, picker: psPicker, openPicker } = useColumnConfig(PS_COLS, 'cols_product_sales_v1', PS_DEFAULT_HIDDEN)
   const [productSales, setProductSales] = useState([])
@@ -204,7 +206,7 @@ export default function ProductSales() {
       case 'updated_at':
         return <span className="audit-time">{p.updated_at || '—'}</span>
       case 'ops':
-        return isEditable ? <button className="btn small danger" onClick={() => delPs(p)}>删除</button> : null
+        return isEditable && can('product:delete') ? <button className="btn small danger" onClick={() => delPs(p)}>删除</button> : null
       default:
         return null
     }
@@ -222,11 +224,11 @@ export default function ProductSales() {
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input type="file" accept=".xlsx,.xls" style={{ display: 'none' }} ref={psFileRef} onChange={e => { if (e.target.files[0]) importProductSales(e.target.files[0]).catch(err => showError(err.message)); e.target.value = '' }} />
-            <button className="btn green" onClick={() => setPsExportModal(true)}>导出 Excel</button>
-            <button className="btn" onClick={exportPsTemplate}>导出模版</button>
-            <button className="btn orange" onClick={() => psFileRef.current.click()}>导入 Excel</button>
-            {isEditable && <button className="btn primary" onClick={addPsRow}>+ 新增</button>}
-            {isEditable && <button className="btn primary" onClick={saveAll}>批量保存</button>}
+            {can('product:export') && <button className="btn green" onClick={() => setPsExportModal(true)}>导出 Excel</button>}
+            {can('product:export_template') && <button className="btn" onClick={exportPsTemplate}>导出模版</button>}
+            {can('product:import') && <button className="btn orange" onClick={() => psFileRef.current.click()}>导入 Excel</button>}
+            {isEditable && can('product:create') && <button className="btn primary" onClick={addPsRow}>+ 新增</button>}
+            {isEditable && can('product:save') && <button className="btn primary" onClick={saveAll}>批量保存</button>}
             <button className="btn icon" title="自定义表头" onClick={openPicker}>{IconColumns}</button>
           </span>
         </h3>

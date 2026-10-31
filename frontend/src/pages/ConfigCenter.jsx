@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
 import { useToast, useConfirm } from '../components/ui'
+import { useButtonPerm } from '../buttonPerms'
 
 export default function ConfigCenter() {
   const { toast, showError } = useToast()
+  const { can } = useButtonPerm()
   const [confirm, confirmEl] = useConfirm()
   const [items, setItems] = useState([])
   const [saving, setSaving] = useState(false)
@@ -61,7 +63,7 @@ export default function ConfigCenter() {
                         ? <input type="number" value={it.value} onChange={e => setValue(it.key, e.target.value)} />
                         : <input value={it.value} onChange={e => setValue(it.key, e.target.value)} />}
                   </td>
-                  <td className="ops"><button className="btn small primary" disabled={saving} onClick={() => save(it)}>保存</button></td>
+                  <td className="ops">{can('config:save') && <button className="btn small primary" disabled={saving} onClick={() => save(it)}>保存</button>}</td>
                 </tr>
               ))}
             </tbody>
@@ -78,7 +80,7 @@ export default function ConfigCenter() {
             <input type="checkbox" checked={resetAll} onChange={e => setResetAll(e.target.checked)} />
             同时清除账单预警
           </label>
-          <button className="btn danger" onClick={doResetAlert}>重置预警</button>
+          {can('config:reset_alert') && <button className="btn danger" onClick={doResetAlert}>重置预警</button>}
         </div>
         <div className="note" style={{ marginTop: 10 }}>将按指定日期清除预警数据（默认仅停单提醒），然后立即重新扫描生成新预警。</div>
       </div>

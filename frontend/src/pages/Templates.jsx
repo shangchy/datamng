@@ -61,7 +61,7 @@ export default function Templates() {
       {confirmEl}
       <div className="toolbar">
         <span className="spacer" />
-        <button className="btn primary" onClick={openCreate}>+ 新增模版</button>
+        {can('template:create') && <button className="btn primary" onClick={openCreate}>+ 新增模版</button>}
       </div>
       <div className="panel">
         <div className="table-scroll">
@@ -73,7 +73,7 @@ export default function Templates() {
                   <td>{t.name}</td><td>{t.code}</td><td>{t.party}</td>
                   <td><code>{t.filename_rule}</code></td><td>{(t.columns || []).length}</td>
                   <td className="ops">
-                    <button className="btn small" onClick={() => openEdit(t)}>编辑</button>{' '}
+                    {can('template:edit') && <button className="btn small" onClick={() => openEdit(t)}>编辑</button>}{' '}
                     {can('template:delete') && <button className="btn small danger" onClick={() => del(t)}>删除</button>}
                   </td>
                 </tr>
