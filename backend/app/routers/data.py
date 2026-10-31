@@ -3780,10 +3780,29 @@ def _upstream_groups(db, up, day, rt_bills=None):
     return groups
 
 
+def _solid_rgb(cell):
+    f = cell.fill
+    if f is not None and f.fill_type == "solid" and f.fgColor is not None and getattr(f.fgColor, "rgb", None):
+        return f.fgColor.rgb
+    return None
+
+
+def _find_zebra_rgb(ws, header_row, col=1):
+    """扫描数据区，取第一个非表头的实心填充色作为斑马纹；无则用默认淡蓝"""
+    for r in range(header_row + 1, min(header_row + 12, ws.max_row + 1)):
+        v = ws.cell(row=r, column=1).value
+        if v is not None and ("合计" in str(v) or "小计" in str(v)):
+            break
+        rgb = _solid_rgb(ws.cell(row=r, column=col))
+        if rgb:
+            return rgb
+    return "00F4F8FD"
+
+
 def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_bytes, groups_fn=None, rt_bills_by_day=None):
     """MB-031/032 客户账单：sheet1 账单汇总（区间内每日消耗/补账/充值/余额）+ 每日明细 sheet"""
     from openpyxl import load_workbook
-    from openpyxl.styles import Border, Side, Alignment
+    from openpyxl.styles import Border, Side, Alignment, PatternFill
     wb = load_workbook(io.BytesIO(tpl_bytes))
     if len(wb.sheetnames) < 2:
         raise ValueError("MB-031 模版缺少明细 sheet")
@@ -3794,6 +3813,7 @@ def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_byte
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    num_fmt = "0.00"
 
     # 期初余额：汇总起始日前的最后一张账单余额，取不到默认 0
     prev = db.query(Bill).filter(Bill.customer_id == cust.id, Bill.biz_date < summary_start, Bill.deleted_at.is_(None)).order_by(Bill.biz_date.desc()).first()
@@ -3829,14 +3849,16 @@ def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_byte
             recharge_info_by_day[d].append(s)
 
     # 写汇总 sheet（表头第 1 行，数据从第 2 行开始）
+    zebra1 = _find_zebra_rgb(ws1, 1)
     r = 2
     bal = opening
     d = summary_start
+    idx = 0
     while d <= summary_end:
         b = bills.get(d)
         sales = round(float(b.sales), 2) if b and b.sales is not None else 0.0
         bu = round(bu_by_day.get(d, 0.0), 2)
-        u = round(u_by_day.get(d, 0.0), 4)
+        u = round(u_by_day.get(d, 0.0), 2)
         if b is not None and b.balance is not None:
             # 以 Bill.balance 为锚点（已含当日销售/充值/手动调整），避免逐日递推漂移
             bal = round(float(b.balance), 2)
@@ -3844,11 +3866,17 @@ def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_byte
             # 无账单的日期：仅按当日充值/补数递推余额（销售为 0）
             bal = round(bal + bu + chong_rmb_by_day.get(d, 0.0), 2)
         rowvals = [d.strftime("%Y-%m-%d"), sales, bu, u, bal]
+        row_fill = PatternFill(fill_type="solid", fgColor=zebra1) if (zebra1 and idx % 2 == 1) else None
         for j, v in enumerate(rowvals, 1):
             cell = ws1.cell(row=r, column=j, value=v)
             cell.border = border
             cell.alignment = center
+            if j >= 2:
+                cell.number_format = num_fmt
+            if row_fill is not None:
+                cell.fill = row_fill
         r += 1
+        idx += 1
         d += timedelta(days=1)
     end_balance = bal
     # 删除汇总 sheet 多余的空行（模板预留了 30 行）
@@ -3856,6 +3884,7 @@ def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_byte
         ws1.delete_rows(r, ws1.max_row - r + 1)
 
     # 每日明细 sheet：复制 yyyymmdd 模版，仅生成有明细或充值补数的日期（最近日期在前）
+    zebra2 = _find_zebra_rgb(tpl_ws, 7)
     for day in reversed(detail_days):
         info = recharge_info_by_day.get(day, [])
         rt_bills = rt_bills_by_day.get(day) if rt_bills_by_day else None
@@ -3879,6 +3908,7 @@ def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_byte
         amount_col = 6 if has_add_name else 5
         amount_letter = "F" if has_add_name else "E"
         rr = 8
+        idx = 0
         for g_key, g in sorted_groups:
             if rr > 17:
                 # 超过模版预留的 10 行，动态在合计行前插入一行
@@ -3889,11 +3919,15 @@ def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_byte
             if has_add_name:
                 vals.append("/" if g.get("is_product") else ("是" if g.get("add_name") else "否"))
             vals.append(round(float(g.get("amount") or 0), 2))
+            row_fill = PatternFill(fill_type="solid", fgColor=zebra2) if (zebra2 and idx % 2 == 1) else None
             for j, v in enumerate(vals, 1):
                 cell = new_ws.cell(row=rr, column=j, value=v)
                 cell.border = border
                 cell.alignment = center
+                if row_fill is not None:
+                    cell.fill = row_fill
             rr += 1
+            idx += 1
         # 删除未使用的明细空行（8~17 未填部分），合计行自动上移
         if rr <= 17:
             new_ws.delete_rows(rr, 17 - rr + 1)
