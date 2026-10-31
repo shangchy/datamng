@@ -3877,7 +3877,8 @@ def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_byte
         rr = 8
         for g_key, g in sorted_groups:
             if rr > 17:
-                break
+                # 超过模版预留的 10 行，动态在合计行前插入一行
+                new_ws.insert_rows(rr, 1)
             vals = [g.get("task_name") or g_key, g.get("order_no") or "",
                     int(g.get("qty") or 0),
                     round(float(g["unit"]), 4) if g.get("unit") is not None else ""]
