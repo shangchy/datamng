@@ -1974,8 +1974,9 @@ def _build_distribute_zip(db, jobs, date_str, progress_cb, should_cancel=None):
 
 def _build_daily_bills(db, date_obj, customer_ids=None):
     """构建某日期各代理账单明细（不落库）：返回 {cust_code: {customer_id, cust_label, qty, sales, cost, balance, groups, recharge_info}}"""
-    rows = db.query(DailyData).filter(DailyData.biz_date == date_obj).all()
-    tids = {d.task_id for d in rows if d.task_id}
+    rows = db.query(DailyData.task_id, func.count(DailyData.id)).filter(
+        DailyData.biz_date == date_obj).group_by(DailyData.task_id).all()
+    tids = {tid for tid, _ in rows if tid}
     orders_by_tid = {o.task_id: o for o in db.query(Order).filter(
         Order.task_id.in_(tids), Order.deleted_at.is_(None)).all()} if tids else {}
     needed_cids = {o.customer_id for o in orders_by_tid.values()}
@@ -1987,6 +1988,11 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
         Channel.id.in_(needed_chids)).all()} if needed_chids else {}
     op_map = {o.id: o for o in db.query(Operator).filter(
         Operator.id.in_(needed_oids)).all()} if needed_oids else {}
+    # 预加载甲方价格（避免逐订单 N+1 查询）
+    needed_upids = {o.upstream_id for o in orders_by_tid.values() if o.upstream_id}
+    up_price_map = defaultdict(dict)
+    for p in db.query(CustomerPrice).filter(CustomerPrice.customer_id.in_(needed_upids)).all():
+        up_price_map[p.customer_id][(p.channel_id, p.operator_id)] = float(p.price)
     orders_info = {}
     for order in orders_by_tid.values():
         tid = order.task_id
@@ -1995,13 +2001,10 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
         op = op_map.get(order.operator_id)
         up_price = 0.0
         if order.upstream_id and order.channel_id:
-            up_q = db.query(CustomerPrice).filter(CustomerPrice.customer_id == order.upstream_id,
-                                                  CustomerPrice.channel_id == order.channel_id)
-            up_cp = up_q.filter(CustomerPrice.operator_id == order.operator_id).first()
-            if not up_cp:
-                up_cp = up_q.filter(CustomerPrice.operator_id.is_(None)).first()
-            if up_cp:
-                up_price = float(up_cp.price)
+            pm = up_price_map.get(order.upstream_id, {})
+            up_price = pm.get((order.channel_id, order.operator_id))
+            if up_price is None:
+                up_price = pm.get((order.channel_id, None), 0.0)
         orders_info[tid] = {
             "group_name": order.group_name or "", "task_name": order.task_name or "",
             "order_no": order.order_no or "", "channel": ch.name if ch else "",
@@ -2014,10 +2017,11 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
     expired_tids = {tid for tid, info in orders_info.items()
                     if info.get("end_date") and date_obj > info["end_date"] + timedelta(days=1)}
     bills = {}
-    for d in rows:
-        if not d.task_id or d.task_id not in orders_info or d.task_id in expired_tids:
+    for tid, cnt in rows:
+        cnt = int(cnt or 0)
+        if not tid or tid not in orders_info or tid in expired_tids:
             continue
-        info = orders_info[d.task_id]
+        info = orders_info[tid]
         if selected is not None and info.get("customer_id") not in selected:
             continue
         cc = info["cust_code"]
@@ -2028,17 +2032,17 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
                          "qty": 0, "sales": 0.0, "cost": 0.0,
                          "balance": float(cust.balance) if cust and cust.balance is not None else 0,
                          "groups": {}}
-        bills[cc]["qty"] += 1
         eff_price = info["price"] + (0.01 if info["add_name"] else 0)
-        bills[cc]["sales"] += eff_price
-        bills[cc]["cost"] += info["upstream_price"]
-        gg = bills[cc]["groups"].setdefault(d.task_id,
+        bills[cc]["qty"] += cnt
+        bills[cc]["sales"] += eff_price * cnt
+        bills[cc]["cost"] += info["upstream_price"] * cnt
+        gg = bills[cc]["groups"].setdefault(tid,
                                             {"task_name": info["task_name"] or info["group_name"],
                                              "order_no": info["order_no"], "channel": info["channel"],
                                              "operator": info["operator"], "qty": 0, "amount": 0.0,
                                              "unit": info["price"], "add_name": info["add_name"]})
-        gg["qty"] += 1
-        gg["amount"] += eff_price
+        gg["qty"] += cnt
+        gg["amount"] += eff_price * cnt
     # 产品销售合并
     for ps, prod in db.query(ProductSale, Product).join(
             Product, ProductSale.product_id == Product.id).filter(
@@ -3729,23 +3733,23 @@ def generate_bills_zip(db: Session = Depends(get_db), _=Depends(get_current_user
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('账单-' + date_obj.strftime('%Y%m%d') + '.zip')}"})
 
 
-def _bill_groups(db, cust, day):
-    """取某客户某日的账单明细 groups（优先快照 detail_json，无则实时重建）"""
-    b = db.query(Bill).filter(Bill.customer_id == cust.id, Bill.biz_date == day, Bill.deleted_at.is_(None)).first()
-    groups = {}
-    if b and b.detail_json:
-        try:
-            groups = json.loads(b.detail_json).get("groups") or {}
-        except (ValueError, TypeError):
-            groups = {}
+def _bill_groups(db, cust, day, rt_bills=None):
+    """取某客户某日的账单明细 groups（实时重建优先，日活缺失时回退快照 detail_json）"""
+    if rt_bills is None:
+        rt_bills = _build_daily_bills(db, day, [cust.id])
+    g = rt_bills.get(cust.code) or {}
+    groups = g.get("groups") or {}
     if not groups:
-        rt = _build_daily_bills(db, day, [cust.id])
-        g = rt.get(cust.code) or {}
-        groups = g.get("groups") or {}
+        b = db.query(Bill).filter(Bill.customer_id == cust.id, Bill.biz_date == day, Bill.deleted_at.is_(None)).first()
+        if b and b.detail_json:
+            try:
+                groups = json.loads(b.detail_json).get("groups") or {}
+            except (ValueError, TypeError):
+                groups = {}
     return groups
 
 
-def _upstream_groups(db, up, day):
+def _upstream_groups(db, up, day, rt_bills=None):
     """甲方某日按工单号聚合的明细 groups（任务名=订单编号、工单号=工单号）"""
     rows = db.query(DailyData).filter(DailyData.biz_date == day, DailyData.upstream == up.name).all()
     tids = {d.task_id for d in rows if d.task_id}
@@ -3772,7 +3776,7 @@ def _upstream_groups(db, up, day):
     return groups
 
 
-def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_bytes, groups_fn=None):
+def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_bytes, groups_fn=None, rt_bills_by_day=None):
     """MB-031/032 客户账单：sheet1 账单汇总（区间内每日消耗/补账/充值/余额）+ 每日明细 sheet"""
     from openpyxl import load_workbook
     from openpyxl.styles import Border, Side, Alignment
@@ -3845,7 +3849,8 @@ def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_byte
     # 每日明细 sheet：复制 yyyymmdd 模版，仅生成有明细或充值补数的日期
     for day in detail_days:
         info = recharge_info_by_day.get(day, [])
-        groups = (groups_fn or _bill_groups)(db, cust, day)
+        rt_bills = rt_bills_by_day.get(day) if rt_bills_by_day else None
+        groups = (groups_fn or _bill_groups)(db, cust, day, rt_bills)
         if not groups and not info:
             continue
         new_ws = wb.copy_worksheet(tpl_ws)
@@ -3931,11 +3936,14 @@ def generate_bill_files(db: Session = Depends(get_db), _=Depends(get_current_use
     tpl_bytes = bytes(tpl.file_data)
     down_customers = db.query(Customer).filter(Customer.ctype == "downstream", Customer.deleted_at.is_(None)).order_by(Customer.code).all()
 
+    # 预计算区间内每天的实时账单（按日一次，供所有代理共享，避免每个客户每天重复重建）
+    rt_bills_by_day = {day: _build_daily_bills(db, day, None) for day in detail_days}
+
     buf = io.BytesIO()
     used_names = set()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for cust in down_customers:
-            bio, end_balance = _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_bytes)
+            bio, end_balance = _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_bytes, rt_bills_by_day=rt_bills_by_day)
             base = f"【账单】{cust.code}-{date_label}{_balance_suffix(end_balance)}"
             filename = f"{base}.xlsx"
             n = 1
