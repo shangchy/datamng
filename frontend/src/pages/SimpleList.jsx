@@ -77,6 +77,9 @@ const KINDS = {
   },
   bills: {
     title: '账单', endpoint: '/api/bills', perm: 'bill',
+    filterCols: [
+      { k: 'customer', l: '客户' }, { k: 'biz_date', l: '业务日期' },
+    ],
     cols: [
       { k: 'customer', l: '客户' }, { k: 'biz_date', l: '业务日期' }, { k: 'purchase_qty', l: '进货量', num: true },
       { k: 'sales', l: '销售金额（元）', num: true }, { k: 'balance', l: '余额（元）', num: true }, { k: 'profit', l: '利润（元）', num: true },
@@ -997,7 +1000,7 @@ export default function SimpleList({ kind }) {
       {busy && <Loading text={busyMsg} progress={busyProgress} />}
       <input type="file" accept=".csv,.xlsx,.xls" style={{ display: 'none' }} ref={fileRef} onChange={e => { if (e.target.files[0]) importFile(e.target.files[0]).catch(err => showError(err.message)); e.target.value = '' }} />
       <input type="file" accept=".csv,.xlsx,.xls" style={{ display: 'none' }} ref={washFileRef} onChange={e => { if (e.target.files[0]) importWash().catch(err => showError(err.message)); e.target.value = '' }} />
-      <div className="toolbar">
+      <div className={`toolbar ${cfg.filterCols ? 'toolbar-inline' : ''}`}>
         <div className={`filter-wrap ${filterCollapsed ? 'collapsed' : ''}`}>
           {kind === 'daily' && (
             <>
@@ -1006,7 +1009,7 @@ export default function SimpleList({ kind }) {
               <input type="date" placeholder="数据日期 结束" value={filters.end_date || ''} onChange={e => setFilters({ ...filters, end_date: e.target.value })} />
             </>
           )}
-          <FilterBar cols={kind === 'daily' ? cfg.cols.filter(c => c.k !== 'biz_date') : cfg.cols} filters={filters} setFilters={handleSetFilters} onSearch={search} fieldOptions={cascadeFieldOptions()} actions={false} />
+          <FilterBar cols={cfg.filterCols || (kind === 'daily' ? cfg.cols.filter(c => c.k !== 'biz_date') : cfg.cols)} filters={filters} setFilters={handleSetFilters} onSearch={search} fieldOptions={cascadeFieldOptions()} actions={false} />
         </div>
         <div className="toolbar-actions">
         <button className="btn primary" onClick={() => search()}>查询</button>
@@ -1036,8 +1039,7 @@ export default function SimpleList({ kind }) {
         {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
         {cfg.export && <button className="btn green" onClick={() => setExportModal(true)}>导出数据</button>}
         {kind === 'daily' && can('daily:batch_delete') && <button className="btn danger" onClick={() => setBatchDelModal(true)}>⚠️ 批量删除</button>}
-        {cfg.billExp && <button className="btn primary" onClick={() => setGenBillModal(true)}>生成账单</button>}
-        {cfg.billExp && <button className="btn green" onClick={() => setBillSummaryModal(true)}>导出账单</button>}
+        {cfg.billExp && <button className="btn orange" onClick={() => setGenBillModal(true)}>生成账单</button>}
         {cfg.simple && <button className="btn primary" onClick={() => setSimpleModal({ name: '', status: 1 })}>+ 新增</button>}
         {cfg.addUrl && <button className="btn primary" onClick={openAddUrl}>+ 新增 URL</button>}
         {cfg.clear && can(`${cfg.perm}:clear`) && <button className="btn danger" onClick={clearData}>⚠️ 清空数据</button>}

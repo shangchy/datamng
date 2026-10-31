@@ -76,6 +76,13 @@ input:disabled, select:disabled { background: #f1f5f9; color: var(--sub); }
 .login-box .clearable > .clearable-input { width: 100%; }
 .filter-wrap.collapsed { max-height: 32px; overflow: hidden; }
 .toolbar-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; flex: 1 1 100%; }
+.toolbar-inline { flex-wrap: nowrap; }
+.toolbar-inline .filter-wrap { display: flex; flex: 0 0 auto; gap: 8px; }
+.toolbar-inline .filter-wrap > input,
+.toolbar-inline .filter-wrap > select,
+.toolbar-inline .filter-wrap > .clearable { width: auto; min-width: 140px; }
+.toolbar-inline .filter-wrap > .clearable > .clearable-input { width: 100%; }
+.toolbar-inline .toolbar-actions { flex: 0 0 auto; justify-content: flex-start; white-space: nowrap; }
 .toolbar input,
 .toolbar select,
 .toolbar .btn {
