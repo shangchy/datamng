@@ -3814,6 +3814,10 @@ def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_byte
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
     num_fmt = "0.00"
+    from copy import copy
+    # 模版数据行字体（新增行保持与模版一致）
+    data_font1 = copy(ws1.cell(row=2, column=1).font)
+    data_font2 = copy(tpl_ws.cell(row=8, column=1).font)
 
     # 期初余额：汇总起始日前的最后一张账单余额，取不到默认 0
     prev = db.query(Bill).filter(Bill.customer_id == cust.id, Bill.biz_date < summary_start, Bill.deleted_at.is_(None)).order_by(Bill.biz_date.desc()).first()
@@ -3869,6 +3873,7 @@ def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_byte
         row_fill = PatternFill(fill_type="solid", fgColor=zebra1) if (zebra1 and idx % 2 == 1) else None
         for j, v in enumerate(rowvals, 1):
             cell = ws1.cell(row=r, column=j, value=v)
+            cell.font = copy(data_font1)
             cell.border = border
             cell.alignment = center
             if j >= 2:
@@ -3922,6 +3927,7 @@ def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_byte
             row_fill = PatternFill(fill_type="solid", fgColor=zebra2) if (zebra2 and idx % 2 == 1) else None
             for j, v in enumerate(vals, 1):
                 cell = new_ws.cell(row=rr, column=j, value=v)
+                cell.font = copy(data_font2)
                 cell.border = border
                 cell.alignment = center
                 if row_fill is not None:
