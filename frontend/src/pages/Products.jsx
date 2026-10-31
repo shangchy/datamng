@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { api, getUser } from '../api'
+import { api } from '../api'
 import { Modal, useToast, useConfirm, ClearableInput, Badge } from '../components/ui'
 import { useColumnConfig } from '../components/columns'
 import FilterBar from '../components/FilterBar'
 import Pagination from '../components/Pagination'
+import { useButtonPerm } from '../buttonPerms'
 
 const SOURCES = ['日活', '采购', '其他']
 const COLS = [
@@ -32,8 +33,7 @@ const IconColumns = (
 export default function Products() {
   const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
-  const user = getUser() || {}
-  const isAdmin = user.role_code === 'admin' || (user.permissions || []).includes('*')
+  const { can } = useButtonPerm()
   const { visible: cols, picker, openPicker } = useColumnConfig(COLS, 'cols_products_v2', [])
   const [rows, setRows] = useState([])
   const [filters, setFilters] = useState({})
@@ -139,7 +139,7 @@ export default function Products() {
                   <td className="ops">
                     <button className="btn small" onClick={() => openEdit(p)}>编辑</button>
                     <button className="btn small" onClick={() => copyProduct(p)}>复制</button>
-                    {isAdmin && <button className="btn small danger" onClick={() => del(p)}>删除</button>}
+                    {can('products:delete') && <button className="btn small danger" onClick={() => del(p)}>删除</button>}
                   </td>
                   {cols.map(c => (
                     <td key={c.k} className={c.num ? 'num' : ''}>{cell(c, p)}</td>

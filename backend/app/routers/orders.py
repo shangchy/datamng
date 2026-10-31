@@ -833,7 +833,7 @@ def batch_stop(body: BatchStopBody, db: Session = Depends(get_db), user=Depends(
 
 @router.post("/batch-reopen")
 def batch_reopen(body: BatchStopBody, db: Session = Depends(get_db), user=Depends(require_admin)):
-    """批量复提：已停订单改回未提，并可更新更新日期（仅管理员）"""
+    """批量复提：已停订单改回未提，并可更新更新日期/开始日期/截止日期（仅管理员）"""
     if body.order_date:
         if body.order_date > date.today():
             raise HTTPException(status_code=400, detail="更新日期不能是未来日期，请修改更新日期")
@@ -843,6 +843,10 @@ def batch_reopen(body: BatchStopBody, db: Session = Depends(get_db), user=Depend
         if o.status == "已停":
             if body.order_date:
                 o.order_date = body.order_date
+            if body.start_date:
+                o.start_date = body.start_date
+            if body.end_date:
+                o.end_date = body.end_date
             o.status = "未提"
             o.stop_date = None
             o.updated_at = datetime.now()

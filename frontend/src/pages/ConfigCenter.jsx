@@ -22,6 +22,10 @@ export default function ConfigCenter() {
     setItems(items.map(it => it.key === key ? { ...it, value } : it))
   }
 
+  function setValue(key, value) {
+    setItems(items.map(it => it.key === key ? { ...it, value } : it))
+  }
+
   async function save(item) {
     setSaving(true)
     try {

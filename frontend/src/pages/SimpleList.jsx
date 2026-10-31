@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { api, getToken, getUser, downloadFile, uploadFile } from '../api'
+import { api, getToken, downloadFile, uploadFile } from '../api'
 import { Modal, Badge, useToast, useConfirm, Loading, ClearableInput } from '../components/ui'
 import { useColumnConfig, downloadCsv } from '../components/columns'
 import FilterBar, { buildQuery } from '../components/FilterBar'
 import Pagination from '../components/Pagination'
-import { MENU_PERMS } from '../menuPerms'
+import { useButtonPerm } from '../buttonPerms'
 
 function toDateInput(val) {
   if (!val) return ''
@@ -24,7 +24,7 @@ const IconColumns = (
 
 const KINDS = {
   daily: {
-    title: '日活数据', endpoint: '/api/daily-data',
+    title: '日活数据', endpoint: '/api/daily-data', perm: 'daily',
     cols: [
       { k: 'biz_date', l: '数据日期' }, { k: 'upstream', l: '甲方' }, { k: 'task_id', l: '任务id' },
       { k: 'task_name', l: '任务名' }, { k: 'phone', l: '手机号' }, { k: 'name', l: '姓名' }, { k: 'province', l: '省' },
@@ -36,14 +36,14 @@ const KINDS = {
       defaultHidden: ['name', 'cat1', 'cat2', 'source_file'],
   },
   sourcefiles: {
-    title: '文件管理', endpoint: '/api/source-files',
+    title: '文件管理', endpoint: '/api/source-files', perm: 'file',
     cols: [
       { k: 'filename', l: '文件名' }, { k: 'category', l: '文件类型' }, { k: 'file_type', l: '扩展名' }, { k: 'biz_date', l: '数据日期' },
       { k: 'size', l: '大小' }, { k: 'created_at', l: '上传时间' },
     ], dl: true, del: true,
   },
   washnames: {
-    title: '洗名库', endpoint: '/api/wash-names',
+    title: '洗名库', endpoint: '/api/wash-names', perm: 'wash',
     cols: [
       { k: 'phone', l: '手机号' }, { k: 'name', l: '姓名' },
       { k: 'province', l: '省' }, { k: 'city', l: '市' }, { k: 'operator', l: '运营商' },
@@ -51,7 +51,7 @@ const KINDS = {
     ], batchDel: true, imp: true, impEndpoint: '/api/wash-names/import',
   },
   fund: {
-    title: '公积金', endpoint: '/api/fund',
+    title: '公积金', endpoint: '/api/fund', perm: 'fund',
     cols: [
       { k: 'phone', l: '手机号' }, { k: 'name', l: '姓名' }, { k: 'id_card', l: '身份证号' }, { k: 'gender', l: '性别' },
       { k: 'province', l: '省份' }, { k: 'city', l: '地市' }, { k: 'company', l: '单位名称' }, { k: 'company_type', l: '单位性质' },
@@ -69,14 +69,14 @@ const KINDS = {
     cols: [{ k: 'name', l: '运营商组合' }, { k: 'status', l: '状态' }], simple: true,
   },
   urls: {
-    title: '配件管理', endpoint: '/api/urls',
+    title: '配件管理', endpoint: '/api/urls', perm: 'parts',
     cols: [
       { k: 'name', l: '名称' }, { k: 'owner', l: '归属' }, { k: 'cat1', l: '一级品类' }, { k: 'cat2', l: '二级品类' },
       { k: 'platform', l: '平台' }, { k: 'channel', l: '渠道' }, { k: 'url', l: 'URL', multiline: true }, { k: 'level', l: '等级' }, { k: 'updated_at', l: '更新时间' },
     ], addUrl: true, del: true, editUrl: true, imp: true, impEndpoint: '/api/urls/import', clear: true,
   },
   bills: {
-    title: '账单', endpoint: '/api/bills',
+    title: '账单', endpoint: '/api/bills', perm: 'bill',
     cols: [
       { k: 'customer', l: '客户' }, { k: 'biz_date', l: '业务日期' }, { k: 'purchase_qty', l: '进货量', num: true },
       { k: 'sales', l: '销售金额（元）', num: true }, { k: 'balance', l: '余额（元）', num: true }, { k: 'profit', l: '利润（元）', num: true },
@@ -101,9 +101,8 @@ const KINDS = {
 
 export default function SimpleList({ kind }) {
   const cfg = KINDS[kind]
-  const user = getUser() || {}
-  const isAdmin = user.role_code === 'admin' || (user.permissions || []).includes('*')
-  const showBatchDel = !!cfg.batchDel && isAdmin
+  const { can } = useButtonPerm()
+  const showBatchDel = !!cfg.batchDel && can(`${cfg.perm}:batch_delete`)
   const hasRowOps = !!(cfg.simple || cfg.editUrl || cfg.del || cfg.dl || cfg.handle || cfg.reset || cfg.pwd || cfg.detail || cfg.dailyEdit)
   const { toast, showError } = useToast()
   const nav = useNavigate()
@@ -125,8 +124,8 @@ export default function SimpleList({ kind }) {
   const [urlModal, setUrlModal] = useState(null) // {mode, id?, name, level, owner_id, channel_id, platform_id, urls:[string]}
   const [urlOptions, setUrlOptions] = useState({ channels: [], platforms: [] })
   const [pwdModal, setPwdModal] = useState(null)
-  const [rolePermModal, setRolePermModal] = useState(null)
   const [userEdit, setUserEdit] = useState(null)
+  const [userCreate, setUserCreate] = useState(null)
   const [roles, setRoles] = useState([])
   const [roleCreate, setRoleCreate] = useState(null)
   const [sort, setSort] = useState(null)
@@ -172,10 +171,16 @@ export default function SimpleList({ kind }) {
   const [billSummaryStart, setBillSummaryStart] = useState('')
   const [billSummaryEnd, setBillSummaryEnd] = useState('')
   const [genBillModal, setGenBillModal] = useState(false)
+  const [genBillType, setGenBillType] = useState('day')
   const [genBillDate, setGenBillDate] = useState(() => {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
+  const [genBillStart, setGenBillStart] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
+  const [genBillEnd, setGenBillEnd] = useState('')
   const [checkModal, setCheckModal] = useState(false)
   const [checkDate, setCheckDate] = useState(() => {
     const d = new Date()
@@ -549,34 +554,28 @@ export default function SimpleList({ kind }) {
     } catch (e) { showError(e.message) }
   }
 
-  async function openRolePerms() {
+  async function openUserCreate() {
     try {
-      const r = await api.get('/api/roles')
-      const roles = r.data || []
-      const editable = roles.filter(x => x.code !== 'admin')
-      if (!editable.length) { showError('无可配置角色'); return }
-      const pr = await api.get(`/api/roles/${editable[0].id}/permissions`)
-      setRolePermModal({ roles, rid: editable[0].id, codes: pr.data.codes || [] })
+      const rolesRes = await api.get('/api/roles')
+      setRoles(rolesRes.data || [])
+      const firstRole = (rolesRes.data || [])[0]
+      setUserCreate({ username: '', nickname: '', role_id: firstRole ? firstRole.id : '', password: '' })
     } catch (e) { showError(e.message) }
   }
-  async function selectRolePerms(rid) {
-    try {
-      const pr = await api.get(`/api/roles/${rid}/permissions`)
-      setRolePermModal({ ...rolePermModal, rid, codes: pr.data.codes || [] })
-    } catch (e) { showError(e.message) }
-  }
-  function togglePerm(code) {
-    const codes = rolePermModal.codes.includes(code)
-      ? rolePermModal.codes.filter(c => c !== code)
-      : [...rolePermModal.codes, code]
-    setRolePermModal({ ...rolePermModal, codes })
-  }
-  async function saveRolePerms() {
+
+  async function saveUserCreate() {
+    const username = (userCreate.username || '').trim()
+    const nickname = (userCreate.nickname || '').trim()
+    const password = userCreate.password || ''
+    if (!username) { showError('用户名不能为空'); return }
+    if (!nickname) { showError('昵称不能为空'); return }
+    if (!userCreate.role_id) { showError('请选择角色'); return }
+    if (!password) { showError('请填写初始密码'); return }
     try {
       await withBusy(async () => {
-        await api.put(`/api/roles/${rolePermModal.rid}/permissions`, { codes: rolePermModal.codes })
-        toast('权限已保存'); setRolePermModal(null)
-      }, '正在保存…')
+        await api.post('/api/users', { username, nickname, role_id: userCreate.role_id, password })
+        toast('已创建'); setUserCreate(null); load()
+      }, '正在创建…')
     } catch (e) { showError(e.message) }
   }
 
@@ -592,16 +591,6 @@ export default function SimpleList({ kind }) {
         const r = await api.get('/api/roles')
         setRoles(r.data || [])
       }, '正在创建…')
-    } catch (e) { showError(e.message) }
-  }
-
-  async function deleteRole(rid) {
-    if (!(await confirm('确认删除该角色？该角色下不能有账户。'))) return
-    try {
-      await withBusy(async () => {
-        await api.del(`/api/roles/${rid}`)
-        toast('角色已删除'); setRolePermModal(null)
-      }, '正在删除…')
     } catch (e) { showError(e.message) }
   }
 
@@ -870,11 +859,23 @@ export default function SimpleList({ kind }) {
   }
 
   async function doGenerateBill() {
-    if (!genBillDate) { showError('请选择日期'); return }
+    if (genBillType === 'day') {
+      if (!genBillDate) { showError('请选择日期'); return }
+    } else {
+      if (!genBillStart || !genBillEnd) { showError('请选择开始和结束日期'); return }
+      if (genBillEnd < genBillStart) { showError('结束日期不能早于开始日期'); return }
+    }
     setGenBillModal(false)
     try {
       await withBusy(async () => {
-        await downloadFile(`/api/bills/generate-bill?date=${genBillDate}`)
+        const p = new URLSearchParams()
+        if (genBillType === 'day') {
+          p.set('start_date', genBillDate)
+        } else {
+          p.set('start_date', genBillStart)
+          p.set('end_date', genBillEnd)
+        }
+        await downloadFile(`/api/bills/generate-bill?${p.toString()}`)
         toast('代理账单已生成')
       }, '正在生成代理账单…')
     } catch (e) { showError(e.message) }
@@ -1034,13 +1035,14 @@ export default function SimpleList({ kind }) {
         {kind === 'sourcefiles' && <button className="btn primary" onClick={() => { setSfCategory('手动'); setSfModal(true) }}>上传文件</button>}
         {cfg.imp && <button className="btn" onClick={() => fileRef.current.click()}>导入 Excel</button>}
         {cfg.export && <button className="btn green" onClick={() => setExportModal(true)}>导出数据</button>}
-        {kind === 'daily' && isAdmin && <button className="btn danger" onClick={() => setBatchDelModal(true)}>⚠️ 批量删除</button>}
+        {kind === 'daily' && can('daily:batch_delete') && <button className="btn danger" onClick={() => setBatchDelModal(true)}>⚠️ 批量删除</button>}
         {cfg.billExp && <button className="btn primary" onClick={() => setGenBillModal(true)}>生成账单</button>}
         {cfg.billExp && <button className="btn green" onClick={() => setBillSummaryModal(true)}>导出账单</button>}
         {cfg.simple && <button className="btn primary" onClick={() => setSimpleModal({ name: '', status: 1 })}>+ 新增</button>}
         {cfg.addUrl && <button className="btn primary" onClick={openAddUrl}>+ 新增 URL</button>}
-        {cfg.clear && isAdmin && <button className="btn danger" onClick={clearData}>⚠️ 清空数据</button>}
-        {kind === 'users' && <button className="btn" onClick={openRolePerms}>角色权限</button>}
+        {cfg.clear && can(`${cfg.perm}:clear`) && <button className="btn danger" onClick={clearData}>⚠️ 清空数据</button>}
+        {kind === 'users' && <button className="btn primary" onClick={openUserCreate}>+ 新增账户</button>}
+        {kind === 'users' && <button className="btn" onClick={() => nav('/role-perms')}>角色权限</button>}
         {kind === 'users' && <button className="btn" onClick={() => setRoleCreate({ name: '', code: '', note: '' })}>新增角色</button>}
         {kind === 'alerts' && (
           <>
@@ -1066,7 +1068,7 @@ export default function SimpleList({ kind }) {
                     {cfg.simple && <button className="btn small" onClick={() => toast('编辑')}>编辑</button>}
                     {cfg.editUrl && <button className="btn small" onClick={() => openEditUrl(r)}>编辑</button>}
                     {cfg.dailyEdit && <button className="btn small" onClick={() => openDailyEdit(r)}>编辑</button>}
-                    {cfg.del && isAdmin && <button className="btn small danger" onClick={() => del(r.id)}>删除</button>}
+                    {cfg.del && can(`${cfg.perm}:delete`) && <button className="btn small danger" onClick={() => del(r.id)}>删除</button>}
                     {cfg.dl && <button className="btn small" onClick={() => downloadSourceFile(r)}>下载</button>}
                     {cfg.handle && r.type === '账单预警' && <button className="btn small primary" onClick={() => openRecharge(r)}>充值</button>}
                     {cfg.handle && r.type === '停单提醒' && <button className="btn small primary" onClick={() => openStop(r)}>停单</button>}
@@ -1408,9 +1410,23 @@ export default function SimpleList({ kind }) {
 
       {genBillModal && (
         <Modal title="生成代理账单" onClose={() => setGenBillModal(false)}>
-          <div className="note">使用 MB-031 账单模版，为全部下游代理生成账单文件（含每日账单与当月账单两个 sheet），打包 ZIP 下载。</div>
-          <div className="field" style={{ marginBottom: 12 }}><label className="required">日期</label>
-            <input type="date" value={genBillDate} onChange={e => setGenBillDate(e.target.value)} /></div>
+          <div className="note">特定日期：汇总从月初第一天到该日、明细只生成该日；日期区间：汇总与明细覆盖整个区间（每天一页明细）。使用 MB-031 模版，打包 ZIP 下载。</div>
+          <div className="field" style={{ marginBottom: 12 }}><label>生成类型</label>
+            <select value={genBillType} onChange={e => setGenBillType(e.target.value)}>
+              <option value="day">特定日期账单</option>
+              <option value="range">日期区间账单</option>
+            </select></div>
+          {genBillType === 'day' ? (
+            <div className="field" style={{ marginBottom: 12 }}><label className="required">日期</label>
+              <input type="date" value={genBillDate} onChange={e => setGenBillDate(e.target.value)} /></div>
+          ) : (
+            <div className="row">
+              <div className="field"><label className="required">开始日期</label>
+                <input type="date" value={genBillStart} onChange={e => setGenBillStart(e.target.value)} /></div>
+              <div className="field"><label className="required">结束日期</label>
+                <input type="date" value={genBillEnd} onChange={e => setGenBillEnd(e.target.value)} /></div>
+            </div>
+          )}
           <div className="foot">
             <button className="btn" onClick={() => setGenBillModal(false)}>取消</button>
             <button className="btn primary" onClick={() => doGenerateBill().catch(e => showError(e.message))}>生成</button>
@@ -1624,6 +1640,25 @@ export default function SimpleList({ kind }) {
         </Modal>
       )}
 
+      {userCreate && (
+        <Modal title="新增账户" onClose={() => setUserCreate(null)}>
+          <div className="field" style={{ marginBottom: 10 }}><label className="required">用户名</label>
+            <ClearableInput value={userCreate.username} onChange={e => setUserCreate({ ...userCreate, username: e.target.value })} /></div>
+          <div className="field" style={{ marginBottom: 10 }}><label className="required">昵称</label>
+            <ClearableInput value={userCreate.nickname} onChange={e => setUserCreate({ ...userCreate, nickname: e.target.value })} /></div>
+          <div className="field" style={{ marginBottom: 10 }}><label className="required">角色</label>
+            <select value={userCreate.role_id ?? ''} onChange={e => setUserCreate({ ...userCreate, role_id: Number(e.target.value) })}>
+              {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select></div>
+          <div className="field" style={{ marginBottom: 14 }}><label className="required">初始密码</label>
+            <ClearableInput value={userCreate.password} onChange={e => setUserCreate({ ...userCreate, password: e.target.value })} placeholder="至少 6 位" /></div>
+          <div className="foot">
+            <button className="btn" onClick={() => setUserCreate(null)}>取消</button>
+            <button className="btn primary" onClick={saveUserCreate}>创建</button>
+          </div>
+        </Modal>
+      )}
+
       {pwdModal && (
         <Modal title={`修改密码 · ${pwdModal.username}`} onClose={() => setPwdModal(null)}>
           <div className="field" style={{ marginBottom: 10 }}><label>新密码</label><input type="password" value={pwdModal.password} onChange={e => setPwdModal({ ...pwdModal, password: e.target.value })} placeholder="至少 6 位" /></div>
@@ -1670,32 +1705,6 @@ export default function SimpleList({ kind }) {
         </Modal>
       )}
 
-      {rolePermModal && (
-        <Modal title="角色菜单权限" onClose={() => setRolePermModal(null)}>
-          <div className="field"><label>角色</label>
-            <select value={rolePermModal.rid} onChange={e => selectRolePerms(Number(e.target.value))}>
-              {rolePermModal.roles.filter(r => r.code !== 'admin').map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </select>
-          </div>
-          <div className="note" style={{ marginTop: 8 }}>超级管理员拥有全部权限，无需配置；修改后该角色用户需重新登录生效。</div>
-          <table style={{ marginTop: 10 }}>
-            <thead><tr><th>菜单</th><th style={{ width: 60 }}>可访问</th></tr></thead>
-            <tbody>
-              {MENU_PERMS.map(m => (
-                <tr key={m.perm}>
-                  <td>{m.label}</td>
-                  <td className="ops"><input type="checkbox" checked={rolePermModal.codes.includes(m.perm)} onChange={() => togglePerm(m.perm)} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="foot">
-            <button className="btn danger" onClick={() => deleteRole(rolePermModal.rid)}>删除角色</button>
-            <button className="btn" onClick={() => setRolePermModal(null)}>取消</button>
-            <button className="btn primary" onClick={saveRolePerms}>保存</button>
-          </div>
-        </Modal>
-      )}
     </div>
   )
 }

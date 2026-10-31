@@ -6,6 +6,7 @@ import { useColumnConfig } from '../components/columns'
 import FilterBar, { buildQuery } from '../components/FilterBar'
 import Pagination from '../components/Pagination'
 import MultiSelect from '../components/MultiSelect'
+import { useButtonPerm } from '../buttonPerms'
 
 const IconChevronDown = (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
@@ -104,6 +105,7 @@ export default function Orders({ variant = 'orders' }) {
   const isStop = variant === 'stop'
   const user = getUser() || {}
   const isAdmin = user.role_code === 'admin' || (user.permissions || []).includes('*')
+  const { can } = useButtonPerm()
   const BASE_COLS = isStop ? [{ k: 'batch_no', l: '提单批次' }, ...COLS] : COLS
   const { visible: cols, picker, openPicker } = useColumnConfig(BASE_COLS, isStop ? 'cols_stop_manage' : 'cols_order')
   const [rows, setRows] = useState([])
@@ -127,7 +129,7 @@ export default function Orders({ variant = 'orders' }) {
 
   function defaultOrderDate() { return bizDate || todayStr() }
   const [reopenTarget, setReopenTarget] = useState(null)
-  const [reopenDate, setReopenDate] = useState('')
+  const [batchReopenForm, setBatchReopenForm] = useState({ order_date: '', start_date: '', end_date: '' })
   const [extendTarget, setExtendTarget] = useState(null)
   const [extendDate, setExtendDate] = useState('')
   const [reopenOrder, setReopenOrder] = useState(null)
@@ -290,18 +292,18 @@ export default function Orders({ variant = 'orders' }) {
 
   async function batchReopen() {
     if (!selected.length) { showError('请先勾选要复提的订单'); return }
-    setReopenDate(defaultOrderDate())
+    setBatchReopenForm({ order_date: defaultOrderDate(), start_date: '', end_date: '' })
     setReopenTarget({ ids: selected })
   }
 
   async function doReopen() {
-    if (!reopenDate) { showError('请选择更新日期'); return }
+    if (!batchReopenForm.order_date) { showError('请选择更新日期'); return }
     if (!reopenTarget) return
-    if (!(await confirm(`确认将选中的 ${reopenTarget.ids.length} 个订单从「已停」改为「未提」，并将更新日期更新为 ${reopenDate}？`))) return
+    if (!(await confirm(`确认将选中的 ${reopenTarget.ids.length} 个订单从「已停」改为「未提」，并将更新日期更新为 ${batchReopenForm.order_date}？`))) return
     setBusy(true); setBusyMsg('正在批量复提，请稍候…')
     try {
-      const r = await api.post('/api/orders/batch-reopen', { ids: reopenTarget.ids, order_date: reopenDate })
-      toast(r.msg); setReopenTarget(null); setReopenDate(''); setSelected([]); load()
+      const r = await api.post('/api/orders/batch-reopen', { ids: reopenTarget.ids, ...batchReopenForm })
+      toast(r.msg); setReopenTarget(null); setBatchReopenForm({ order_date: '', start_date: '', end_date: '' }); setSelected([]); load()
     } catch (e) { showError(e.message) } finally { setBusy(false); setBusyProgress(null) }
   }
 
@@ -657,18 +659,18 @@ export default function Orders({ variant = 'orders' }) {
           <button className="btn icon" title={filterCollapsed ? '展开查询条件' : '隐藏查询条件'} onClick={() => setFilterCollapsed(!filterCollapsed)}>{filterCollapsed ? IconChevronDown : IconChevronUp}</button>
           <button className="btn green" onClick={exportExcel}>导出订单</button>
           {!isStop && <button className="btn" onClick={exportTemplate}>导出模版</button>}
-          {!isStop && <button className="btn" onClick={() => { setImportResult(null); setImportModal(true) }}>导入订单</button>}
-          {!isStop && <button className="btn" onClick={() => { setReceiptResult(null); setReceiptModal(true) }}>导入回执</button>}
-          {!isStop && <button className="btn green" onClick={() => { setGenDate(defaultOrderDate()); setGenModal(true) }}>生成提单表</button>}
-          {!isStop && <button className="btn orange" onClick={() => setConfirmModal(true)}>提单确认</button>}
+          {!isStop && can('order:import') && <button className="btn" onClick={() => { setImportResult(null); setImportModal(true) }}>导入订单</button>}
+          {!isStop && can('order:import') && <button className="btn" onClick={() => { setReceiptResult(null); setReceiptModal(true) }}>导入回执</button>}
+          {!isStop && can('order:tidabiao') && <button className="btn green" onClick={() => { setGenDate(defaultOrderDate()); setGenModal(true) }}>生成提单表</button>}
+          {!isStop && can('order:confirm') && <button className="btn orange" onClick={() => setConfirmModal(true)}>提单确认</button>}
           {!isStop && <button className="btn" onClick={checkDuplicates}>订单验重</button>}
           <button className={`btn ${filters.plat_issue ? 'primary' : ''}`} onClick={() => setCatCheckModal(true)}>品类检查</button>
-          {!isStop && selected.length > 0 && <button className="btn danger-outline" onClick={batchStop}>批量停单({selected.length})</button>}
-          {!isStop && isAdmin && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>⚠️ 批量删除({selected.length})</button>}
-          {!isStop && isAdmin && selected.length > 0 && <button className="btn" onClick={batchReopen}>批量复提({selected.length})</button>}
-          {!isStop && selected.length > 0 && <button className="btn" onClick={() => { setGroupVal(''); setGroupModal(true) }}>批量修改小组({selected.length})</button>}
-          {!isStop && selected.length > 0 && <button className="btn" onClick={batchExtend}>批量延期({selected.length})</button>}
-          {!isStop && <button className="btn primary" onClick={openCreate}>+ 新建提单</button>}
+          {!isStop && can('order:batch_stop') && selected.length > 0 && <button className="btn danger-outline" onClick={batchStop}>批量停单({selected.length})</button>}
+          {!isStop && can('order:batch_delete') && selected.length > 0 && <button className="btn danger" onClick={batchDelete}>⚠️ 批量删除({selected.length})</button>}
+          {!isStop && can('order:batch_reopen') && selected.length > 0 && <button className="btn" onClick={batchReopen}>批量复提({selected.length})</button>}
+          {!isStop && can('order:batch_group') && selected.length > 0 && <button className="btn" onClick={() => { setGroupVal(''); setGroupModal(true) }}>批量修改小组({selected.length})</button>}
+          {!isStop && can('order:batch_extend') && selected.length > 0 && <button className="btn" onClick={batchExtend}>批量延期({selected.length})</button>}
+          {!isStop && can('order:create') && <button className="btn primary" onClick={openCreate}>+ 新建提单</button>}
           <button className="btn icon" title="自定义表头" onClick={openPicker}>{IconColumns}</button>
         </div>
       </div>
@@ -691,13 +693,13 @@ export default function Orders({ variant = 'orders' }) {
                 {!isStop && <td><input type="checkbox" checked={selected.includes(o.id)} onChange={() => toggleSelect(o.id)} onClick={e => e.stopPropagation()} /></td>}
                 {!isStop && (
                 <td className="ops">
-                  {(isAdmin || ['在执', '未提', '改单'].includes(o.status)) && <IconBtn title="编辑" color="#2563eb" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconEdit}</IconBtn>}
-                  {['在执', '待停', '改单'].includes(o.status) && <IconBtn title="改单" color="#7c3aed" onClick={e => { e.stopPropagation(); openModify(o) }}>{IconModify}</IconBtn>}
-                  {o.status === '已停' && <IconBtn title="复提" color="#059669" onClick={e => { e.stopPropagation(); openReopen(o) }}>{IconReopen}</IconBtn>}
-                  {o.status === '待停' && <IconBtn title="取消停单" color="#059669" onClick={e => { e.stopPropagation(); cancelStop(o) }}>{IconUndo}</IconBtn>}
-                  {['在执', '改单'].includes(o.status) && <IconBtn title="停单" color="#d97706" onClick={e => { e.stopPropagation(); setStopDate(defaultOrderDate()); setStopReason('业务调整'); setStopTarget(o) }}>{IconStop}</IconBtn>}
+                  {can('order:edit') && (isAdmin || ['在执', '未提', '改单'].includes(o.status)) && <IconBtn title="编辑" color="#2563eb" onClick={e => { e.stopPropagation(); openEdit(o) }}>{IconEdit}</IconBtn>}
+                  {can('order:modify') && ['在执', '待停', '改单'].includes(o.status) && <IconBtn title="改单" color="#7c3aed" onClick={e => { e.stopPropagation(); openModify(o) }}>{IconModify}</IconBtn>}
+                  {can('order:reopen') && o.status === '已停' && <IconBtn title="复提" color="#059669" onClick={e => { e.stopPropagation(); openReopen(o) }}>{IconReopen}</IconBtn>}
+                  {can('order:cancel_stop') && o.status === '待停' && <IconBtn title="取消停单" color="#059669" onClick={e => { e.stopPropagation(); cancelStop(o) }}>{IconUndo}</IconBtn>}
+                  {can('order:stop') && ['在执', '改单'].includes(o.status) && <IconBtn title="停单" color="#d97706" onClick={e => { e.stopPropagation(); setStopDate(defaultOrderDate()); setStopReason('业务调整'); setStopTarget(o) }}>{IconStop}</IconBtn>}
                   <IconBtn title="复制新增" color="#0891b2" onClick={e => { e.stopPropagation(); copyCreate(o) }}>{IconCopy}</IconBtn>
-                  {isAdmin && <IconBtn title="删除" color="#dc2626" onClick={e => { e.stopPropagation(); delOrder(o) }}>{IconDelete}</IconBtn>}
+                  {can('order:delete') && <IconBtn title="删除" color="#dc2626" onClick={e => { e.stopPropagation(); delOrder(o) }}>{IconDelete}</IconBtn>}
                 </td>
                 )}
                 {cols.map(c => <React.Fragment key={c.k}>{orderCell(o, c)}</React.Fragment>)}
@@ -871,9 +873,12 @@ export default function Orders({ variant = 'orders' }) {
 
       {reopenTarget && (
         <Modal title="批量复提确认" onClose={() => setReopenTarget(null)}>
-          <div className="note">将选中的 {reopenTarget.ids.length} 个订单从「已停」改为「未提」，并将更新日期更新为所选日期。</div>
-          <div className="field" style={{ marginBottom: 12 }}><label className="required">更新日期</label>
-            <input type="date" value={reopenDate} onChange={e => setReopenDate(e.target.value)} /></div>
+          <div className="note">将选中的 {reopenTarget.ids.length} 个订单从「已停」改为「未提」。可修改更新日期（默认当天）、开始日期、截止日期。</div>
+          <div className="row">
+            <div className="field"><label className="required">更新日期</label><input type="date" value={batchReopenForm.order_date} onChange={e => setBatchReopenForm({ ...batchReopenForm, order_date: e.target.value })} /></div>
+            <div className="field"><label>开始日期</label><input type="date" value={batchReopenForm.start_date} onChange={e => setBatchReopenForm({ ...batchReopenForm, start_date: e.target.value })} /></div>
+            <div className="field"><label>截止日期</label><input type="date" value={batchReopenForm.end_date} onChange={e => setBatchReopenForm({ ...batchReopenForm, end_date: e.target.value })} /></div>
+          </div>
           <div className="foot">
             <button className="btn" onClick={() => setReopenTarget(null)}>取消</button>
             <button className="btn primary" onClick={doReopen}>确认复提</button>
@@ -895,11 +900,11 @@ export default function Orders({ variant = 'orders' }) {
 
       {reopenOrder && (
         <Modal title={`复提 · ${reopenOrder.task_name || reopenOrder.order_no}`} onClose={() => setReopenOrder(null)}>
-          <div className="note">将该订单从「已停」改为「未提」。可修改更新日期（默认当天）、开始日期、结束日期。</div>
+          <div className="note">将该订单从「已停」改为「未提」。可修改更新日期（默认当天）、开始日期、截止日期。</div>
           <div className="row">
             <div className="field"><label className="required">更新日期</label><input type="date" value={reopenForm.order_date} onChange={e => setReopenForm({ ...reopenForm, order_date: e.target.value })} /></div>
             <div className="field"><label>开始日期</label><input type="date" value={reopenForm.start_date} onChange={e => setReopenForm({ ...reopenForm, start_date: e.target.value })} /></div>
-            <div className="field"><label>结束日期</label><input type="date" value={reopenForm.end_date} onChange={e => setReopenForm({ ...reopenForm, end_date: e.target.value })} /></div>
+            <div className="field"><label>截止日期</label><input type="date" value={reopenForm.end_date} onChange={e => setReopenForm({ ...reopenForm, end_date: e.target.value })} /></div>
           </div>
           <div className="foot">
             <button className="btn" onClick={() => setReopenOrder(null)}>取消</button>

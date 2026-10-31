@@ -54,11 +54,49 @@ def seed(db):
             db.add(p)
             db.flush()
         perms.append(p)
+    # 按钮级权限（菜单 → 按钮，账户管理·角色权限勾选）
+    button_perms = [
+        ("order", "订单管理", [
+            "create:新增提单", "edit:编辑", "modify:改单", "stop:停单", "cancel_stop:取消停单",
+            "reopen:复提", "batch_stop:批量停单", "batch_reopen:批量复提", "batch_extend:批量延期",
+            "batch_group:批量修改小组", "delete:删除", "batch_delete:批量删除", "import:导入",
+            "tidabiao:生成提单表", "confirm:提单确认",
+        ]),
+        ("daily", "日活管理", [
+            "import:导入日活", "wash_export:导出洗名", "wash_import:导入洗名", "distribute:分发数据",
+            "batch_delete:批量删除", "backfill_category:补充品类", "extract:单独抽取",
+        ]),
+        ("product", "产品销售", ["create:新增", "save:批量保存", "delete:删除", "import:导入"]),
+        ("bill", "账单管理", ["generate:生成账单", "import:导入", "batch_delete:批量删除"]),
+        ("customer", "客户管理", ["create:新增", "edit:编辑", "recharge:充值", "delete:删除"]),
+        ("alert", "预警中心", ["handle:处理/充值"]),
+        ("wash", "洗名库", ["import:导入", "batch_delete:批量删除"]),
+        ("fund", "公积金", ["create:新增", "edit:编辑", "import:导入", "delete:删除"]),
+        ("file", "文件管理", ["upload:上传", "delete:删除"]),
+        ("parts", "配件管理", ["create:新增URL", "edit:编辑", "delete:删除", "import:导入", "clear:清空"]),
+        ("category", "品类管理", ["create:新增", "edit:编辑", "delete:删除", "import:导入"]),
+        ("channel", "渠道管理", ["create:新增", "edit:编辑", "delete:删除"]),
+        ("operator", "运营商管理", ["create:新增", "edit:编辑", "delete:删除"]),
+        ("template", "模版管理", ["create:新增", "edit:编辑", "delete:删除", "upload:上传文件"]),
+        ("products", "产品管理", ["create:新增", "edit:编辑", "delete:删除"]),
+        ("account", "账户管理", ["create:新增账户", "edit:编辑", "reset:重置密码", "delete:删除", "role_perms:角色权限"]),
+        ("config", "配置中心", ["save:保存"]),
+    ]
+    for module, _mlabel, actions in button_perms:
+        for a in actions:
+            action, label = a.split(":", 1)
+            code = f"{module}:{action}"
+            p = db.query(SysPermission).filter(SysPermission.code == code).first()
+            if not p:
+                p = SysPermission(code=code, label=label, module=module)
+                db.add(p)
+                db.flush()
     db.commit()
 
     _backfill_role_permissions(db)
     _backfill_granular_permissions(db)
     _backfill_product_view(db)
+    _backfill_button_perms(db)
 
     # 产品销售导入模版（配置到模版中心）
     from .routers.products import ensure_product_sale_template
@@ -149,6 +187,25 @@ def _backfill_product_view(db):
             sys_role_permission.c.permission_id == p.id).first()
         if not exists:
             db.execute(sys_role_permission.insert().values(role_id=r.id, permission_id=p.id))
+    db.commit()
+
+
+def _backfill_button_perms(db):
+    """给非 admin 角色补发按钮权限：默认所有按钮可用，仅 delete/batch_delete/clear 归管理员"""
+    admin_only_actions = {"delete", "batch_delete", "clear"}
+    perm_rows = db.query(SysPermission).all()
+    perm_id = {p.code: p.id for p in perm_rows}
+    buttons = [p for p in perm_rows if ":" in (p.code or "") and not p.code.endswith(":view")]
+    for r in db.query(SysRole).filter(SysRole.code != "admin").all():
+        existing = {x[0] for x in db.query(SysPermission.code).join(
+            sys_role_permission, sys_role_permission.c.permission_id == SysPermission.id
+        ).filter(sys_role_permission.c.role_id == r.id).all()}
+        for b in buttons:
+            action = b.code.split(":")[-1]
+            if action in admin_only_actions:
+                continue
+            if b.code not in existing:
+                db.execute(sys_role_permission.insert().values(role_id=r.id, permission_id=b.id))
     db.commit()
 
 

@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { api, getUser } from '../api'
+import { api } from '../api'
 import { Modal, Badge, useToast, useConfirm, ClearableInput } from '../components/ui'
 import FilterBar, { buildQuery } from '../components/FilterBar'
 import Pagination from '../components/Pagination'
+import { useButtonPerm } from '../buttonPerms'
 
 function toDateInput(val) {
   if (!val) return ''
@@ -27,8 +28,7 @@ export default function Customers() {
   const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
   const [searchParams] = useSearchParams()
-  const user = getUser() || {}
-  const isAdmin = user.role_code === 'admin' || (user.permissions || []).includes('*')
+  const { can } = useButtonPerm()
   const [rows, setRows] = useState([])
   const [detail, setDetail] = useState(null)
   const [tab, setTab] = useState('recharges')
@@ -201,7 +201,7 @@ export default function Customers() {
                   <button className="btn small" onClick={() => openDetail(c)}>详情</button>{' '}
                   <button className="btn small primary" onClick={() => { setRecharge({ customer_id: c.id, customer_label: `${c.code} ${c.name}`, balance: c.balance ?? 0, old_rmb: 0, amount_u: '', amount_rmb: '', recharge_date: '', note: '', recharge_type: '转账', reason: '', from_detail: false }) }}>充值</button>{' '}
                   <button className="btn small" onClick={() => openEdit(c)}>编辑</button>
-                  {isAdmin && <button className="btn small danger" onClick={() => delCustomer(c)}>删除</button>}
+                  {can('customer:delete') && <button className="btn small danger" onClick={() => delCustomer(c)}>删除</button>}
                 </td>
               </tr>
             ))}

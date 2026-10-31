@@ -3521,27 +3521,30 @@ def _build_upstream_bills(db, date_obj, customer_ids=None):
     return result
 
 
-def _build_upstream_bill_files(db, date_obj, customer_ids=None):
-    """按甲方生成账单（MB-032 月度进货账单模版），返回 [(filename, bytes)]"""
+def _build_upstream_bill_files(db, summary_start, summary_end, detail_days, date_label, customer_ids=None):
+    """按甲方生成账单（MB-032 模版：汇总 + 每日明细），返回 [(filename, bytes)]"""
     tpl = db.query(Template).filter(Template.code == UPSTREAM_BILL_TPL_CODE).first()
     tpl_bytes = bytes(tpl.file_data) if tpl and tpl.file_data else None
+    q = db.query(Customer).filter(Customer.ctype == "upstream", Customer.status == 1, Customer.deleted_at.is_(None))
+    if customer_ids:
+        q = q.filter(Customer.id.in_(customer_ids))
+    up_customers = q.order_by(Customer.code).all()
     files = []
-    seen = set()
-    for item in _build_upstream_bills(db, date_obj, customer_ids):
-        up_id = item["up_id"]
-        if up_id in seen:
+    for up in up_customers:
+        if not tpl_bytes:
             continue
-        seen.add(up_id)
-        up = db.query(Customer).filter(Customer.id == up_id).first()
-        if up is None:
+        has_data = db.query(Bill).filter(
+            Bill.customer_id == up.id, Bill.biz_date >= summary_start,
+            Bill.biz_date <= summary_end, Bill.deleted_at.is_(None)).first() is not None
+        if not has_data:
+            has_data = db.query(CustomerRecharge).filter(
+                CustomerRecharge.customer_id == up.id,
+                CustomerRecharge.recharge_date >= summary_start,
+                CustomerRecharge.recharge_date <= summary_end).first() is not None
+        if not has_data:
             continue
-        if tpl_bytes:
-            bio = _fill_mb032_bill(db, up, date_obj, tpl_bytes)
-        else:
-            bill = {"qty": item["qty"], "sales": item["sales"], "balance": item["balance"],
-                    "recharge_info": item["recharge_info"], "groups": item["groups"]}
-            bio = _fill_bill_file(item["up_name"], date_obj.strftime("%m%d"), bill, None)
-        files.append((f"【账单】{item['up_code']}-{date_obj.strftime('%Y%m%d')}{_balance_suffix(item['balance'])}.xlsx", bio.read()))
+        bio, end_balance = _fill_mb031_bill(db, up, summary_start, summary_end, detail_days, tpl_bytes, _upstream_groups)
+        files.append((f"【账单】{up.code}-{date_label}{_balance_suffix(end_balance)}.xlsx", bio.read()))
     return files
 
 
@@ -3581,8 +3584,9 @@ def _fill_mb032_bill(db, up, date_obj, tpl_bytes):
         qty_map[(ch_name or "", op_name or "")][biz_date.day] += 1
 
     # 充值(U)/补数(元) 按日
-    recharge_u = defaultdict(float)
-    recharge_rmb = defaultdict(float)
+    recharge_u = defaultdict(float)       # 充值 U
+    recharge_rmb = defaultdict(float)     # 补数 RMB
+    recharge_u_rmb = defaultdict(float)   # 充值 RMB（实际到账金额）
     for rec in db.query(CustomerRecharge).filter(
             CustomerRecharge.customer_id == up.id,
             CustomerRecharge.recharge_date >= month_start,
@@ -3592,15 +3596,24 @@ def _fill_mb032_bill(db, up, date_obj, tpl_bytes):
             recharge_rmb[d] += float(rec.amount_rmb or 0)
         else:
             recharge_u[d] += float(rec.amount_u or 0)
+            recharge_u_rmb[d] += float(rec.amount_rmb or 0)
+
+    # 汇率：按系统配置 recharge_rate（U→人民币）
+    rate_cfg = db.query(SysConfig).filter(SysConfig.key == "recharge_rate").first()
+    try:
+        rate = float(rate_cfg.value) if rate_cfg and rate_cfg.value else 6.7
+    except (TypeError, ValueError):
+        rate = 6.7
 
     # 标题 + 客户名称
     ws["B1"] = f"LM 进货账单\u3000{date_obj.year} 年 {date_obj.month} 月"
     ws["B2"] = up.name or ""
 
-    # 上月剩余余额：上月最后一张账单余额，否则取当前余额
+    # 上月剩余余额：上月最后一张账单余额，取不到默认 0
     prev = db.query(Bill).filter(Bill.customer_id == up.id, Bill.biz_date < month_start, Bill.deleted_at.is_(None)).order_by(Bill.biz_date.desc()).first()
-    prev_balance = float(prev.balance) if prev and prev.balance is not None else (float(up.balance) if up.balance is not None else 0)
+    prev_balance = float(prev.balance) if prev and prev.balance is not None else 0.0
     ws["D2"] = round(prev_balance, 2)
+    ws["E2"] = round(prev_balance / rate, 2) if rate else 0.0
 
     def _day_col(day):
         return 5 + day  # F=6 -> day1
@@ -3653,6 +3666,12 @@ def _fill_mb032_bill(db, up, date_obj, tpl_bytes):
         if rmb:
             ws.cell(row=23, column=_day_col(day), value=round(rmb, 2))
 
+    # 本月充值金额（人民币）：按实际到账金额合计，覆盖模板写死的 6.7 汇率
+    ws["D4"] = round(sum(recharge_u_rmb.values()), 2)
+    # U 列换算按系统汇率（覆盖模板 D2/6.7、D3/6.7、D5/6.7）
+    ws["E3"] = f"=D3/{rate}"
+    ws["E5"] = f"=D5/{rate}"
+
     bio = io.BytesIO()
     wb.save(bio)
     bio.seek(0)
@@ -3691,7 +3710,7 @@ def generate_bills_zip(db: Session = Depends(get_db), _=Depends(get_current_user
         for cc, b in bills.items():
             cust = cust_map.get(b.get("customer_id"))
             if mb031_bytes and cust is not None:
-                bio = _fill_mb031_bill(db, cust, date_obj, b, mb031_bytes)
+                bio, _ = _fill_mb031_bill(db, cust, date_obj.replace(day=1), date_obj, [date_obj], mb031_bytes)
             else:
                 bio = _fill_bill_file(b.get("cust_label") or cc, date_str, b, None)
             base = f"【账单】{cc}-{date_obj.strftime('%Y%m%d')}{_balance_suffix(b.get('balance'))}"
@@ -3703,278 +3722,221 @@ def generate_bills_zip(db: Session = Depends(get_db), _=Depends(get_current_user
             used_names.add(filename)
             zf.writestr(filename, bio.read())
         # 各甲方账单
-        for filename, data in _build_upstream_bill_files(db, date_obj, selected_ids or None):
+        for filename, data in _build_upstream_bill_files(db, date_obj.replace(day=1), date_obj, [date_obj], date_obj.strftime('%Y%m%d'), selected_ids or None):
             zf.writestr(filename, data)
     buf.seek(0)
     return Response(content=buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('账单-' + date_obj.strftime('%Y%m%d') + '.zip')}"})
 
 
-def _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes):
-    """用 MB-031 模版生成代理账单：sheet1 每日账单 + sheet2 当月每日统计"""
+def _bill_groups(db, cust, day):
+    """取某客户某日的账单明细 groups（优先快照 detail_json，无则实时重建）"""
+    b = db.query(Bill).filter(Bill.customer_id == cust.id, Bill.biz_date == day, Bill.deleted_at.is_(None)).first()
+    groups = {}
+    if b and b.detail_json:
+        try:
+            groups = json.loads(b.detail_json).get("groups") or {}
+        except (ValueError, TypeError):
+            groups = {}
+    if not groups:
+        rt = _build_daily_bills(db, day, [cust.id])
+        g = rt.get(cust.code) or {}
+        groups = g.get("groups") or {}
+    return groups
+
+
+def _upstream_groups(db, up, day):
+    """甲方某日按工单号聚合的明细 groups（任务名=订单编号、工单号=工单号）"""
+    rows = db.query(DailyData).filter(DailyData.biz_date == day, DailyData.upstream == up.name).all()
+    tids = {d.task_id for d in rows if d.task_id}
+    orders_by_tid = {o.task_id: o for o in db.query(Order).filter(
+        Order.task_id.in_(tids), Order.deleted_at.is_(None)).all()} if tids else {}
+    price_map = {}
+    for p in db.query(CustomerPrice).filter(CustomerPrice.customer_id == up.id).all():
+        price_map[(p.channel_id, p.operator_id)] = float(p.price)
+    groups = {}
+    for d in rows:
+        tid = d.task_id
+        if not tid or tid not in orders_by_tid:
+            continue
+        o = orders_by_tid[tid]
+        if tid not in groups:
+            price = price_map.get((o.channel_id, o.operator_id))
+            if price is None:
+                price = price_map.get((o.channel_id, None), 0.0)
+            groups[tid] = {"task_name": o.order_no or "", "order_no": tid,
+                           "qty": 0, "unit": price, "add_name": bool(o.add_name), "amount": 0.0}
+        g = groups[tid]
+        g["qty"] += 1
+        g["amount"] = round(g["qty"] * g["unit"], 2)
+    return groups
+
+
+def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_bytes, groups_fn=None):
+    """MB-031/032 客户账单：sheet1 账单汇总（区间内每日消耗/补账/充值/余额）+ 每日明细 sheet"""
     from openpyxl import load_workbook
-    from openpyxl.styles import Border, Side, Alignment, PatternFill
+    from openpyxl.styles import Border, Side, Alignment
     wb = load_workbook(io.BytesIO(tpl_bytes))
     if len(wb.sheetnames) < 2:
-        raise ValueError("MB-031 模版缺少第二个 sheet")
-    ws1 = wb.worksheets[0]
-    ws2 = wb.worksheets[1]
+        raise ValueError("MB-031 模版缺少明细 sheet")
+    ws1 = wb.worksheets[0]   # 账单汇总
+    tpl_ws = wb.worksheets[1]  # yyyymmdd 明细模版
+
     thin = Side(style="thin", color="000000")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
-    def _solid_rgb(cell):
-        f = cell.fill
-        if f is not None and f.fill_type == "solid" and f.fgColor is not None and getattr(f.fgColor, "rgb", None):
-            return f.fgColor.rgb
-        return None
+    # 期初余额：汇总起始日前的最后一张账单余额，取不到默认 0
+    prev = db.query(Bill).filter(Bill.customer_id == cust.id, Bill.biz_date < summary_start, Bill.deleted_at.is_(None)).order_by(Bill.biz_date.desc()).first()
+    opening = round(float(prev.balance), 2) if prev and prev.balance is not None else 0.0
 
-    def _find_zebra_rgb(ws, header_row, col=1):
-        """扫描数据区，取第一处非表头的实心填充色作为斑马纹；无则用默认淡蓝"""
-        for r in range(header_row + 1, min(header_row + 12, ws.max_row + 1)):
-            v = ws.cell(row=r, column=1).value
-            if v is not None and ("合计" in str(v) or "小计" in str(v)):
-                break
-            rgb = _solid_rgb(ws.cell(row=r, column=col))
-            if rgb:
-                return rgb
-        return "00F4F8FD"
+    # 汇总期间账单 / 充值补数
+    bills = {b.biz_date: b for b in db.query(Bill).filter(
+        Bill.customer_id == cust.id, Bill.biz_date >= summary_start,
+        Bill.biz_date <= summary_end, Bill.deleted_at.is_(None)).all()}
+    bu_by_day = defaultdict(float)          # 补数 RMB
+    u_by_day = defaultdict(float)           # 充值 U
+    chong_rmb_by_day = defaultdict(float)   # 充值 RMB（余额累计用）
+    recharge_info_by_day = defaultdict(list)
+    for rec in db.query(CustomerRecharge).filter(
+            CustomerRecharge.customer_id == cust.id,
+            CustomerRecharge.recharge_date >= summary_start,
+            CustomerRecharge.recharge_date <= summary_end).all():
+        d = rec.recharge_date
+        if (rec.recharge_type or "转账") == "补数":
+            amt = float(rec.amount_rmb or 0)
+            bu_by_day[d] += amt
+            s = f"补数 {amt:g}元"
+            if (rec.reason or "").strip():
+                s += f"（{rec.reason.strip()}）"
+            recharge_info_by_day[d].append(s)
+        else:
+            u = float(rec.amount_u or 0)
+            u_by_day[d] += u
+            chong_rmb_by_day[d] += float(rec.amount_rmb or 0)
+            s = f"充值 {u:g}U"
+            if (rec.note or rec.reason or "").strip():
+                s += f"（{(rec.note or rec.reason).strip()}）"
+            recharge_info_by_day[d].append(s)
 
-    cust_label = bill.get("cust_label") or f"{cust.code} {cust.name}"
-    sales = round(float(bill.get("sales") or 0), 2)
-    balance = round(float(bill.get("balance")), 2) if bill.get("balance") is not None else 0.0
-    recharge_info = bill.get("recharge_info") or []
-    prev = db.query(Bill).filter(Bill.customer_id == cust.id, Bill.biz_date < date_obj, Bill.deleted_at.is_(None)).order_by(Bill.biz_date.desc()).first()
-    yesterday_balance = round(float(prev.balance), 2) if prev and prev.balance is not None else 0.0
-
-    summary = {
-        "客户": cust_label,
-        "业务日期": date_obj.strftime("%m%d"),
-        "昨日余额": yesterday_balance,
-        "销售金额": sales,
-        "今日充值": "\n".join(recharge_info),
-        "剩余余额": balance,
-    }
-
-    def _field(s):
-        s = str(s).strip()
-        if s in ("客户", "客户名称", "代理", "代理名称"):
-            return "客户"
-        if "日期" in s:
-            return "业务日期"
-        if "昨日" in s:
-            return "昨日余额"
-        if "销售" in s:
-            return "销售金额"
-        if "充值" in s or "补数" in s:
-            return "今日充值"
-        if "剩余" in s or "余额" in s:
-            return "剩余余额"
-        return None
-
-    for row in ws1.iter_rows(min_col=1, max_col=1):
-        for cell in row:
-            if cell.value is None:
-                continue
-            f = _field(str(cell.value))
-            if f:
-                target = ws1.cell(row=cell.row, column=cell.column + 1, value=summary[f])
-                if f == "今日充值":
-                    target.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
-
-    detail_header_row = None
-    detail_cols = {}
-    for row in ws1.iter_rows():
-        vals = [str(c.value).strip() if c.value is not None else "" for c in row]
-        if any("任务名" in v for v in vals) and any("订单" in v for v in vals):
-            detail_header_row = row[0].row
-            for j, h in enumerate(vals, 1):
-                if "任务名" in h:
-                    detail_cols["task_name"] = j
-                elif "订单" in h:
-                    detail_cols["order_no"] = j
-                elif "数量" in h:
-                    detail_cols["qty"] = j
-                elif "单价" in h:
-                    detail_cols["unit"] = j
-                elif "洗名" in h:
-                    detail_cols["add_name"] = j
-                elif "金额" in h:
-                    detail_cols["amount"] = j
-            break
-    if detail_header_row is None:
-        raise ValueError("MB-031 模版第一个 sheet 缺少明细表头")
-
-    note_text = None
-    for row in ws1.iter_rows(min_row=detail_header_row + 1):
-        v = row[0].value
-        if v is not None and "洗名" in str(v) and "单价" in str(v):
-            note_text = v
-            break
-    # 读取模版的斑马纹填充色与合计行填充色，重写明细时沿用
-    zebra_rgb = _find_zebra_rgb(ws1, detail_header_row)
-    total_rgb = None
-    for row in ws1.iter_rows(min_row=detail_header_row + 1, max_col=1):
-        if row[0].value is not None and str(row[0].value).strip() == "合计":
-            total_rgb = _solid_rgb(row[0])
-            break
-    if ws1.max_row > detail_header_row:
-        ws1.delete_rows(detail_header_row + 1, ws1.max_row - detail_header_row)
-
-    groups = sorted(bill.get("groups", {}).items(),
-                    key=lambda kv: _pinyin_key(kv[1].get("task_name") or kv[0]))
-    r = detail_header_row + 1
-    total_qty = 0
-    total_amount = 0.0
-    data_index = 0
-    for g_key, g in groups:
-        rowvals = ["", "", "", "", "", ""]
-        rowvals[detail_cols.get("task_name", 1) - 1] = g.get("task_name") or g_key
-        rowvals[detail_cols.get("order_no", 2) - 1] = g.get("order_no") or ""
-        rowvals[detail_cols.get("qty", 3) - 1] = int(g.get("qty") or 0)
-        rowvals[detail_cols.get("unit", 4) - 1] = round(float(g["unit"]), 4) if g.get("unit") is not None else ""
-        rowvals[detail_cols.get("add_name", 5) - 1] = "是" if g.get("add_name") else "否"
-        amt = round(float(g.get("amount") or 0), 2)
-        rowvals[detail_cols.get("amount", 6) - 1] = amt
-        row_fill = PatternFill(fill_type="solid", fgColor=zebra_rgb) if (zebra_rgb and data_index % 2 == 1) else None
+    # 写汇总 sheet（表头第 1 行，数据从第 2 行开始）
+    r = 2
+    bal = opening
+    d = summary_start
+    while d <= summary_end:
+        b = bills.get(d)
+        sales = round(float(b.sales), 2) if b and b.sales is not None else 0.0
+        bu = round(bu_by_day.get(d, 0.0), 2)
+        u = round(u_by_day.get(d, 0.0), 4)
+        bal = round(bal - sales + bu + chong_rmb_by_day.get(d, 0.0), 2)
+        rowvals = [d.strftime("%Y-%m-%d"), sales, bu, u, bal]
         for j, v in enumerate(rowvals, 1):
             cell = ws1.cell(row=r, column=j, value=v)
             cell.border = border
             cell.alignment = center
-            if row_fill is not None:
-                cell.fill = row_fill
-        total_qty += int(g.get("qty") or 0)
-        total_amount = round(total_amount + amt, 2)
-        data_index += 1
         r += 1
-    rowvals = ["", "", "", "", "", ""]
-    rowvals[0] = "合计"
-    rowvals[detail_cols.get("qty", 3) - 1] = total_qty
-    rowvals[detail_cols.get("amount", 6) - 1] = total_amount
-    total_fill = PatternFill(fill_type="solid", fgColor=total_rgb) if total_rgb else None
-    for j, v in enumerate(rowvals, 1):
-        cell = ws1.cell(row=r, column=j, value=v)
-        cell.border = border
-        cell.alignment = center
-        if total_fill is not None:
-            cell.fill = total_fill
-    if note_text is not None:
-        r += 1
-        ws1.cell(row=r, column=1, value=note_text)
-
-    # ---- sheet2 当月每日统计 ----
-    month_start = date_obj.replace(day=1)
-    if date_obj.month == 12:
-        month_end = date(date_obj.year + 1, 1, 1) - timedelta(days=1)
-    else:
-        month_end = date(date_obj.year, date_obj.month + 1, 1) - timedelta(days=1)
-    bills_month = {b.biz_date: b for b in db.query(Bill).filter(
-        Bill.customer_id == cust.id, Bill.biz_date >= month_start, Bill.biz_date <= month_end, Bill.deleted_at.is_(None)).all()}
-    recharge_by_date = defaultdict(list)
-    for rec in db.query(CustomerRecharge).filter(
-            CustomerRecharge.customer_id == cust.id,
-            CustomerRecharge.recharge_date >= month_start,
-            CustomerRecharge.recharge_date <= month_end).all():
-        recharge_by_date[rec.recharge_date].append(rec)
-    zebra2_rgb = _find_zebra_rgb(ws2, 1)
-    if ws2.max_row > 1:
-        ws2.delete_rows(2, ws2.max_row - 1)
-
-    def _fmt_bu(r):
-        amt = float(r.amount_rmb or 0)
-        reason = (r.reason or "").strip()
-        return f"{amt:g}元" + (f"（{reason}）" if reason else "")
-
-    def _fmt_chong(r):
-        amt = float(r.amount_u or 0)
-        reason = (r.note or r.reason or "").strip()
-        return f"{amt:g}U" + (f"（{reason}）" if reason else "")
-
-    running = None
-    d = month_start
-    r2 = 2
-    idx = 0
-    while d <= month_end:
-        b = bills_month.get(d)
-        if b is not None and b.balance is not None:
-            running = float(b.balance)
-        sales_day = round(float(b.sales), 2) if b is not None and b.sales is not None else ""
-        recs = recharge_by_date.get(d, [])
-        bu = "\n".join(_fmt_bu(x) for x in recs if (x.recharge_type or "转账") == "补数")
-        chong = "\n".join(_fmt_chong(x) for x in recs if (x.recharge_type or "转账") != "补数")
-        rowvals = [d.strftime("%Y-%m-%d"), sales_day, bu, chong, (round(running, 2) if running is not None else "")]
-        row_fill = PatternFill(fill_type="solid", fgColor=zebra2_rgb) if (zebra2_rgb and idx % 2 == 1) else None
-        left_wrap = Alignment(horizontal="left", vertical="center", wrap_text=True)
-        for j, v in enumerate(rowvals, 1):
-            cell = ws2.cell(row=r2, column=j, value=v)
-            cell.border = border
-            cell.alignment = left_wrap if j in (3, 4) else center
-            if row_fill is not None:
-                cell.fill = row_fill
-        r2 += 1
-        idx += 1
         d += timedelta(days=1)
+    end_balance = bal
+    # 删除汇总 sheet 多余的空行（模板预留了 30 行）
+    if r <= ws1.max_row:
+        ws1.delete_rows(r, ws1.max_row - r + 1)
+
+    # 每日明细 sheet：复制 yyyymmdd 模版，仅生成有明细或充值补数的日期
+    for day in detail_days:
+        info = recharge_info_by_day.get(day, [])
+        groups = (groups_fn or _bill_groups)(db, cust, day)
+        if not groups and not info:
+            continue
+        new_ws = wb.copy_worksheet(tpl_ws)
+        new_ws.title = day.strftime("%Y%m%d")
+        c = new_ws["B2"]
+        c.value = day.strftime("%Y-%m-%d")
+        c.alignment = left_wrap
+        c = new_ws["B5"]
+        c.value = "\n".join(info)
+        c.alignment = left_wrap
+        if info:
+            # 多行时行高自适应
+            new_ws.row_dimensions[5].height = max(21.75, len(info) * 15)
+        sorted_groups = sorted(groups.items(), key=lambda kv: _pinyin_key(kv[1].get("task_name") or kv[0]))
+        # 明细列结构：MB-031 含「是否洗名」列（金额在第 6 列 F），MB-032 无（金额在第 5 列 E）
+        has_add_name = any("洗名" in str(new_ws.cell(row=7, column=j).value or "") for j in range(1, 7))
+        amount_col = 6 if has_add_name else 5
+        amount_letter = "F" if has_add_name else "E"
+        rr = 8
+        for g_key, g in sorted_groups:
+            if rr > 17:
+                break
+            vals = [g.get("task_name") or g_key, g.get("order_no") or "",
+                    int(g.get("qty") or 0),
+                    round(float(g["unit"]), 4) if g.get("unit") is not None else ""]
+            if has_add_name:
+                vals.append("/" if g.get("is_product") else ("是" if g.get("add_name") else "否"))
+            vals.append(round(float(g.get("amount") or 0), 2))
+            for j, v in enumerate(vals, 1):
+                cell = new_ws.cell(row=rr, column=j, value=v)
+                cell.border = border
+                cell.alignment = center
+            rr += 1
+        # 删除未使用的明细空行（8~17 未填部分），合计行自动上移
+        if rr <= 17:
+            new_ws.delete_rows(rr, 17 - rr + 1)
+        # 合计行现在位于 rr，修复合计公式与 B3/B4 引用
+        if rr > 8:
+            new_ws.cell(row=rr, column=3, value=f"=SUM(C8:C{rr - 1})")
+            new_ws.cell(row=rr, column=amount_col, value=f"=SUM({amount_letter}8:{amount_letter}{rr - 1})")
+        else:
+            new_ws.cell(row=rr, column=3, value=0)
+            new_ws.cell(row=rr, column=amount_col, value=0)
+        new_ws["B3"] = f"=C{rr}"
+        new_ws["B4"] = f"={amount_letter}{rr}"
+    # 删除明细模版 sheet
+    if "yyyymmdd" in wb.sheetnames:
+        del wb["yyyymmdd"]
 
     bio = io.BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return bio
+    return bio, end_balance
 
 
 @router.get("/bills/generate-bill")
-def generate_bill_files(db: Session = Depends(get_db), _=Depends(get_current_user), date: str = ""):
-    """生成代理账单（MB-031 模版，两个 sheet），为全部下游代理分别生成，并附带甲方账单（MB-032）打包 ZIP"""
+def generate_bill_files(db: Session = Depends(get_db), _=Depends(get_current_user), start_date: str = "", end_date: str = ""):
+    """生成代理账单（MB-031 模版）：可指定日期区间或单日；汇总 sheet + 每日明细 sheet；并附带甲方账单（MB-032）打包 ZIP"""
     from urllib.parse import quote
     from fastapi.responses import Response
     import zipfile
-    if not date:
-        raise HTTPException(status_code=422, detail="请选择日期")
-    date_obj = _parse_biz_date(date)
-    if not date_obj:
-        raise HTTPException(status_code=422, detail="日期格式错误")
+    sd = _parse_biz_date(start_date) if start_date else date.today()
+    if not sd:
+        raise HTTPException(status_code=422, detail="开始日期格式错误")
+    if end_date:
+        ed = _parse_biz_date(end_date)
+        if not ed:
+            raise HTTPException(status_code=422, detail="截止日期格式错误")
+        if ed < sd:
+            raise HTTPException(status_code=422, detail="截止日期不能早于开始日期")
+        summary_start, summary_end = sd, ed
+        detail_days = [sd + timedelta(days=i) for i in range((ed - sd).days + 1)]
+        date_label = f"{sd.strftime('%Y%m%d')}-{ed.strftime('%Y%m%d')}"
+    else:
+        summary_start = sd.replace(day=1)
+        summary_end = sd
+        detail_days = [sd]
+        date_label = sd.strftime("%Y%m%d")
+
     tpl = db.query(Template).filter(Template.code == "MB-031").first()
     if not tpl or not tpl.file_data:
         raise HTTPException(status_code=404, detail="MB-031 账单模版不存在或未上传文件")
     tpl_bytes = bytes(tpl.file_data)
-    rt_bills = _build_daily_bills(db, date_obj, None)
-    snap_bills = {b.customer_id: b for b in db.query(Bill).filter(Bill.biz_date == date_obj, Bill.deleted_at.is_(None)).all()}
     down_customers = db.query(Customer).filter(Customer.ctype == "downstream", Customer.deleted_at.is_(None)).order_by(Customer.code).all()
-
-    def _parse_detail(snap, cust):
-        groups, recharge_info = {}, []
-        if snap.detail_json:
-            try:
-                data = json.loads(snap.detail_json)
-                groups = data.get("groups") or {}
-                recharge_info = data.get("recharge_info") or []
-            except (ValueError, TypeError):
-                groups, recharge_info = {}, []
-        # 历史账单无明细快照：明细回退到实时（仅明细，销售金额/余额仍用快照）
-        if not groups:
-            rt = rt_bills.get(cust.code)
-            groups = (rt or {}).get("groups") or {}
-            recharge_info = (rt or {}).get("recharge_info") or recharge_info
-        return groups, recharge_info
 
     buf = io.BytesIO()
     used_names = set()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for cust in down_customers:
-            snap = snap_bills.get(cust.id)
-            if snap is not None:
-                groups, recharge_info = _parse_detail(snap, cust)
-                bill = {"customer_id": cust.id, "cust_label": f"{cust.code} {cust.name}",
-                        "qty": int(snap.purchase_qty or 0),
-                        "sales": float(snap.sales or 0), "cost": 0.0,
-                        "balance": float(snap.balance) if snap.balance is not None else float(cust.balance or 0),
-                        "groups": groups, "recharge_info": recharge_info}
-            else:
-                bill = {"customer_id": cust.id, "cust_label": f"{cust.code} {cust.name}",
-                        "qty": 0, "sales": 0.0, "cost": 0.0,
-                        "balance": float(cust.balance) if cust.balance is not None else 0.0,
-                        "groups": {}, "recharge_info": []}
-            bio = _fill_mb031_bill(db, cust, date_obj, bill, tpl_bytes)
-            base = f"【账单】{cust.code}-{date_obj.strftime('%Y%m%d')}{_balance_suffix(bill.get('balance'))}"
+            bio, end_balance = _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_bytes)
+            base = f"【账单】{cust.code}-{date_label}{_balance_suffix(end_balance)}"
             filename = f"{base}.xlsx"
             n = 1
             while filename in used_names:
@@ -3982,8 +3944,8 @@ def generate_bill_files(db: Session = Depends(get_db), _=Depends(get_current_use
                 filename = f"{base}-{n}.xlsx"
             used_names.add(filename)
             zf.writestr(filename, bio.read())
-        # 甲方账单文件（MB-032 模版）
-        for filename, data in _build_upstream_bill_files(db, date_obj):
+        # 甲方账单文件（MB-032 模版，按月，按结束日生成）
+        for filename, data in _build_upstream_bill_files(db, summary_start, summary_end, detail_days, date_label):
             fn = filename
             n = 1
             while fn in used_names:
@@ -3993,7 +3955,7 @@ def generate_bill_files(db: Session = Depends(get_db), _=Depends(get_current_use
             zf.writestr(fn, data)
     buf.seek(0)
     return Response(content=buf.getvalue(), media_type="application/zip",
-                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('账单-' + date_obj.strftime('%Y%m%d') + '.zip')}"})
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('账单-' + date_label + '.zip')}"})
 
 
 @router.get("/bills/{bid}")

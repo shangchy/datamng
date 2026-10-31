@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { api, getToken, getUser } from '../api'
+import { api, getToken } from '../api'
 import { Modal, useToast, useConfirm, Loading, ClearableInput } from '../components/ui'
+import { useButtonPerm } from '../buttonPerms'
 
 export default function Categories() {
   const { toast, showError } = useToast()
   const [confirm, confirmEl] = useConfirm()
-  const user = getUser() || {}
-  const isAdmin = user.role_code === 'admin' || (user.permissions || []).includes('*')
+  const { can } = useButtonPerm()
   const [rows, setRows] = useState([])
   const [platforms, setPlatforms] = useState([])
   const [modal, setModal] = useState(null) // {type:'cat1'|'cat2'|'platform', name, status, parentId, catId}
@@ -101,7 +101,7 @@ export default function Categories() {
                   <td><b>{c.name}</b></td><td></td><td>一级品类</td><td></td>
                   <td className="ops">
                     <button className="btn small" onClick={() => setModal({ type: 'cat1', id: c.id, name: c.name, code: c.code || '', status: 1 })}>编辑</button>{' '}
-                    {isAdmin && <button className="btn small danger" onClick={() => del(c.id)}>删除</button>}{' '}
+                    {can('category:delete') && <button className="btn small danger" onClick={() => del(c.id)}>删除</button>}{' '}
                     <button className="btn small primary" onClick={() => setModal({ type: 'cat2', name: '', code: '', status: 1, parentId: c.id })}>+ 二级</button>
                   </td>
                 </tr>
@@ -111,14 +111,14 @@ export default function Categories() {
                     <td>
                       <div className="tag-row">
                         {platformsOf(ch.id).map(p => (
-                          <span key={p.id} className="tag">{p.name}{p.code ? ` [${p.code}]` : ''}{isAdmin && <a className="tag-x" onClick={() => delPlatform(p.id)}>×</a>}</span>
+                          <span key={p.id} className="tag">{p.name}{p.code ? ` [${p.code}]` : ''}{can('category:delete') && <a className="tag-x" onClick={() => delPlatform(p.id)}>×</a>}</span>
                         ))}
                         <button className="btn tiny" onClick={() => setModal({ type: 'platform', name: '', code: '', status: 1, catId: ch.id })}>+ 平台</button>
                       </div>
                     </td>
                     <td className="ops">
                       <button className="btn small" onClick={() => setModal({ type: 'cat2', id: ch.id, name: ch.name, code: ch.code || '', status: 1, parentId: c.id })}>编辑</button>{' '}
-                      {isAdmin && <button className="btn small danger" onClick={() => del(ch.id)}>删除</button>}
+                      {can('category:delete') && <button className="btn small danger" onClick={() => del(ch.id)}>删除</button>}
                     </td>
                   </tr>
                 ))}

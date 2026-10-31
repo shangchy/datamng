@@ -182,6 +182,8 @@ class BatchStopBody(BaseModel):
     reason: str = ""
     note: str = ""
     order_date: Optional[date] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
 
 
 class ReopenBody(BaseModel):

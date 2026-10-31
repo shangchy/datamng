@@ -275,12 +275,13 @@ def save_product_sales_batch(body: dict, db: Session = Depends(get_db), user=Dep
         sid = r.get("id")
         s = None
         if sid:
-            s = db.query(ProductSale).filter(ProductSale.id == sid).first()
+            s = db.query(ProductSale).filter(ProductSale.id == sid, ProductSale.deleted_at.is_(None)).first()
         else:
             s = db.query(ProductSale).filter(ProductSale.sale_date == sale_date,
                                              ProductSale.customer_id == customer_id,
                                              ProductSale.product_id == product_id,
-                                             ProductSale.region == region).first()
+                                             ProductSale.region == region,
+                                             ProductSale.deleted_at.is_(None)).first()
         if s:
             s.customer_id = customer_id
             s.product_id = product_id
@@ -410,7 +411,8 @@ async def import_product_sales(file: UploadFile = File(...), db: Session = Depen
         existing = db.query(ProductSale).filter(ProductSale.sale_date == sale_date,
                                                  ProductSale.customer_id == cust.id,
                                                  ProductSale.product_id == prod.id,
-                                                 ProductSale.region == region_str).first()
+                                                 ProductSale.region == region_str,
+                                                 ProductSale.deleted_at.is_(None)).first()
         if existing:
             existing.qty = qty
             existing.purchase_price = pp
