@@ -2024,6 +2024,8 @@ def _build_daily_bills(db, date_obj, customer_ids=None):
         info = orders_info[tid]
         if selected is not None and info.get("customer_id") not in selected:
             continue
+        if (info.get("price") or 0) <= 0:
+            continue  # 单价为 0 的订单不生成账单/明细
         cc = info["cust_code"]
         if cc not in bills:
             label = (f"{cc} {info['cust_name']}".strip() if info["cust_name"] else cc)
@@ -2310,6 +2312,8 @@ def distribute_daily(body: GenerateBody, db: Session = Depends(get_db), user=Dep
             if not d.task_id or d.task_id not in orders_info or d.task_id in expired_tids:
                 continue
             info = orders_info[d.task_id]
+            if (info.get("price") or 0) <= 0:
+                continue  # 单价为 0 的订单不生成账单/明细
             cc = info["cust_code"]
             if cc not in bills:
                 label = (f"{cc} {info['cust_name']}".strip() if info["cust_name"] else cc)
@@ -3851,8 +3855,8 @@ def _fill_mb031_bill(db, cust, summary_start, summary_end, detail_days, tpl_byte
     if r <= ws1.max_row:
         ws1.delete_rows(r, ws1.max_row - r + 1)
 
-    # 每日明细 sheet：复制 yyyymmdd 模版，仅生成有明细或充值补数的日期
-    for day in detail_days:
+    # 每日明细 sheet：复制 yyyymmdd 模版，仅生成有明细或充值补数的日期（最近日期在前）
+    for day in reversed(detail_days):
         info = recharge_info_by_day.get(day, [])
         rt_bills = rt_bills_by_day.get(day) if rt_bills_by_day else None
         groups = (groups_fn or _bill_groups)(db, cust, day, rt_bills)
